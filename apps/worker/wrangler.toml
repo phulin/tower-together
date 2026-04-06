@@ -1,0 +1,12 @@
+name = "tower-together-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "TOWER_ROOM"
+class_name = "TowerRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TowerRoom"]
