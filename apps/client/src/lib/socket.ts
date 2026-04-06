@@ -18,11 +18,14 @@ export class TowerSocket {
   }
 
   private getWsUrl(): string {
+    // In dev, Vite's WebSocket proxy conflicts with its own HMR socket, so
+    // connect directly to the worker. CORS does not apply to WebSockets.
+    if (import.meta.env.DEV) {
+      const workerBase = import.meta.env.VITE_WORKER_URL ?? 'http://localhost:8787'
+      return workerBase.replace(/^http/, 'ws') + `/api/ws/${this.towerId}`
+    }
     const loc = window.location
     const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:'
-    // Always connect through the current host — Vite proxies /api/ws/* to the
-    // worker in dev (ws: true in vite.config.ts), and in production the same
-    // host serves both the app and the worker.
     return `${protocol}//${loc.host}/api/ws/${this.towerId}`
   }
 
