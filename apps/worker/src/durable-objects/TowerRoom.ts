@@ -1,5 +1,14 @@
 import { DurableObject } from 'cloudflare:workers'
-import type { ClientMessage, ServerMessage } from '../types'
+import {
+  TILE_WIDTHS,
+  TILE_COSTS,
+  HOTEL_DAILY_INCOME,
+  VALID_TILE_TYPES,
+  TICKS_PER_DAY,
+  STARTING_CASH,
+  type ClientMessage,
+  type ServerMessage,
+} from '../types'
 
 interface Env {
   TOWER_ROOM: DurableObjectNamespace
@@ -12,7 +21,11 @@ interface TowerState {
   isRunning: boolean
   width: number
   height: number
+  cash: number
+  // "x,y" -> tileType (anchor cell for multi-tile objects)
   cells: Record<string, string>
+  // extension cells -> their anchor cell key ("x+1,y" -> "x,y")
+  cellToAnchor: Record<string, string>
 }
 
 export class TowerRoom extends DurableObject<Env> {
@@ -37,7 +50,9 @@ export class TowerRoom extends DurableObject<Env> {
       isRunning: false,
       width: 64,
       height: 80,
+      cash: STARTING_CASH,
       cells: {},
+      cellToAnchor: {},
     }
     await this.saveState()
   }
@@ -50,31 +65,25 @@ export class TowerRoom extends DurableObject<Env> {
     const rows = cursor.toArray()
     const row = rows[0] as { value: string } | undefined
     if (!row) return null
-    return JSON.parse(row.value) as TowerState
+    const parsed = JSON.parse(row.value) as TowerState
+    // Back-compat: older saves without these fields
+    if (!parsed.cash) parsed.cash = STARTING_CASH
+    if (!parsed.cellToAnchor) parsed.cellToAnchor = {}
+    return parsed
   }
 
   async saveState(): Promise<void> {
     if (!this.state) return
-    const data: TowerState = {
-      towerId: this.state.towerId,
-      name: this.state.name,
-      simTime: this.state.simTime,
-      isRunning: this.state.isRunning,
-      width: this.state.width,
-      height: this.state.height,
-      cells: this.state.cells,
-    }
     this.ctx.storage.sql.exec(
       'INSERT OR REPLACE INTO tower VALUES (?, ?)',
       'state',
-      JSON.stringify(data)
+      JSON.stringify(this.state)
     )
   }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url)
 
-    // WebSocket upgrade — match on Upgrade header (path may vary)
     if (request.headers.get('Upgrade') === 'websocket') {
       const pair = new WebSocketPair()
       const [client, server] = Object.values(pair)
@@ -113,6 +122,7 @@ export class TowerRoom extends DurableObject<Env> {
           towerId: s.towerId,
           name: s.name,
           simTime: s.simTime,
+          cash: s.cash,
           width: s.width,
           height: s.height,
           playerCount: this.ctx.getWebSockets().length,
@@ -135,39 +145,31 @@ export class TowerRoom extends DurableObject<Env> {
       return
     }
 
-    // Ensure state is loaded
     if (!this.state) {
       this.state = this.loadState()
     }
 
     if (!this.state) {
-      // Tower not initialized yet; reject
-      this.sendTo(ws, {
-        type: 'command_result',
-        accepted: false,
-        reason: 'Tower not initialized',
-      })
+      this.sendTo(ws, { type: 'command_result', accepted: false, reason: 'Tower not initialized' })
       return
     }
 
     switch (msg.type) {
       case 'join_tower': {
-        // Send current state to joining socket
         this.sendTo(ws, {
           type: 'init_state',
           towerId: this.state.towerId,
           name: this.state.name,
           simTime: this.state.simTime,
+          cash: this.state.cash,
           width: this.state.width,
           height: this.state.height,
           cells: this.cellsToArray(this.state.cells),
         })
 
         const playerCount = this.ctx.getWebSockets().length
-        // Broadcast presence to all
         this.broadcast({ type: 'presence_update', playerCount })
 
-        // Start ticking if this is the first player
         if (playerCount >= 1 && !this.state.isRunning) {
           this.state.isRunning = true
           this.startTick()
@@ -177,71 +179,88 @@ export class TowerRoom extends DurableObject<Env> {
 
       case 'place_tile': {
         const { x, y, tileType } = msg
-        if (
-          x < 0 ||
-          x >= this.state.width ||
-          y < 0 ||
-          y >= this.state.height
-        ) {
-          this.sendTo(ws, {
-            type: 'command_result',
-            accepted: false,
-            reason: 'Out of bounds',
-          })
+
+        if (!VALID_TILE_TYPES.has(tileType)) {
+          this.sendTo(ws, { type: 'command_result', accepted: false, reason: 'Invalid tile type' })
           return
         }
-        if (!this.validateTileType(tileType)) {
-          this.sendTo(ws, {
-            type: 'command_result',
-            accepted: false,
-            reason: 'Invalid tile type',
-          })
+
+        const width = TILE_WIDTHS[tileType] ?? 1
+        const cost = TILE_COSTS[tileType] ?? 0
+
+        // Bounds check for the full width of the object
+        if (x < 0 || x + width - 1 >= this.state.width || y < 0 || y >= this.state.height) {
+          this.sendTo(ws, { type: 'command_result', accepted: false, reason: 'Out of bounds' })
           return
         }
-        const key = `${x},${y}`
-        if (this.state.cells[key]) {
-          this.sendTo(ws, {
-            type: 'command_result',
-            accepted: false,
-            reason: 'Cell already occupied',
-          })
+
+        // Funds check
+        if (cost > this.state.cash) {
+          this.sendTo(ws, { type: 'command_result', accepted: false, reason: 'Insufficient funds' })
           return
         }
-        this.state.cells[key] = tileType
-        const patch = { cells: [{ x, y, tileType }] }
-        this.broadcast({ type: 'state_patch', cells: patch.cells })
-        this.sendTo(ws, { type: 'command_result', accepted: true, patch })
+
+        // Check all cells in the footprint are empty
+        for (let dx = 0; dx < width; dx++) {
+          const key = `${x + dx},${y}`
+          if (this.state.cells[key] || this.state.cellToAnchor[key]) {
+            this.sendTo(ws, { type: 'command_result', accepted: false, reason: 'Cell already occupied' })
+            return
+          }
+        }
+
+        // Place the tile: anchor at (x,y), extensions at (x+1..x+width-1, y)
+        this.state.cells[`${x},${y}`] = tileType
+        for (let dx = 1; dx < width; dx++) {
+          this.state.cells[`${x + dx},${y}`] = tileType
+          this.state.cellToAnchor[`${x + dx},${y}`] = `${x},${y}`
+        }
+
+        // Deduct cost
+        this.state.cash -= cost
+
+        const patchCells = Array.from({ length: width }, (_, dx) => ({
+          x: x + dx, y, tileType,
+        }))
+
+        this.broadcast({ type: 'state_patch', cells: patchCells })
+        this.sendTo(ws, { type: 'command_result', accepted: true, patch: { cells: patchCells } })
+        if (cost > 0) this.broadcast({ type: 'economy_update', cash: this.state.cash })
         break
       }
 
       case 'remove_tile': {
         const { x, y } = msg
-        if (
-          x < 0 ||
-          x >= this.state.width ||
-          y < 0 ||
-          y >= this.state.height
-        ) {
-          this.sendTo(ws, {
-            type: 'command_result',
-            accepted: false,
-            reason: 'Out of bounds',
-          })
+
+        if (x < 0 || x >= this.state.width || y < 0 || y >= this.state.height) {
+          this.sendTo(ws, { type: 'command_result', accepted: false, reason: 'Out of bounds' })
           return
         }
-        const key = `${x},${y}`
-        if (!this.state.cells[key]) {
-          this.sendTo(ws, {
-            type: 'command_result',
-            accepted: false,
-            reason: 'Cell is empty',
-          })
+
+        const clickedKey = `${x},${y}`
+        // Resolve to anchor
+        const anchorKey = this.state.cellToAnchor[clickedKey] ?? clickedKey
+        const tileType = this.state.cells[anchorKey]
+
+        if (!tileType) {
+          this.sendTo(ws, { type: 'command_result', accepted: false, reason: 'Cell is empty' })
           return
         }
-        delete this.state.cells[key]
-        const patch = { cells: [{ x, y, tileType: 'empty' }] }
-        this.broadcast({ type: 'state_patch', cells: patch.cells })
-        this.sendTo(ws, { type: 'command_result', accepted: true, patch })
+
+        // Remove all cells belonging to this object
+        const [ax, ay] = anchorKey.split(',').map(Number)
+        const width = TILE_WIDTHS[tileType] ?? 1
+        const patchCells: Array<{ x: number; y: number; tileType: string }> = []
+
+        for (let dx = 0; dx < width; dx++) {
+          const key = `${ax + dx},${ay}`
+          delete this.state.cells[key]
+          if (dx > 0) delete this.state.cellToAnchor[key]
+          patchCells.push({ x: ax + dx, y: ay, tileType: 'empty' })
+        }
+
+        this.broadcast({ type: 'state_patch', cells: patchCells })
+        this.sendTo(ws, { type: 'command_result', accepted: true, patch: { cells: patchCells } })
         break
       }
 
@@ -252,7 +271,7 @@ export class TowerRoom extends DurableObject<Env> {
     }
   }
 
-  webSocketClose(ws: WebSocket): void {
+  webSocketClose(_ws: WebSocket): void {
     const remaining = this.ctx.getWebSockets().length
     if (remaining === 0) {
       if (this.state) this.state.isRunning = false
@@ -263,8 +282,8 @@ export class TowerRoom extends DurableObject<Env> {
     }
   }
 
-  webSocketError(ws: WebSocket, error: unknown): void {
-    this.webSocketClose(ws)
+  webSocketError(_ws: WebSocket, _error: unknown): void {
+    this.webSocketClose(_ws)
   }
 
   private startTick(): void {
@@ -281,19 +300,42 @@ export class TowerRoom extends DurableObject<Env> {
 
   private tick(): void {
     if (!this.state || !this.state.isRunning) return
+
     this.state.simTime += 1
     this.broadcast({ type: 'time_update', simTime: this.state.simTime })
+
+    // Collect hotel income at the end of each in-game day
+    if (this.state.simTime % TICKS_PER_DAY === 0) {
+      this.collectHotelIncome()
+    }
+
+    // Periodic save every 30 ticks
     if (this.state.simTime % 30 === 0) {
       void this.saveState()
     }
   }
 
+  private collectHotelIncome(): void {
+    if (!this.state) return
+    let income = 0
+
+    // Count anchor cells only (extension cells don't have a cellToAnchor entry from anchor's side)
+    for (const [key, tileType] of Object.entries(this.state.cells)) {
+      // Skip extension cells
+      if (this.state.cellToAnchor[key]) continue
+      const daily = HOTEL_DAILY_INCOME[tileType]
+      if (daily) income += daily
+    }
+
+    if (income > 0) {
+      this.state.cash = Math.min(99_999_999, this.state.cash + income)
+      this.broadcast({ type: 'economy_update', cash: this.state.cash })
+    }
+  }
+
   private broadcast(msg: ServerMessage, exclude?: WebSocket): void {
-    const sockets = this.ctx.getWebSockets()
-    for (const socket of sockets) {
-      if (socket !== exclude) {
-        this.sendTo(socket, msg)
-      }
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket !== exclude) this.sendTo(socket, msg)
     }
   }
 
@@ -301,7 +343,7 @@ export class TowerRoom extends DurableObject<Env> {
     try {
       ws.send(JSON.stringify(msg))
     } catch {
-      // Socket may already be closed
+      // Socket may be closed
     }
   }
 
@@ -310,9 +352,5 @@ export class TowerRoom extends DurableObject<Env> {
       const [xStr, yStr] = key.split(',')
       return { x: parseInt(xStr, 10), y: parseInt(yStr, 10), tileType }
     })
-  }
-
-  private validateTileType(t: string): boolean {
-    return ['empty', 'floor', 'room_basic'].includes(t)
   }
 }

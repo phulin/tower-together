@@ -4,10 +4,11 @@ import { GameScene } from './GameScene'
 
 interface Props {
   onCellClick: (x: number, y: number) => void
+  selectedTool: string
   sceneRef: React.MutableRefObject<GameScene | null>
 }
 
-export function PhaserGame({ onCellClick, sceneRef }: Props) {
+export function PhaserGame({ onCellClick, selectedTool, sceneRef }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const gameRef = useRef<Phaser.Game | null>(null)
 
@@ -27,7 +28,7 @@ export function PhaserGame({ onCellClick, sceneRef }: Props) {
         width: '100%',
         height: '100%',
       },
-      scene: scene,
+      scene,
       disableContextMenu: false,
     }
 
@@ -41,17 +42,13 @@ export function PhaserGame({ onCellClick, sceneRef }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Wire up click callback whenever it changes
   useEffect(() => {
-    const scene = sceneRef.current
-    if (!scene) return
-    scene.setOnCellClick(onCellClick)
+    sceneRef.current?.setOnCellClick(onCellClick)
   }, [onCellClick, sceneRef])
 
-  return (
-    <div
-      ref={containerRef}
-      style={{ width: '100%', height: '100%' }}
-    />
-  )
+  useEffect(() => {
+    sceneRef.current?.setSelectedTool(selectedTool)
+  }, [selectedTool, sceneRef])
+
+  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 }
