@@ -1,16 +1,16 @@
 {
-  "$schema": "https://turbo.build/schema.json",
-  "tasks": {
-    "build": {
-      "outputs": ["dist/**", ".wrangler/tmp/**"]
-    },
-    "typecheck": {},
-    "dev": {
-      "cache": false,
-      "persistent": true
-    },
-    "deploy": {
-      "dependsOn": ["build"]
-    }
-  }
+	"$schema": "https://turbo.build/schema.json",
+	"tasks": {
+		"build": {
+			"outputs": ["dist/**", ".wrangler/tmp/**"]
+		},
+		"typecheck": {},
+		"dev": {
+			"cache": false,
+			"persistent": true
+		},
+		"deploy": {
+			"dependsOn": ["build"]
+		}
+	}
 }

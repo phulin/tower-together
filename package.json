@@ -1,17 +1,18 @@
 {
-  "name": "tower-together",
-  "version": "0.1.0",
-  "private": true,
-  "packageManager": "npm@10.9.2",
-  "workspaces": [
-    "apps/*"
-  ],
-  "scripts": {
-    "dev": "turbo dev",
-    "build": "turbo build",
-    "typecheck": "turbo typecheck"
-  },
-  "devDependencies": {
-    "turbo": "^2.3.3"
-  }
+	"name": "tower-together",
+	"version": "0.1.0",
+	"private": true,
+	"packageManager": "npm@10.9.2",
+	"workspaces": [
+		"apps/*"
+	],
+	"scripts": {
+		"dev": "turbo dev",
+		"build": "turbo build",
+		"typecheck": "turbo typecheck"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.10",
+		"turbo": "^2.3.3"
+	}
 }
