@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GameScene } from "../game/GameScene";
 import { PhaserGame } from "../game/PhaserGame";
-import { TowerSocket } from "../lib/socket";
+import * as socket from "../lib/socket";
 import type { ConnectionStatus, SelectedTool, ServerMessage } from "../types";
 import { TILE_COSTS } from "../types";
 
@@ -53,62 +53,52 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 	const [towerName, setTowerName] = useState(towerId);
 
 	const sceneRef = useRef<GameScene | null>(null);
-	const socketRef = useRef<TowerSocket | null>(null);
-
-	const handleMessage = useCallback((msg: ServerMessage) => {
-		switch (msg.type) {
-			case "init_state":
-				setSimTime(msg.simTime);
-				setCash(msg.cash);
-				setTowerName(msg.name || msg.towerId);
-				sceneRef.current?.applyInitState(msg.cells);
-				break;
-			case "state_patch":
-				sceneRef.current?.applyPatch(msg.cells);
-				break;
-			case "command_result":
-				if (msg.accepted && msg.patch) {
-					sceneRef.current?.applyPatch(msg.patch.cells);
-				}
-				break;
-			case "presence_update":
-				setPlayerCount(msg.playerCount);
-				break;
-			case "time_update":
-				setSimTime(msg.simTime);
-				break;
-			case "economy_update":
-				setCash(msg.cash);
-				break;
-		}
-	}, []);
-
-	const handleStatus = useCallback(
-		(status: ConnectionStatus) => {
-			setConnectionStatus(status);
-			if (status === "connected") {
-				socketRef.current?.send({ type: "join_tower", playerId, displayName });
-			}
-		},
-		[playerId, displayName],
-	);
 
 	useEffect(() => {
-		const socket = new TowerSocket(towerId, handleMessage, handleStatus);
-		socketRef.current = socket;
-		return () => {
-			socket.destroy();
-			socketRef.current = null;
-		};
-	}, [towerId, handleMessage, handleStatus]);
+		return socket.onMessage((msg: ServerMessage) => {
+			switch (msg.type) {
+				case "init_state":
+					setSimTime(msg.simTime);
+					setCash(msg.cash);
+					setTowerName(msg.name || msg.towerId);
+					sceneRef.current?.applyInitState(msg.cells);
+					break;
+				case "state_patch":
+					sceneRef.current?.applyPatch(msg.cells);
+					break;
+				case "command_result":
+					if (msg.accepted && msg.patch) {
+						sceneRef.current?.applyPatch(msg.patch.cells);
+					}
+					break;
+				case "presence_update":
+					setPlayerCount(msg.playerCount);
+					break;
+				case "time_update":
+					setSimTime(msg.simTime);
+					break;
+				case "economy_update":
+					setCash(msg.cash);
+					break;
+			}
+		});
+	}, []);
+
+	useEffect(() => {
+		return socket.onStatus((status: ConnectionStatus) => {
+			setConnectionStatus(status);
+			if (status === "connected") {
+				socket.send({ type: "join_tower", playerId, displayName });
+			}
+		});
+	}, [playerId, displayName]);
 
 	const handleCellClick = useCallback(
 		(x: number, y: number) => {
-			if (!socketRef.current) return;
 			if (selectedTool === "empty") {
-				socketRef.current.send({ type: "remove_tile", x, y });
+				socket.send({ type: "remove_tile", x, y });
 			} else {
-				socketRef.current.send({
+				socket.send({
 					type: "place_tile",
 					x,
 					y,
@@ -193,7 +183,7 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 				{connectionStatus === "disconnected" && (
 					<button
 						style={styles.reconnectBtn}
-						onClick={() => socketRef.current?.reconnect()}
+						onClick={() => socket.reconnect()}
 					>
 						Reconnect
 					</button>

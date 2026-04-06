@@ -166,6 +166,7 @@ export class GameScene extends Phaser.Scene {
 
 	private drawHover(): void {
 		const g = this.hoverGraphics;
+		if (!g) return;
 		g.clear();
 		if (!this.hoveredCell) return;
 

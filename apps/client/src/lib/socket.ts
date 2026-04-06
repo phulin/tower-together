@@ -1,83 +1,90 @@
-import type { ClientMessage, ServerMessage } from "../types";
+import type {
+	ClientMessage,
+	ConnectionStatus,
+	ServerMessage,
+} from "../types";
 
-export type MessageHandler = (msg: ServerMessage) => void;
-export type StatusHandler = (
-	status: "connecting" | "connected" | "disconnected",
-) => void;
+type MessageListener = (msg: ServerMessage) => void;
+type StatusListener = (status: ConnectionStatus) => void;
 
-export class TowerSocket {
-	private ws: WebSocket | null = null;
-	private towerId: string;
-	private onMessage: MessageHandler;
-	private onStatus: StatusHandler;
-	private destroyed = false;
+let ws: WebSocket | null = null;
+let currentTowerId: string | null = null;
+let currentStatus: ConnectionStatus = "disconnected";
+const messageListeners = new Set<MessageListener>();
+const statusListeners = new Set<StatusListener>();
 
-	constructor(
-		towerId: string,
-		onMessage: MessageHandler,
-		onStatus: StatusHandler,
-	) {
-		this.towerId = towerId;
-		this.onMessage = onMessage;
-		this.onStatus = onStatus;
-		this.connect();
-	}
+function getWsUrl(towerId: string): string {
+	const loc = window.location;
+	const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
+	return `${protocol}//${loc.host}/api/ws/${towerId}`;
+}
 
-	private getWsUrl(): string {
-		const loc = window.location;
-		const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
-		return `${protocol}//${loc.host}/api/ws/${this.towerId}`;
-	}
+function setStatus(status: ConnectionStatus) {
+	currentStatus = status;
+	for (const l of statusListeners) l(status);
+}
 
-	private connect(): void {
-		if (this.destroyed) return;
+export function connect(towerId: string): void {
+	if (ws) disconnect();
+	currentTowerId = towerId;
+	setStatus("connecting");
 
-		this.onStatus("connecting");
-		const url = this.getWsUrl();
-		this.ws = new WebSocket(url);
+	ws = new WebSocket(getWsUrl(towerId));
 
-		this.ws.onopen = () => {
-			if (this.destroyed) {
-				this.ws?.close();
-				return;
-			}
-			this.onStatus("connected");
-		};
+	ws.onopen = () => setStatus("connected");
 
-		this.ws.onmessage = (event: MessageEvent) => {
-			if (this.destroyed) return;
-			try {
-				const msg = JSON.parse(event.data as string) as ServerMessage;
-				this.onMessage(msg);
-			} catch (e) {
-				console.error("Failed to parse server message", e);
-			}
-		};
-
-		this.ws.onclose = () => {
-			if (this.destroyed) return;
-			this.onStatus("disconnected");
-		};
-
-		this.ws.onerror = (e) => {
-			console.error("WebSocket error", e);
-		};
-	}
-
-	send(msg: ClientMessage): void {
-		if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-			this.ws.send(JSON.stringify(msg));
+	ws.onmessage = (event: MessageEvent) => {
+		try {
+			const msg = JSON.parse(event.data as string) as ServerMessage;
+			for (const l of messageListeners) l(msg);
+		} catch (e) {
+			console.error("Failed to parse server message", e);
 		}
-	}
+	};
 
-	reconnect(): void {
-		this.ws?.close();
-		this.connect();
-	}
+	ws.onclose = () => {
+		ws = null;
+		setStatus("disconnected");
+	};
 
-	destroy(): void {
-		this.destroyed = true;
-		this.ws?.close();
-		this.ws = null;
+	ws.onerror = (e) => {
+		console.error("WebSocket error", e);
+	};
+}
+
+export function disconnect(): void {
+	currentTowerId = null;
+	ws?.close();
+	ws = null;
+}
+
+export function send(msg: ClientMessage): void {
+	if (ws?.readyState === WebSocket.OPEN) {
+		ws.send(JSON.stringify(msg));
 	}
+}
+
+export function reconnect(): void {
+	if (currentTowerId) connect(currentTowerId);
+}
+
+export function getStatus(): ConnectionStatus {
+	return currentStatus;
+}
+
+/** Subscribe to incoming messages. Returns unsubscribe function. */
+export function onMessage(listener: MessageListener): () => void {
+	messageListeners.add(listener);
+	return () => {
+		messageListeners.delete(listener);
+	};
+}
+
+/** Subscribe to status changes. Fires immediately with current status. Returns unsubscribe function. */
+export function onStatus(listener: StatusListener): () => void {
+	statusListeners.add(listener);
+	listener(currentStatus);
+	return () => {
+		statusListeners.delete(listener);
+	};
 }
