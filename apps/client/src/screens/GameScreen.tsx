@@ -51,6 +51,10 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 	const [cash, setCash] = useState(0);
 	const [playerCount, setPlayerCount] = useState(0);
 	const [towerName, setTowerName] = useState(towerId);
+	const [isRenaming, setIsRenaming] = useState(false);
+	const [aliasInput, setAliasInput] = useState("");
+	const [aliasError, setAliasError] = useState("");
+	const [aliasSaving, setAliasSaving] = useState(false);
 
 	const sceneRef = useRef<GameScene | null>(null);
 
@@ -109,6 +113,32 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 		[selectedTool],
 	);
 
+	async function handleSetAlias() {
+		const alias = aliasInput.trim().toLowerCase();
+		if (!alias) return;
+		setAliasSaving(true);
+		setAliasError("");
+		try {
+			const res = await fetch(`/api/towers/${towerId}/alias`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ alias }),
+			});
+			if (!res.ok) {
+				const err = (await res.json()) as { error: string };
+				setAliasError(err.error || "Failed to set alias");
+				return;
+			}
+			setTowerName(alias);
+			setIsRenaming(false);
+			window.history.replaceState(null, "", `/${alias}`);
+		} catch {
+			setAliasError("Network error");
+		} finally {
+			setAliasSaving(false);
+		}
+	}
+
 	const day = Math.floor(simTime / 24) + 1;
 	const hour = simTime % 24;
 
@@ -124,9 +154,56 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 			{/* Toolbar */}
 			<div style={styles.toolbar}>
 				<div style={styles.toolbarLeft}>
-					<span style={styles.towerLabel} title={towerId}>
-						{towerName}
-					</span>
+					{isRenaming ? (
+						<form
+							style={styles.renameForm}
+							onSubmit={(e) => {
+								e.preventDefault();
+								handleSetAlias();
+							}}
+						>
+							<input
+								style={styles.renameInput}
+								value={aliasInput}
+								onChange={(e) => {
+									setAliasInput(e.target.value);
+									setAliasError("");
+								}}
+								placeholder="alias..."
+								autoFocus
+								disabled={aliasSaving}
+							/>
+							<button
+								style={styles.renameSave}
+								type="submit"
+								disabled={aliasSaving}
+							>
+								{aliasSaving ? "..." : "Save"}
+							</button>
+							<button
+								style={styles.renameCancel}
+								type="button"
+								onClick={() => setIsRenaming(false)}
+							>
+								Cancel
+							</button>
+							{aliasError && (
+								<span style={styles.renameError}>{aliasError}</span>
+							)}
+						</form>
+					) : (
+						<span
+							style={styles.towerLabel}
+							title={`${towerName} (click to rename)`}
+							onClick={() => {
+								setAliasInput(towerName === towerId ? "" : towerName);
+								setAliasError("");
+								setIsRenaming(true);
+							}}
+						>
+							{towerName}
+						</span>
+					)}
 					<div style={styles.toolGroup}>
 						{TOOLS.map((t) => (
 							<button
@@ -225,6 +302,45 @@ const styles: Record<string, React.CSSProperties> = {
 		overflow: "hidden",
 		textOverflow: "ellipsis",
 		whiteSpace: "nowrap",
+		cursor: "pointer",
+		borderBottom: "1px dashed #555",
+	},
+	renameForm: {
+		display: "flex",
+		alignItems: "center",
+		gap: 4,
+	},
+	renameInput: {
+		width: 120,
+		padding: "3px 8px",
+		borderRadius: 4,
+		border: "1px solid #555",
+		background: "#1a1a1a",
+		color: "#e0e0e0",
+		fontSize: 13,
+		outline: "none",
+	},
+	renameSave: {
+		padding: "3px 8px",
+		borderRadius: 4,
+		border: "1px solid #3a7bd5",
+		background: "transparent",
+		color: "#3a7bd5",
+		fontSize: 11,
+		cursor: "pointer",
+	},
+	renameCancel: {
+		padding: "3px 8px",
+		borderRadius: 4,
+		border: "1px solid #555",
+		background: "transparent",
+		color: "#888",
+		fontSize: 11,
+		cursor: "pointer",
+	},
+	renameError: {
+		fontSize: 11,
+		color: "#f87171",
 	},
 	toolGroup: { display: "flex", gap: 4 },
 	toolBtn: {

@@ -10,6 +10,14 @@ port = 8787
 name = "TOWER_ROOM"
 class_name = "TowerRoom"
 
+[[durable_objects.bindings]]
+name = "TOWER_REGISTRY"
+class_name = "TowerRegistry"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["TowerRoom"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["TowerRegistry"]

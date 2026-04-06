@@ -7,10 +7,21 @@ import { LobbyScreen } from "./screens/LobbyScreen";
 
 type Screen = "guest" | "lobby" | "game";
 
-function getTowerIdFromPath(): string {
+function getSlugFromPath(): string {
 	const path = window.location.pathname;
 	const match = path.match(/^\/([a-zA-Z0-9_-]+)$/);
 	return match ? match[1] : "";
+}
+
+async function resolveSlug(slug: string): Promise<string | null> {
+	try {
+		const res = await fetch(`/api/resolve/${encodeURIComponent(slug)}`);
+		if (!res.ok) return null;
+		const data = (await res.json()) as { towerId: string };
+		return data.towerId;
+	} catch {
+		return null;
+	}
 }
 
 export function App() {
@@ -26,11 +37,17 @@ export function App() {
 		if (storedId && storedName) {
 			setPlayerId(storedId);
 			setDisplayName(storedName);
-			const urlTower = getTowerIdFromPath();
-			if (urlTower) {
-				socket.connect(urlTower);
-				setTowerId(urlTower);
-				setScreen("game");
+			const slug = getSlugFromPath();
+			if (slug) {
+				resolveSlug(slug).then((id) => {
+					if (id) {
+						socket.connect(id);
+						setTowerId(id);
+						setScreen("game");
+					} else {
+						setScreen("lobby");
+					}
+				});
 			} else {
 				setScreen("lobby");
 			}
@@ -40,11 +57,19 @@ export function App() {
 	// Handle browser back/forward
 	useEffect(() => {
 		function onPopState() {
-			const urlTower = getTowerIdFromPath();
-			if (urlTower && playerId) {
-				socket.connect(urlTower);
-				setTowerId(urlTower);
-				setScreen("game");
+			const slug = getSlugFromPath();
+			if (slug && playerId) {
+				resolveSlug(slug).then((id) => {
+					if (id) {
+						socket.connect(id);
+						setTowerId(id);
+						setScreen("game");
+					} else {
+						socket.disconnect();
+						setTowerId("");
+						setScreen("lobby");
+					}
+				});
 			} else {
 				socket.disconnect();
 				setTowerId("");
@@ -58,11 +83,17 @@ export function App() {
 	function handleGuestEnter(id: string, name: string) {
 		setPlayerId(id);
 		setDisplayName(name);
-		const urlTower = getTowerIdFromPath();
-		if (urlTower) {
-			socket.connect(urlTower);
-			setTowerId(urlTower);
-			setScreen("game");
+		const slug = getSlugFromPath();
+		if (slug) {
+			resolveSlug(slug).then((resolved) => {
+				if (resolved) {
+					socket.connect(resolved);
+					setTowerId(resolved);
+					setScreen("game");
+				} else {
+					setScreen("lobby");
+				}
+			});
 		} else {
 			setScreen("lobby");
 		}
