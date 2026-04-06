@@ -35,10 +35,7 @@ export class TowerRegistry extends DurableObject<Env> {
 				.exec("SELECT tower_id FROM aliases WHERE alias = ?", alias)
 				.toArray()[0] as { tower_id: string } | undefined;
 			if (existing && existing.tower_id !== towerId) {
-				return Response.json(
-					{ error: "Alias already taken" },
-					{ status: 409 },
-				);
+				return Response.json({ error: "Alias already taken" }, { status: 409 });
 			}
 
 			// Remove any previous alias for this tower

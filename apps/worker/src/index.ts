@@ -58,7 +58,9 @@ app.put("/api/towers/:id/alias", async (c) => {
 
 	if (!alias || !/^[a-z0-9_-]+$/.test(alias)) {
 		return c.json(
-			{ error: "Alias must be lowercase alphanumeric, hyphens, or underscores" },
+			{
+				error: "Alias must be lowercase alphanumeric, hyphens, or underscores",
+			},
 			400,
 		);
 	}
@@ -72,9 +74,7 @@ app.put("/api/towers/:id/alias", async (c) => {
 	}
 
 	// Verify the tower exists
-	const roomStub = c.env.TOWER_ROOM.get(
-		c.env.TOWER_ROOM.idFromName(towerId),
-	);
+	const roomStub = c.env.TOWER_ROOM.get(c.env.TOWER_ROOM.idFromName(towerId));
 	const infoRes = await roomStub.fetch("http://do/info");
 	if (!infoRes.ok) {
 		return c.json({ error: "Tower not found" }, 404);
@@ -100,4 +100,4 @@ app.get("/api/health", (c) => c.json({ status: "ok" }));
 app.route("/api", towersRouter);
 
 export default app;
-export { TowerRoom, TowerRegistry };
+export { TowerRegistry, TowerRoom };

@@ -41,7 +41,6 @@ export function GuestScreen({ onEnter }: Props) {
 							setError("");
 						}}
 						maxLength={32}
-						autoFocus
 					/>
 					{error && <p style={styles.error}>{error}</p>}
 					<button style={styles.button} type="submit">

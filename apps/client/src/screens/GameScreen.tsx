@@ -170,7 +170,6 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 									setAliasError("");
 								}}
 								placeholder="alias..."
-								autoFocus
 								disabled={aliasSaving}
 							/>
 							<button
@@ -192,7 +191,8 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 							)}
 						</form>
 					) : (
-						<span
+						<button
+							type="button"
 							style={styles.towerLabel}
 							title={`${towerName} (click to rename)`}
 							onClick={() => {
@@ -202,18 +202,19 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 							}}
 						>
 							{towerName}
-						</span>
+						</button>
 					)}
 					<div style={styles.toolGroup}>
 						{TOOLS.map((t) => (
 							<button
+								type="button"
 								key={t.id}
 								title={t.cost > 0 ? `$${t.cost.toLocaleString()}` : ""}
 								style={{
 									...styles.toolBtn,
 									borderColor: selectedTool === t.id ? t.color : "#444",
 									background:
-										selectedTool === t.id ? t.color + "33" : "transparent",
+										selectedTool === t.id ? `${t.color}33` : "transparent",
 									color: selectedTool === t.id ? t.color : "#999",
 								}}
 								onClick={() => setSelectedTool(t.id)}
@@ -232,7 +233,7 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 					<span style={styles.statItem}>
 						{playerCount} player{playerCount !== 1 ? "s" : ""}
 					</span>
-					<button style={styles.leaveBtn} onClick={onLeave}>
+					<button type="button" style={styles.leaveBtn} onClick={onLeave}>
 						Leave
 					</button>
 				</div>
@@ -259,6 +260,7 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 				</span>
 				{connectionStatus === "disconnected" && (
 					<button
+						type="button"
 						style={styles.reconnectBtn}
 						onClick={() => socket.reconnect()}
 					>

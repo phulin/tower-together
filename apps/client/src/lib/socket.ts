@@ -1,8 +1,4 @@
-import type {
-	ClientMessage,
-	ConnectionStatus,
-	ServerMessage,
-} from "../types";
+import type { ClientMessage, ConnectionStatus, ServerMessage } from "../types";
 
 type MessageListener = (msg: ServerMessage) => void;
 type StatusListener = (status: ConnectionStatus) => void;

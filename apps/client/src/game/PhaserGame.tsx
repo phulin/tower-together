@@ -40,7 +40,7 @@ export function PhaserGame({ onCellClick, selectedTool, sceneRef }: Props) {
 			gameRef.current = null;
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, []);
+	}, [sceneRef]);
 
 	useEffect(() => {
 		sceneRef.current?.setOnCellClick(onCellClick);

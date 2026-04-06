@@ -1,3 +1,4 @@
 - This codebase uses progressive disclosure to manage agent context.
   - For each package in `src/` and each script in `scripts/`, maintain an `AGENTS.md` outlining each file's functionality and that of any subpackages.
   - Maintain an overall outline of packages in `CODEBASE.md`.
+- Run `npx biome check . && npx biome format --write .` before committing.

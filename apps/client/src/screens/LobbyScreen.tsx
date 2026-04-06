@@ -59,7 +59,11 @@ export function LobbyScreen({ displayName, onJoinTower, onLogout }: Props) {
 					<h1 style={styles.title}>Tower Lobby</h1>
 					<div style={styles.userRow}>
 						<span style={styles.userName}>{displayName}</span>
-						<button style={styles.logoutBtn} onClick={handleLogout}>
+						<button
+							type="button"
+							style={styles.logoutBtn}
+							onClick={handleLogout}
+						>
 							Change Name
 						</button>
 					</div>
@@ -68,6 +72,7 @@ export function LobbyScreen({ displayName, onJoinTower, onLogout }: Props) {
 				<div style={styles.section}>
 					<h2 style={styles.sectionTitle}>Create a Tower</h2>
 					<button
+						type="button"
 						style={{ ...styles.primaryButton, opacity: isCreating ? 0.6 : 1 }}
 						onClick={handleCreate}
 						disabled={isCreating}
@@ -107,6 +112,7 @@ export function LobbyScreen({ displayName, onJoinTower, onLogout }: Props) {
 							<div style={styles.recentList}>
 								{recentTowers.map((id) => (
 									<button
+										type="button"
 										key={id}
 										style={styles.recentItem}
 										onClick={() => handleRecentJoin(id)}
