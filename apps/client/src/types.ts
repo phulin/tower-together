@@ -51,7 +51,8 @@ export type ServerMessage =
 	  }
 	| { type: "presence_update"; playerCount: number }
 	| { type: "time_update"; simTime: number }
-	| { type: "economy_update"; cash: number };
+	| { type: "economy_update"; cash: number }
+	| { type: "pong" };
 
 export type ClientMessage =
 	| { type: "join_tower"; playerId: string; displayName: string }
