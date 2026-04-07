@@ -2,8 +2,13 @@ import Phaser from "phaser";
 import { TILE_WIDTHS } from "../types";
 
 const GRID_WIDTH = 64;
-const GRID_HEIGHT = 80;
+const GRID_HEIGHT = 110; // 10 underground + 100 above-ground floors
 const CELL_SIZE = 16;
+
+// Floor numbering: internal floor = (GRID_HEIGHT - 1) - Y  (floor 109 at top, floor 0 at bottom)
+// UI label = internal floor - UNDERGROUND_FLOORS  (so floor 10 → "0", floor 0 → "-10")
+const UNDERGROUND_FLOORS = 10; // floors 0-9 are underground
+const UNDERGROUND_Y = GRID_HEIGHT - UNDERGROUND_FLOORS; // Y=100: first underground row
 
 // Tile fill colors
 const TILE_COLORS: Record<string, number> = {
@@ -14,7 +19,8 @@ const TILE_COLORS: Record<string, number> = {
 	hotel_suite: 0x2d4f9c,
 };
 
-const COLOR_EMPTY = 0x1a1a1a;
+const COLOR_SKY = 0x1a3050; // dark blue sky (above ground)
+const COLOR_UNDERGROUND = 0x3d2010; // dark brown soil (underground)
 const COLOR_GRID_LINE = 0x333333;
 const COLOR_HOVER = 0xffff00;
 
@@ -24,6 +30,7 @@ export class GameScene extends Phaser.Scene {
 	private cellGraphics!: Phaser.GameObjects.Graphics;
 	private gridGraphics!: Phaser.GameObjects.Graphics;
 	private hoverGraphics!: Phaser.GameObjects.Graphics;
+	private floorLabelContainer!: Phaser.GameObjects.Container;
 
 	// Stores every occupied cell: "x,y" -> tileType (including extension cells)
 	private grid: Map<string, string> = new Map();
@@ -163,6 +170,11 @@ export class GameScene extends Phaser.Scene {
 		tileWidth: number,
 		tentative: Set<string>,
 	): boolean {
+		if (this.selectedTool === "lobby") {
+			const groundY = GRID_HEIGHT - 1 - UNDERGROUND_FLOORS;
+			const floorsAboveGround = groundY - y;
+			if (floorsAboveGround < 0 || floorsAboveGround % 15 !== 0) return false;
+		}
 		const needsSupport = this.selectedTool !== "lobby";
 		const canReplaceFloor = this.selectedTool !== "floor";
 		for (let dx = 0; dx < tileWidth; dx++) {
@@ -234,6 +246,22 @@ export class GameScene extends Phaser.Scene {
 		this.cellGraphics = this.add.graphics();
 		this.hoverGraphics = this.add.graphics();
 
+		// Floor number labels (left of grid, one per row)
+		const labels: Phaser.GameObjects.Text[] = [];
+		for (let y = 0; y < GRID_HEIGHT; y++) {
+			const floor = (GRID_HEIGHT - 1) - y;
+			const uiLabel = floor - UNDERGROUND_FLOORS;
+			const color = y < UNDERGROUND_Y ? "#5588aa" : "#886644";
+			const text = this.add.text(
+				-4,
+				y * CELL_SIZE + CELL_SIZE / 2,
+				String(uiLabel),
+				{ fontSize: "9px", color, resolution: 2 },
+			).setOrigin(1, 0.5);
+			labels.push(text);
+		}
+		this.floorLabelContainer = this.add.container(0, 0, labels);
+
 		this.arrowKeys = this.input.keyboard!.createCursorKeys();
 
 		this.drawGrid();
@@ -276,9 +304,17 @@ export class GameScene extends Phaser.Scene {
 		const g = this.cellGraphics;
 		g.clear();
 
-		// Background
-		g.fillStyle(COLOR_EMPTY, 1);
-		g.fillRect(0, 0, GRID_WIDTH * CELL_SIZE, GRID_HEIGHT * CELL_SIZE);
+		// Sky background (above ground)
+		g.fillStyle(COLOR_SKY, 1);
+		g.fillRect(0, 0, GRID_WIDTH * CELL_SIZE, UNDERGROUND_Y * CELL_SIZE);
+		// Underground background
+		g.fillStyle(COLOR_UNDERGROUND, 1);
+		g.fillRect(
+			0,
+			UNDERGROUND_Y * CELL_SIZE,
+			GRID_WIDTH * CELL_SIZE,
+			(GRID_HEIGHT - UNDERGROUND_Y) * CELL_SIZE,
+		);
 
 		// Only iterate anchor cells; draw each as a single rectangle spanning its full width.
 		for (const key of this.anchorSet) {

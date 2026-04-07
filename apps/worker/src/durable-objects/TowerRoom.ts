@@ -10,6 +10,16 @@ import {
 	VALID_TILE_TYPES,
 } from "../types";
 
+// Floor layout constants (must match client)
+const UNDERGROUND_FLOORS = 10; // floors 0-9 are underground; floor 10 = ground (UI "0")
+// Ground floor Y in a grid of height H: H - 1 - UNDERGROUND_FLOORS
+// Valid lobby rows: Y where (groundY - Y) % 15 === 0 and Y <= groundY
+function isValidLobbyY(y: number, gridHeight: number): boolean {
+	const groundY = gridHeight - 1 - UNDERGROUND_FLOORS;
+	const floorsAboveGround = groundY - y;
+	return floorsAboveGround >= 0 && floorsAboveGround % 15 === 0;
+}
+
 interface Env {
 	TOWER_ROOM: DurableObjectNamespace;
 }
@@ -51,7 +61,7 @@ export class TowerRoom extends DurableObject<Env> {
 			simTime: 0,
 			isRunning: false,
 			width: 64,
-			height: 80,
+			height: 110,
 			cash: STARTING_CASH,
 			cells: {},
 			cellToAnchor: {},
@@ -212,6 +222,14 @@ export class TowerRoom extends DurableObject<Env> {
 						type: "command_result",
 						accepted: false,
 						reason: "Out of bounds",
+					});
+					return;
+				}
+				if (tileType === "lobby" && !isValidLobbyY(y, this.state.height)) {
+					this.sendTo(ws, {
+						type: "command_result",
+						accepted: false,
+						reason: "Lobby only allowed on ground floor or every 15 floors above",
 					});
 					return;
 				}
