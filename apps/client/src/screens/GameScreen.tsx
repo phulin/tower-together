@@ -98,16 +98,31 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 	}, [playerId, displayName]);
 
 	const handleCellClick = useCallback(
-		(x: number, y: number) => {
+		(x: number, y: number, shift: boolean) => {
 			if (selectedTool === "empty") {
 				socket.send({ type: "remove_tile", x, y });
+				return;
+			}
+
+			if (shift) {
+				// Shift-click: fill the range between lastPlacedAnchor and this cell
+				const fills = sceneRef.current?.computeShiftFill(x, y) ?? [];
+				for (const pos of fills) {
+					socket.send({
+						type: "place_tile",
+						x: pos.x,
+						y: pos.y,
+						tileType: selectedTool,
+					});
+				}
+				// Update lastPlaced to rightmost/leftmost tile placed (last in array)
+				if (fills.length > 0) {
+					const last = fills[fills.length - 1];
+					sceneRef.current?.setLastPlaced(last.x, last.y, selectedTool);
+				}
 			} else {
-				socket.send({
-					type: "place_tile",
-					x,
-					y,
-					tileType: selectedTool,
-				});
+				socket.send({ type: "place_tile", x, y, tileType: selectedTool });
+				sceneRef.current?.setLastPlaced(x, y, selectedTool);
 			}
 		},
 		[selectedTool],

@@ -18,7 +18,7 @@ const COLOR_EMPTY = 0x1a1a1a;
 const COLOR_GRID_LINE = 0x333333;
 const COLOR_HOVER = 0xffff00;
 
-export type CellClickHandler = (x: number, y: number) => void;
+export type CellClickHandler = (x: number, y: number, shift: boolean) => void;
 
 export class GameScene extends Phaser.Scene {
 	private cellGraphics!: Phaser.GameObjects.Graphics;
@@ -39,6 +39,17 @@ export class GameScene extends Phaser.Scene {
 	private camStartX = 0;
 	private camStartY = 0;
 
+	// Drag-to-paint state
+	private isDragging = false;
+	private draggedCells = new Set<string>();
+
+	// Last non-shift placement anchor (for shift-fill)
+	private lastPlacedAnchor: { x: number; y: number; tileType: string } | null =
+		null;
+
+	// Shift key state (for preview)
+	private isShiftHeld = false;
+
 	constructor() {
 		super({ key: "GameScene" });
 	}
@@ -50,6 +61,108 @@ export class GameScene extends Phaser.Scene {
 	setSelectedTool(tool: string): void {
 		this.selectedTool = tool;
 		this.drawHover(); // refresh hover preview width
+	}
+
+	setLastPlaced(x: number, y: number, tileType: string): void {
+		this.lastPlacedAnchor = { x, y, tileType };
+	}
+
+	/** Compute shift-fill positions between lastPlacedAnchor and (clickX, clickY).
+	 *  Fills every row in the Y range.  Within each row tiles are packed left (if the
+	 *  last-placed anchor is to the left of the click) or right (if to the right),
+	 *  skipping any already-occupied cells. */
+	computeShiftFill(
+		clickX: number,
+		clickY: number,
+	): Array<{ x: number; y: number }> {
+		if (!this.lastPlacedAnchor || this.selectedTool === "empty") return [];
+		const { x: lx, y: ly, tileType: lastType } = this.lastPlacedAnchor;
+
+		// Only fill if we're placing the same tile type as the anchor
+		if (lastType !== this.selectedTool) return [];
+
+		const tileWidth = TILE_WIDTHS[this.selectedTool] ?? 1;
+		const lastTileWidth = TILE_WIDTHS[lastType] ?? 1;
+		const yMin = Math.min(ly, clickY);
+		const yMax = Math.max(ly, clickY);
+		const results: Array<{ x: number; y: number }> = [];
+
+		if (lx < clickX) {
+			// Last placed is to the LEFT → pack left on every row.
+			// On the anchor's own row start after the tile; other rows include its columns.
+			const fillEnd = clickX;
+			for (let y = yMin; y <= yMax; y++) {
+				const fillStart = y === ly ? lx + lastTileWidth : lx;
+				if (fillStart > fillEnd) continue;
+				results.push(...this.packLeft(fillStart, fillEnd, y, tileWidth));
+			}
+		} else if (lx > clickX) {
+			// Last placed is to the RIGHT → pack right on every row.
+			// On the anchor's own row end before the tile; other rows include its columns.
+			const fillStart = clickX;
+			for (let y = yMin; y <= yMax; y++) {
+				const fillEnd = y === ly ? lx - 1 : lx + lastTileWidth - 1;
+				if (fillStart > fillEnd) continue;
+				results.push(...this.packRight(fillStart, fillEnd, y, tileWidth));
+			}
+		}
+		return results;
+	}
+
+	private packLeft(
+		fillStart: number,
+		fillEnd: number,
+		y: number,
+		tileWidth: number,
+	): Array<{ x: number; y: number }> {
+		const placements: Array<{ x: number; y: number }> = [];
+		const tentative = new Set<string>();
+		let x = fillStart;
+		while (x <= fillEnd && x + tileWidth - 1 < GRID_WIDTH) {
+			if (this.cellsAvailable(x, y, tileWidth, tentative)) {
+				placements.push({ x, y });
+				for (let dx = 0; dx < tileWidth; dx++) tentative.add(`${x + dx},${y}`);
+				x += tileWidth;
+			} else {
+				x += 1;
+			}
+		}
+		return placements;
+	}
+
+	private packRight(
+		fillStart: number,
+		fillEnd: number,
+		y: number,
+		tileWidth: number,
+	): Array<{ x: number; y: number }> {
+		const placements: Array<{ x: number; y: number }> = [];
+		const tentative = new Set<string>();
+		// Start from rightmost anchor that keeps tile within both fillEnd and grid bounds
+		let x = Math.min(fillEnd, GRID_WIDTH - tileWidth);
+		while (x >= fillStart) {
+			if (this.cellsAvailable(x, y, tileWidth, tentative)) {
+				placements.unshift({ x, y }); // prepend to keep left-to-right order
+				for (let dx = 0; dx < tileWidth; dx++) tentative.add(`${x + dx},${y}`);
+				x -= tileWidth;
+			} else {
+				x -= 1;
+			}
+		}
+		return placements;
+	}
+
+	private cellsAvailable(
+		x: number,
+		y: number,
+		tileWidth: number,
+		tentative: Set<string>,
+	): boolean {
+		for (let dx = 0; dx < tileWidth; dx++) {
+			const key = `${x + dx},${y}`;
+			if (this.grid.has(key) || tentative.has(key)) return false;
+		}
+		return true;
 	}
 
 	applyInitState(
@@ -170,6 +283,16 @@ export class GameScene extends Phaser.Scene {
 		g.clear();
 		if (!this.hoveredCell) return;
 
+		// While shift is held and a fill is possible, show the fill outline preview
+		if (
+			this.isShiftHeld &&
+			this.lastPlacedAnchor &&
+			this.selectedTool !== "empty"
+		) {
+			this.drawShiftPreview();
+			return;
+		}
+
 		const { x, y } = this.hoveredCell;
 		if (y < 0 || y >= GRID_HEIGHT) return;
 
@@ -192,6 +315,26 @@ export class GameScene extends Phaser.Scene {
 		}
 	}
 
+	private drawShiftPreview(): void {
+		if (!this.hoveredCell) return;
+		const g = this.hoverGraphics;
+		const fills = this.computeShiftFill(this.hoveredCell.x, this.hoveredCell.y);
+		if (fills.length === 0) return;
+
+		const tileWidth = TILE_WIDTHS[this.selectedTool] ?? 1;
+		const pw = tileWidth * CELL_SIZE - 1;
+		const ph = CELL_SIZE - 1;
+
+		g.fillStyle(COLOR_HOVER, 0.12);
+		g.lineStyle(1, COLOR_HOVER, 0.75);
+		for (const { x, y } of fills) {
+			const px = x * CELL_SIZE + 1;
+			const py = y * CELL_SIZE + 1;
+			g.fillRect(px, py, pw, ph);
+			g.strokeRect(px, py, pw, ph);
+		}
+	}
+
 	private worldToCell(wx: number, wy: number): { x: number; y: number } {
 		return {
 			x: Math.floor(wx / CELL_SIZE),
@@ -204,11 +347,14 @@ export class GameScene extends Phaser.Scene {
 
 		this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
 			const cell = this.worldToCell(pointer.worldX, pointer.worldY);
+			const shift = !!(pointer.event as MouseEvent).shiftKey;
 
-			if (cell.x !== this.hoveredCell?.x || cell.y !== this.hoveredCell?.y) {
-				this.hoveredCell = cell;
-				this.drawHover();
-			}
+			const cellChanged =
+				cell.x !== this.hoveredCell?.x || cell.y !== this.hoveredCell?.y;
+			const shiftChanged = shift !== this.isShiftHeld;
+			this.hoveredCell = cell;
+			this.isShiftHeld = shift;
+			if (cellChanged || shiftChanged) this.drawHover();
 
 			if (this.isPanning) {
 				const dx = pointer.x - this.panStartX;
@@ -217,6 +363,18 @@ export class GameScene extends Phaser.Scene {
 					this.camStartX - dx / cam.zoom,
 					this.camStartY - dy / cam.zoom,
 				);
+			} else if (this.isDragging && pointer.leftButtonDown()) {
+				const cellKey = `${cell.x},${cell.y}`;
+				if (
+					!this.draggedCells.has(cellKey) &&
+					cell.x >= 0 &&
+					cell.x < GRID_WIDTH &&
+					cell.y >= 0 &&
+					cell.y < GRID_HEIGHT
+				) {
+					this.draggedCells.add(cellKey);
+					this.onCellClick?.(cell.x, cell.y, false);
+				}
 			}
 		});
 
@@ -239,7 +397,11 @@ export class GameScene extends Phaser.Scene {
 					cell.y >= GRID_HEIGHT
 				)
 					return;
-				this.onCellClick?.(cell.x, cell.y);
+				this.isDragging = true;
+				this.draggedCells.clear();
+				this.draggedCells.add(`${cell.x},${cell.y}`);
+				const shift = !!(pointer.event as MouseEvent).shiftKey;
+				this.onCellClick?.(cell.x, cell.y, shift);
 			}
 		});
 
@@ -247,6 +409,7 @@ export class GameScene extends Phaser.Scene {
 			if (!pointer.middleButtonDown() && !pointer.rightButtonDown()) {
 				this.isPanning = false;
 			}
+			this.isDragging = false;
 		});
 
 		this.input.on(
@@ -267,5 +430,15 @@ export class GameScene extends Phaser.Scene {
 		);
 
 		this.game.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+		// Redraw hover when shift is pressed/released without moving the mouse
+		this.input.keyboard?.on("keydown-SHIFT", () => {
+			this.isShiftHeld = true;
+			this.drawHover();
+		});
+		this.input.keyboard?.on("keyup-SHIFT", () => {
+			this.isShiftHeld = false;
+			this.drawHover();
+		});
 	}
 }

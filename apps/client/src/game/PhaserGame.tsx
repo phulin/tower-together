@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { GameScene } from "./GameScene";
 
 interface Props {
-	onCellClick: (x: number, y: number) => void;
+	onCellClick: (x: number, y: number, shift: boolean) => void;
 	selectedTool: string;
 	sceneRef: React.MutableRefObject<GameScene | null>;
 }
