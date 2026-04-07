@@ -1,4 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+
+interface Toast {
+	id: number;
+	message: string;
+}
+
+let toastCounter = 0;
 import type { GameScene } from "../game/GameScene";
 import { PhaserGame } from "../game/PhaserGame";
 import * as socket from "../lib/socket";
@@ -55,6 +62,15 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 	const [aliasInput, setAliasInput] = useState("");
 	const [aliasError, setAliasError] = useState("");
 	const [aliasSaving, setAliasSaving] = useState(false);
+	const [toasts, setToasts] = useState<Toast[]>([]);
+
+	const addToast = useCallback((message: string) => {
+		const id = ++toastCounter;
+		setToasts((prev) => [...prev, { id, message }]);
+		setTimeout(() => {
+			setToasts((prev) => prev.filter((t) => t.id !== id));
+		}, 3000);
+	}, []);
 
 	const sceneRef = useRef<GameScene | null>(null);
 
@@ -73,6 +89,8 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 				case "command_result":
 					if (msg.accepted && msg.patch) {
 						sceneRef.current?.applyPatch(msg.patch.cells);
+					} else if (!msg.accepted && msg.reason) {
+						addToast(msg.reason);
 					}
 					break;
 				case "presence_update":
@@ -86,7 +104,7 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 					break;
 			}
 		});
-	}, []);
+	}, [addToast]);
 
 	useEffect(() => {
 		return socket.onStatus((status: ConnectionStatus) => {
@@ -263,6 +281,17 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 				/>
 			</div>
 
+			{/* Toasts */}
+			{toasts.length > 0 && (
+				<div style={styles.toastContainer}>
+					{toasts.map((t) => (
+						<div key={t.id} style={styles.toast}>
+							{t.message}
+						</div>
+					))}
+				</div>
+			)}
+
 			{/* Status bar */}
 			<div style={styles.statusBar}>
 				<span style={{ ...styles.statusDot, background: statusColor }} />
@@ -292,6 +321,7 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 
 const styles: Record<string, React.CSSProperties> = {
 	container: {
+		position: "relative",
 		display: "flex",
 		flexDirection: "column",
 		width: "100%",
@@ -409,4 +439,24 @@ const styles: Record<string, React.CSSProperties> = {
 	},
 	statusRight: { marginLeft: "auto", fontSize: 11, color: "#666" },
 	towerIdSmall: { fontFamily: "monospace", color: "#888" },
+	toastContainer: {
+		position: "absolute",
+		bottom: 40,
+		right: 16,
+		display: "flex",
+		flexDirection: "column",
+		alignItems: "flex-end",
+		gap: 6,
+		pointerEvents: "none",
+		zIndex: 100,
+	},
+	toast: {
+		padding: "7px 14px",
+		borderRadius: 6,
+		background: "#3a1a1a",
+		border: "1px solid #c0392b",
+		color: "#f87171",
+		fontSize: 13,
+		whiteSpace: "nowrap",
+	},
 };

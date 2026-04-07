@@ -79,6 +79,7 @@ export class TowerRoom extends DurableObject<Env> {
 		const parsed = JSON.parse(row.value) as TowerState;
 		if (!parsed.cash) parsed.cash = STARTING_CASH;
 		if (!parsed.cellToAnchor) parsed.cellToAnchor = {};
+		if (parsed.height < 110) parsed.height = 110;
 		return parsed;
 	}
 
