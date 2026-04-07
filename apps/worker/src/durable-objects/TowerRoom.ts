@@ -277,8 +277,8 @@ export class TowerRoom extends DurableObject<Env> {
 				}
 				this.state.cash -= cost;
 
-				const patch: Array<{ x: number; y: number; tileType: string }> =
-					Array.from({ length: w }, (_, dx) => ({ x: x + dx, y, tileType }));
+				const patch: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }> =
+					Array.from({ length: w }, (_, dx) => ({ x: x + dx, y, tileType, isAnchor: dx === 0 }));
 
 				// Auto-fill any horizontal gaps on this row with free floor tiles.
 				this.fillRowGaps(y, patch);
@@ -345,11 +345,11 @@ export class TowerRoom extends DurableObject<Env> {
 				}
 
 				// Replace with floor cells or empty depending on context.
-				const patch: Array<{ x: number; y: number; tileType: string }> = [];
+				const patch: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }> = [];
 				for (let dx = 0; dx < w; dx++) {
 					const resultType = turnToFloor ? "floor" : "empty";
 					if (turnToFloor) this.state.cells[`${ax + dx},${ay}`] = "floor";
-					patch.push({ x: ax + dx, y: ay, tileType: resultType });
+					patch.push({ x: ax + dx, y: ay, tileType: resultType, isAnchor: true });
 				}
 
 				this.broadcast({ type: "state_patch", cells: patch });
@@ -420,7 +420,7 @@ export class TowerRoom extends DurableObject<Env> {
 	/** After a placement on row `y`, fill any supported horizontal gaps with free floor. */
 	private fillRowGaps(
 		y: number,
-		patch: Array<{ x: number; y: number; tileType: string }>,
+		patch: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }>,
 	): void {
 		if (!this.state) return;
 		// Gaps only make sense if there's a row below to provide support.
@@ -445,7 +445,7 @@ export class TowerRoom extends DurableObject<Env> {
 			if (!this.state.cells[belowKey]) continue; // no support
 			// Place a free floor tile.
 			this.state.cells[key] = "floor";
-			patch.push({ x, y, tileType: "floor" });
+			patch.push({ x, y, tileType: "floor", isAnchor: true });
 		}
 	}
 
@@ -465,10 +465,10 @@ export class TowerRoom extends DurableObject<Env> {
 
 	private cellsToArray(
 		cells: Record<string, string>,
-	): Array<{ x: number; y: number; tileType: string }> {
+	): Array<{ x: number; y: number; tileType: string; isAnchor: boolean }> {
 		return Object.entries(cells).map(([key, tileType]) => {
 			const [x, y] = key.split(",").map(Number);
-			return { x, y, tileType };
+			return { x, y, tileType, isAnchor: !this.state!.cellToAnchor[key] };
 		});
 	}
 }

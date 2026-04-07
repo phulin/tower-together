@@ -4,7 +4,7 @@ export interface TowerSave {
 	simTime: number;
 	width: number;
 	height: number;
-	cells: Array<{ x: number; y: number; tileType: string }>;
+	cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }>;
 	updatedAt: number;
 }
 
@@ -65,16 +65,16 @@ export type ServerMessage =
 			cash: number;
 			width: number;
 			height: number;
-			cells: Array<{ x: number; y: number; tileType: string }>;
+			cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }>;
 	  }
 	| {
 			type: "state_patch";
-			cells: Array<{ x: number; y: number; tileType: string }>;
+			cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }>;
 	  }
 	| {
 			type: "command_result";
 			accepted: boolean;
-			patch?: { cells: Array<{ x: number; y: number; tileType: string }> };
+			patch?: { cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }> };
 			reason?: string;
 	  }
 	| { type: "presence_update"; playerCount: number }

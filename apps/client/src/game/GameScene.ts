@@ -27,6 +27,8 @@ export class GameScene extends Phaser.Scene {
 
 	// Stores every occupied cell: "x,y" -> tileType (including extension cells)
 	private grid: Map<string, string> = new Map();
+	// Keys of anchor cells only (used for rendering)
+	private anchorSet: Set<string> = new Set();
 
 	private hoveredCell: { x: number; y: number } | null = null;
 	private selectedTool: string = "floor";
@@ -179,24 +181,35 @@ export class GameScene extends Phaser.Scene {
 	}
 
 	applyInitState(
-		cells: Array<{ x: number; y: number; tileType: string }>,
+		cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }>,
 	): void {
 		this.grid.clear();
+		this.anchorSet.clear();
 		for (const cell of cells) {
 			if (cell.tileType !== "empty") {
-				this.grid.set(`${cell.x},${cell.y}`, cell.tileType);
+				const key = `${cell.x},${cell.y}`;
+				this.grid.set(key, cell.tileType);
+				if (cell.isAnchor) this.anchorSet.add(key);
 			}
 		}
 		this.drawAllCells();
 	}
 
-	applyPatch(cells: Array<{ x: number; y: number; tileType: string }>): void {
+	applyPatch(
+		cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }>,
+	): void {
 		for (const cell of cells) {
 			const key = `${cell.x},${cell.y}`;
 			if (cell.tileType === "empty") {
 				this.grid.delete(key);
+				this.anchorSet.delete(key);
 			} else {
 				this.grid.set(key, cell.tileType);
+				if (cell.isAnchor) {
+					this.anchorSet.add(key);
+				} else {
+					this.anchorSet.delete(key);
+				}
 			}
 		}
 		this.drawAllCells();
@@ -214,8 +227,8 @@ export class GameScene extends Phaser.Scene {
 		);
 		this.cameras.main.centerOn(totalWidth / 2, totalHeight / 2);
 
-		this.cellGraphics = this.add.graphics();
 		this.gridGraphics = this.add.graphics();
+		this.cellGraphics = this.add.graphics();
 		this.hoverGraphics = this.add.graphics();
 
 		this.drawGrid();
@@ -253,40 +266,18 @@ export class GameScene extends Phaser.Scene {
 		g.fillStyle(COLOR_EMPTY, 1);
 		g.fillRect(0, 0, GRID_WIDTH * CELL_SIZE, GRID_HEIGHT * CELL_SIZE);
 
-		// Draw each tile. For multi-cell objects, only draw from the leftmost cell
-		// to produce a unified rectangle (no internal borders).
-		const drawn = new Set<string>();
-
-		for (const [key, tileType] of this.grid) {
-			if (drawn.has(key)) continue;
+		// Only iterate anchor cells; draw each as a single rectangle spanning its full width.
+		for (const key of this.anchorSet) {
+			const tileType = this.grid.get(key);
+			if (!tileType) continue;
+			const color = TILE_COLORS[tileType];
+			if (!color) continue;
 
 			const [x, y] = key.split(",").map(Number);
-			const color = TILE_COLORS[tileType];
-			if (!color) continue; // unknown type, skip
-
-			// Find the leftmost cell of this object in this row
-			// (left neighbour has same type = this is an extension cell, skip)
-			const leftKey = `${x - 1},${y}`;
-			if (this.grid.get(leftKey) === tileType) {
-				drawn.add(key);
-				continue;
-			}
-
-			// Scan right to find the full run width for this object
-			let runWidth = 1;
-			while (this.grid.get(`${x + runWidth},${y}`) === tileType) {
-				drawn.add(`${x + runWidth},${y}`);
-				runWidth++;
-			}
-			drawn.add(key);
-
-			const px = x * CELL_SIZE + 1;
-			const py = y * CELL_SIZE + 1;
-			const pw = runWidth * CELL_SIZE - 1;
-			const ph = CELL_SIZE - 1;
+			const w = TILE_WIDTHS[tileType] ?? 1;
 
 			g.fillStyle(color, 1);
-			g.fillRect(px, py, pw, ph);
+			g.fillRect(x * CELL_SIZE + 1, y * CELL_SIZE + 1, w * CELL_SIZE - 1, CELL_SIZE - 1);
 		}
 	}
 
