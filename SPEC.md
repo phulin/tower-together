@@ -227,40 +227,40 @@ The following checkpoints fire during each day cycle (day_tick range 0x000–0xa
 - `0x07d0`: linked facility record advance; security housekeeping tier-2 check (param=2); periodic event trigger (every 12 days)
 - `0x0898`: type-6 facility record advance
 - `0x08fc`: day counter increment; calendar phase recompute; palette update
-- `0x0960`: no-op
 - `0x09c4`: runtime entity refresh and reset sweep
 - `0x09e5`: ledger rollover; cashflow reactivation; periodic operating expenses
 - `0x09f6`: end-of-day notification popup
+- `0x0960`: no-op
 - `0x0a06`: security housekeeping tier-5 check (param=5)
 
 In addition, every tick when `day_tick > 0x0f0`:
 - if `daypart_index < 6`: 1/16 chance to trigger a random news event
-- if `daypart_index < 4`: call `trigger_vip_special_visitor()` — see "VIP/Special Visitor Toggle" below
+- if `daypart_index < 4`: call the `0x1f..0x21` metro-station display toggle — see "Metro Station Display Toggle" below
 
-### VIP Hotel Suite And The Star Advancement Gate
+### Metro Station And The 4→5 Star Advancement Gate
 
-**`g_vip_system_eligibility` (DS:0xbc5c)** stores the floor index of the placed VIP hotel suite (object types `0x1f`, `0x20`, or `0x21`). Initialized to `0xffff` (−1 signed) on new game, meaning no VIP suite. Set to the object's floor index when a VIP suite is first placed. Saved and restored with the tower file.
+**`g_metro_station_floor_index` (DS:0xbc5c)** stores the floor index of the placed metro station stack (object types `0x1f`, `0x20`, or `0x21`). Initialized to `0xffff` (−1 signed) on new game, meaning no metro station stack. Set to the object's floor index when a metro station is first placed. Saved and restored with the tower file.
 
 This value gates two behaviors:
-1. The VIP/special visitor toggle (see below) — only fires when `bc5c >= 0`.
+1. The metro-station display toggle (see below) — only fires when `bc5c >= 0`.
 2. The 4→5 star advancement (see "Star Advancement Gate" below) — blocked when `bc5c < 0`.
 
-**Secondary use**: `g_vip_system_eligibility` is also used as a floor-range lower-bound in elevator-extension and object-placement validation: placement below `bc5c − 1` fires an error. When no VIP suite is placed (`bc5c = −1`), this bound equals `−2` and never activates.
+**Secondary use**: `g_metro_station_floor_index` is also used as a floor-range lower-bound in elevator-extension and object-placement validation: placement below `bc5c − 1` fires an error. When no metro station is placed (`bc5c = −1`), this bound equals `−2` and never activates.
 
-### VIP/Special Visitor Toggle
+### Metro Station Display Toggle
 
-`trigger_vip_special_visitor()` runs each tick when `day_tick > 0x0f0` and `daypart_index < 4`. Guards:
+The `0x1f..0x21` display toggle runs each tick when `day_tick > 0x0f0` and `daypart_index < 4`. Guards:
 - `game_state_flags & 0x09 == 0` (not paused or suspended)
-- `g_vip_system_eligibility [0xbc5c] >= 0` (a VIP hotel suite exists)
+- `g_metro_station_floor_index [0xbc5c] >= 0` (a metro station exists)
 
 Probability: `rand() % 100 == 0` (1% per tick).
 
 On trigger: sweep all placed objects of type `0x1f`, `0x20`, or `0x21`. For each:
-- If `object[+0xc] == 0`: set `object[+0xc] = 2` (activate VIP state); fire notification `0x271a` (shown once after the sweep if any object activated).
-- If `object[+0xc] != 0`: clear `object[+0xc] = 0` (deactivate VIP state).
+- If `object[+0xc] == 0`: set `object[+0xc] = 2`; fire notification `0x271a` (shown once after the sweep if any object activated).
+- If `object[+0xc] != 0`: clear `object[+0xc] = 0`.
 - Mark dirty (`object[+0x13] = 1`).
 
-This toggles the VIP-visit display state on VIP-category objects (cosmetic only). It is **not** connected to star-rating evaluation and does not dispatch or reset evaluation entities. The manual's claim that VIP satisfaction blocks star advancement is misleading — the actual gate is only whether a VIP suite has been placed.
+This toggles a cosmetic display state on the metro-station object stack. It is **not** connected to star-rating evaluation and does not dispatch or reset evaluation entities. The actual 4→5 gate is only whether the metro station has been placed.
 
 ### Checkpoint `0x000`: Start Of Day
 
@@ -286,10 +286,6 @@ Clear `g_facility_progress_override` to 0, then:
 ### Checkpoint `0x020`: Housekeeping Daily Reset
 
 Sweep all type-0x15 (housekeeping) objects and reset `state` from 6 → 0.
-
-### Checkpoints `0x050` and `0x078`: Conditional Progress Notifications
-
-If the `facility_progress_override` gate bit is set: fire a conditional progress notification popup. No simulation state changes.
 
 ### Checkpoint `0x0a0`: Morning Notification Popup
 
@@ -390,10 +386,6 @@ For all **paired-link** records: advance reverse-half phase (same logic as midda
 2. Recompute `g_calendar_phase_flag = compute_calendar_phase_flag()`.
 3. Update display palette (Windows `SelectPalette` / `RealizePalette` calls — no simulation state effect).
 
-### Checkpoint `0x0960`: No-Op
-
-No simulation state changes.
-
 ### Checkpoint `0x09c4`: Runtime Refresh Sweep
 
 Execute in order:
@@ -432,9 +424,9 @@ Execute in order:
 
 5. Call `reset_entity_runtime_state()` (same as step 2 of 0x09c4).
 
-### Checkpoint `0x09f6`: End-of-Day Notification
+### Checkpoint `0x0960`: No-Op
 
-Fire an end-of-day popup. Every 5th day (`day_counter % 5 == 4`) a special variant fires; otherwise the standard end-of-day notification.
+No simulation state changes.
 
 ### Checkpoint `0x0a06`: Security Housekeeping Final Tier Check
 
@@ -449,6 +441,10 @@ Call `update_security_housekeeping_state(5)`. This is the final daily security c
 6. Sweep all placed objects: for each of type 0x14 (security guard) or 0x15 (housekeeping cart): if `([0xc1a0] != 0) OR (object[+0xb] != 5)`: set `object[+0xb] = tier`, mark dirty.
 
 The `stay_phase` of type-0x14/0x15 objects tracks the duty tier and is read by the bomb-patrol check path.
+
+### Checkpoint `0x09f6`: End-of-Day Notification
+
+Fire an end-of-day popup. Every 5th day (`day_counter % 5 == 4`) a special variant fires; otherwise the standard end-of-day notification.
 
 ## New Game Initialization
 
@@ -471,7 +467,7 @@ Via `initialize_simulation_clock` at `0x1208_0000`:
 
 ### Star / Tower State
 
-- `g_vip_system_eligibility (0xbc5c) = 0xffff` (−1: no VIP suite).
+- `g_metro_station_floor_index (0xbc5c) = 0xffff` (−1: no metro station).
 - `g_eval_entity_index (0xbc60) = 0xffff` (−1: no evaluation in progress).
 - `[0xbc5e] = 0xffff`, `[0xbc62] = 0xffff` (related sentinels).
 - `[0xbc40] = 1` (notification base / initial tower tier seed).
@@ -528,7 +524,7 @@ Maintain:
 - linked sidecar indices
 - family-specific aux bytes
 
-Represent the core static object as an 18-byte (`0x12`) `PlacedObjectRecord` with these recovered stable fields (offsets confirmed via `FUN_1200_1847` and `FUN_1200_293e` placer initialization):
+Represent the core static object as an 18-byte (`0x12`) `PlacedObjectRecord` with these recovered stable fields (offsets confirmed via `place_object_on_floor` (`FUN_1200_1847`) and `place_mergeable_span_object_on_floor` (`FUN_1200_293e`) placer initialization):
 
 | Offset | Size | Field | Notes |
 |---|---|---|---|
@@ -536,12 +532,12 @@ Represent the core static object as an 18-byte (`0x12`) `PlacedObjectRecord` wit
 | `+0x08` | word | `right_tile_index` | rightmost tile occupied |
 | `+0x0a` | byte | `object_type_code` | placement-time type code |
 | `+0x0b` | byte | `object_state_code` / `stay_phase` | per-family lifecycle byte |
-| `+0x0c..+0x0d` | word | `aux_value_or_timer` | initialised to `param_4` by `FUN_1200_1847` (tool-counter rotation index for hotels/offices/condos); reused as a runtime cycle counter by some families |
+| `+0x0c..+0x0d` | word | `aux_value_or_timer` | initialised to `param_4` by `place_object_on_floor` (`FUN_1200_1847`) (tool-counter rotation index for hotels/offices/condos); reused as a runtime cycle counter by some families |
 | `+0x12` | byte | `linked_record_index` | sidecar slot reference; initialised to `-1` (no sidecar) |
 | `+0x13` | byte | `needs_refresh_flag` | dirty bit; initialised to `1` so the next refresh sweep picks it up |
 | `+0x14` | byte | `pairing_active_flag` | initialised to `1` by both placers (latch — see "Facility Readiness And Support Search") |
 | `+0x15` | byte | `pairing_status` | initialised to `-1` (invalid) — first scoring sweep populates 0/1/2 |
-| `+0x16` | byte | `variant_index` | rent tier 0–3 for priced families; sentinel `4` (no payout) for unpriced families. `FUN_1200_1847` writes `1` for families 3/4/5/7/9/10 and `4` for everything else; `FUN_1200_293e` (drag placer for floor/lobby/parking/anchor) always writes `4` |
+| `+0x16` | byte | `variant_index` | rent tier 0–3 for priced families; sentinel `4` (no payout) for unpriced families. `place_object_on_floor` (`FUN_1200_1847`) writes `1` for families 3/4/5/7/9/10 and `4` for everything else; `place_mergeable_span_object_on_floor` (`FUN_1200_293e`) always writes `4` for drag/span families |
 | `+0x17` | byte | `activation_tick_count` | initialised to `0`; capped at `0x78`. See `activate_family_cashflow_if_operational`. |
 
 The 18-byte stride matches the `iVar2 * 0x12` indexing seen throughout the placer code. Additional family-specific bytes (0..5) at offsets `+0x00..+0x05` carry runtime/per-family state (e.g. `route_mode` at `+0x06` for routing entities — the spec uses `+0x06` here in the routing context, derived from the same word; reconcile with the explicit table above when ambiguity arises).
@@ -1813,7 +1809,7 @@ These bucket tables are populated during facility placement/removal and are sepa
 
 ### Families `0x24` Through `0x28`: Star-Rating Evaluation Entities
 
-These families model the “VIP visit” or evaluation event mechanically.
+These families model the metro-station display toggle or the evaluation event mechanically.
 
 Known structure:
 
@@ -1885,21 +1881,41 @@ If both pass, `bc40` increments by 1, a palette/visual update fires, and `FUN_11
 | Current stars (`bc40`) | Required before advancing |
 |---|---|
 | 1 | None — always eligible once ledger threshold met |
-| 2 | Metro station placed (`[0xc19e] == 1`, set by `check_and_trigger_treasure` when type `0x0e` is built) |
+| 2 | Security office placed (`[0xc19e] == 1`, set by `check_and_trigger_treasure` when type `0x0e` is built) |
 | 3 | Office placed (`[0xc19f] == 1`); security adequate (`[0xc1a0] == 1`); office service rating passed (`[0xc197] == 1`); `daypart_index >= 4`; `calendar_phase_flag != 1`; viable commercial routes (`[0xc1a1] == 1`) |
-| 4 | VIP hotel suite placed (`g_vip_system_eligibility [0xbc5c] >= 0`); security adequate (`[0xc1a0]`); `daypart_index >= 4`; `calendar_phase_flag != 1`; viable commercial routes (`[0xc1a1]`) |
-| 5 | Always blocked — Tower advancement handled by separate mechanism |
+| 4 | Metro station placed (`g_metro_station_floor_index [0xbc5c] >= 0`); security adequate (`[0xc1a0]`); `daypart_index >= 4`; `calendar_phase_flag != 1`; viable commercial routes (`[0xc1a1]`) |
+| 5 | Always blocked here — Tower (★ → TOWER) advancement runs through the **Cathedral evaluation pathway** instead (see below) |
+
+##### 5★ → Tower advancement (Cathedral evaluation pathway)
+
+The 5★ → Tower (`bc40 == 6`) upgrade is the only star transition that does NOT go through `check_and_advance_star_rating`. Instead it is driven by the cathedral / evaluation-entity flow. Recovered chain:
+
+1. **Prerequisite**: Player builds the cathedral (placement type `0x24`, $3,000,000, singleton). Placement helper `FUN_1200_2347` stores the cathedral floor in `g_eval_entity_index` (`0xbc60`). Cathedral availability is gated to ★5 by the menu-bar UI.
+2. **Daily activation**: At each day-start checkpoint, when `g_eval_entity_index >= 0` and `star_count > 2`, `activate_upper_tower_runtime_group` (0x10480000) sweeps floors 109–119 (`0x6d..0x77`) for objects of types `0x24..0x28`. For each, it forces 8 consecutive runtime entity slots into state `0x20`, yielding 40 evaluation entities (5 object types × 8 slots).
+3. **Per-arrival check**: Whenever an evaluation entity reaches its destination (state transitions to `0x03`), `check_evaluation_completion_and_award` (`0x104800f0`) fires. Guards: `g_eval_entity_index >= 0` AND `g_day_tick < 800` (the daily deadline — eval must complete before this tick).
+4. **All-arrived test**: `check_all_evaluation_entities_arrived` (`0x104803bb`) returns 1 only when both:
+   - `compute_tower_tier_from_ledger() > bc40` (i.e. the ledger-derived tier already qualifies — for the 5→6 transition this means `g_primary_family_ledger_total >= 15000`), AND
+   - All 40 evaluation entities (sweeping floors `0x6d..0x77`, types `0x24..0x28`, 8 consecutive runtime entries each) are in state `0x03`.
+5. **Award**: When the all-arrived test passes, `award_star_rating_upgrade` (`0x104802b5`) runs (skipped if already at `bc40 == 6`). It:
+   - Sets bit `0x04` in the `0xbc7a` flag word (notification/visuals pending).
+   - Clears `0xbc80` (eval popup state).
+   - Shows popup notification `0x2718` ("Tower" award message).
+   - Calls `FUN_1148_00af` (`0x114800af`) which executes `MOV [0xbc40], 6` — directly setting `star_count` to the Tower value — and runs the same palette/realize/`reset_star_gate_state` visual refresh used by `check_and_advance_star_rating`.
+   - Resets all 0x24..0x28 objects on floors `0x6d..0x77` to `aux=2` / `dirty=1` so they re-spawn for retry on the next day if the deadline was missed.
+6. **Failure path (deadline missed or not all 40 arrived)**: `check_evaluation_completion_and_award` instead just stamps the just-arrived entity's object slot with `aux=3` / `dirty=1` (per-slot "arrived" marker). The next day-start re-runs `activate_upper_tower_runtime_group` and the evaluation retries.
+
+This is the SimTower victory condition. Headless implementations must implement (a) cathedral placement with the singleton gate, (b) daily eval-entity activation, (c) the dual gate (ledger ≥ 15000 AND all 40 in state `0x03` before `g_day_tick < 800`), (d) the direct `bc40 := 6` write on success.
 
 #### Gate Flags
 
 | Flag | Address | Set by | Meaning |
 |---|---|---|---|
-| `metro_placed` | `0xc19e` | `check_and_trigger_treasure` on type-`0x0e` build | Metro station exists |
+| `security_office_placed` | `0xc19e` | `check_and_trigger_treasure` on type-`0x0e` build | Security office exists |
 | `office_placed` | `0xc19f` | `check_and_trigger_treasure` on type-`0x05` build | Office exists |
 | `office_service_ok` | `0xc197` | Office service evaluation (every 9th day at star=3) | Office service rating meets threshold |
 | `security_adequate` | `0xc1a0` | `update_security_housekeeping_state` | Security/housekeeping coverage adequate |
 | `routes_viable` | `0xc1a1` | `rebuild_path_seed_bucket_table` when `star > 2` | Commercial routes exist |
-| `vip_suite_placed` | `0xbc5c` | VIP suite object placement handler | VIP hotel suite floor index (≥ 0 = suite exists) |
+| `metro_station_floor_index` | `0xbc5c` | Metro station placement handler | Metro station floor index (≥ 0 = station exists) |
 
 All gate flags are cleared by `FUN_1150_0000` at new-game initialization. `FUN_1150_003d` (called after each star advance) resets `office_service_ok`, `office_service_in_progress`, and `evaluation_pending` flags, and fires a star-advance notification (`bc40 + 0xbd4`).
 
@@ -2125,7 +2141,7 @@ Non-zero entries (labels marked † are inferred from menu-string price matching
 | 0x2b | 1000 | $100,000 | Service Elevator (shaft) |
 | 0x2c | 500 | $50,000 | Parking Ramp (vertical anchor) |
 
-**Parking placement clarified**: family `0x18` is the **drag-laid parking lot**, placed via `FUN_1200_27ce` → `FUN_1200_293e` (the same generic span-placer used by floor tile `0x00`, lobby `0x0b`, and vertical anchor `0x2c`). It writes the placed-object record with type `0x0a = 0x18` and the dragged left/right tile bounds. The total placement cost is computed by `compute_total_placement_cost(type, floor, left, right)`, which for span types multiplies by tile-width; the per-tile cost slot in YEN #1000 is empty for parking, so the effective cost is the flat `YEN_1000[0x18] = $5000` entrance value plus any per-tile floor allotments. The manual's "Parking - $3000" label most likely refers to the **stairs/parking entrance** family `0x16` (placed via `FUN_1200_149c`), which is a different object code than `0x18`. This resolves the earlier discrepancy.
+**Parking placement clarified**: family `0x18` is the **drag-laid parking lot**, placed via `FUN_1200_27ce` → `place_mergeable_span_object_on_floor` (`FUN_1200_293e`) (the same generic span-placer used by floor tile `0x00`, lobby `0x0b`, and vertical anchor `0x2c`). It writes the placed-object record with type `0x0a = 0x18` and the dragged left/right tile bounds. The total placement cost is computed by `compute_total_placement_cost(type, floor, left, right)`, which for span types multiplies by tile-width; the per-tile cost slot in YEN #1000 is empty for parking, so the effective cost is the flat `YEN_1000[0x18] = $5000` entrance value plus any per-tile floor allotments. The manual's "Parking - $3000" label most likely refers to the **stairs/parking entrance** family `0x16` (placed via `FUN_1200_149c`), which is a different object code than `0x18`. This resolves the earlier discrepancy.
 
 **Carrier-mode ↔ operating-expense and tool mapping — RESOLVED**
 
@@ -2219,12 +2235,27 @@ Persist and restore:
 - **Entertainment link records**: the 12-byte link entries (forward/reverse phase counters, age counter, family selector, link tile spans).
 - **Commercial venue records**: the 0x200-entry `CommercialVenueRecord` table.
 - **Facility sidecars**: per-facility-floor subtype storage referenced by `facility[floor][subtype]`.
-- **Runtime subtype mappings**: the per-floor lists referenced by `g_unknown_ptr_array` (tile → object index resolution).
+- **Runtime subtype mappings**: the per-floor lookup data inside `g_floor_object_tables` (tile/subtype → placed-object resolution).
 - **Queue state**: `primary_route_status_by_floor` / `secondary_route_status_by_floor` per carrier, plus blocked-pair records.
 - **Ledger state**: `g_cash_balance`, `g_primary_family_ledger_total`, all per-family ledgers, the running income/expense buckets, and `g_security_ledger_scale` (DS:0xbc68).
-- **Calendar and day tick state**: `g_day_tick`, `g_day_counter`, `g_calendar_phase_flag`, `daypart_index`, `g_star_count`, `facility_progress_override`, `fire_suppressor_subtype`, `g_vip_system_eligibility (0xbc5c)`, `g_eval_entity_index (0xbc60)`, the star-gate flag word at `0xc198..0xc19b`, and the `metro_placed`/`office_placed` byte flags at `0xc19e/0xc19f`.
+- **Calendar and day tick state**: `g_day_tick`, `g_day_counter`, `g_calendar_phase_flag`, `daypart_index`, `g_star_count`, `facility_progress_override`, `fire_suppressor_subtype`, `g_metro_station_floor_index (0xbc5c)`, `g_eval_entity_index (0xbc60)`, the star-gate flag word at `0xc198..0xc19b`, and the `security_office_placed`/`office_placed` byte flags at `0xc19e/0xc19f`.
 
 On load, after restoring the above, rebuild the derived bucket tables (transfer-group cache, route reachability tables, walkability flags, vertical anchor coverage). These are pure functions of the persisted state and are never persisted directly.
+
+`g_floor_object_tables` currently resolves to this stable floor-local blob layout:
+
+- `+0x00..+0x01`: `object_count`
+- `+0x02..+0x03`: `leftmost_occupied_tile`
+- `+0x04..+0x05`: `rightmost_occupied_tile`
+- `+0x06..+0xa91`: `PlacedObjectRecord[150]`
+- `+0xa92..+0xb4d`: `uint16 object_slot_by_subtype_index[150]`
+
+Evidence:
+
+- The archive loader reads the first 6 bytes of each floor blob as a header, then reads `object_count * 0x12` bytes starting at `+0x06`.
+- `0xa92 - 0x06 = 0xa8c = 150 * 0x12`, so the space before the subtype map is exactly 150 placed-object slots.
+- `find_unused_floor_subtype_index` (`0x12300da0`) and `rebuild_floor_subtype_lookup_map` (`0x12300e4b`) both treat the subtype namespace as 150 entries (`0x96`) and the lookup table at `+0xa92` as `uint16[150]`.
+- The main placement paths `place_object_on_floor` (`FUN_1200_1847`) and `place_mergeable_span_object_on_floor` (`FUN_1200_293e`) initialize `+0x02 = left_tile`, `+0x04 = right_tile` on an empty floor, compare them against new placement bounds when deciding whether the new object extends the floor span, and update them when the floor-wide occupied range grows left or right.
 
 ## Event Mechanics
 
@@ -2410,7 +2441,7 @@ This command is the inverse of building. Demolition runs through the unified tea
 
 The non-removable families are rejected before any work is done:
 
-- `0x0e` (metro station), `0x0f` (connector), `0x18..0x1a` (parking variants), `0x1f..0x21` (VIP hotel suite variants), `0x24..0x28` (evaluation entities), `0x2d..0x32` (paired connectors).
+- `0x0e` (security office), `0x0f` (connector), `0x18..0x1a` (parking variants), `0x1f..0x21` (metro station variants), `0x24..0x28` (evaluation entities), `0x2d..0x32` (paired connectors).
 - Reject-on-connector returns error `0x15`; reject-on-other-non-removable returns error `0x21`. Both errors suppress the demolish chime and leave the object in place.
 
 ### Per-Family Teardown Actions
@@ -2507,7 +2538,7 @@ Known event-like examples from the manual:
 - terrorist ransom prompt
 - fire rescue / helicopter prompt
 - hidden treasure notification
-- VIP-related notifications
+- Metro-station-related notifications
 
 Recovered mechanics support:
 
@@ -2567,7 +2598,7 @@ The elevator editor is implemented by the `ELVDLOGMAIN` dialog proc at `0x10a006
 8. For shrink: bump cars off removed floors and re-request them (`FUN_10a8_1625` + `FUN_10a8_14fa`).
 9. `FUN_1200_1641()` (ledger flush) + UI refresh.
 
-**Extend shaft bottom** (`FUN_10a8_0b87`): mirror of top extension, with the floor-floor being `g_vip_system_eligibility - 1` (typically `-2`, effectively unused in normal play). Same `0x1d` span clamp. For express elevators only, after lowering the bottom, each car is reseated via `floor_to_carrier_slot_index` and `FUN_1000_1141`, and four bytes per car in the per-car state region are cleared (queue/state reset on bottom-relocation).
+**Extend shaft bottom** (`FUN_10a8_0b87`): mirror of top extension, with the floor-floor being `g_metro_station_floor_index - 1` (typically `-2` when no metro station is placed). Same `0x1d` span clamp. For express elevators only, after lowering the bottom, each car is reseated via `floor_to_carrier_slot_index` and `FUN_1000_1141`, and four bytes per car in the per-car state region are cleared (queue/state reset on bottom-relocation).
 
 **Floor walkability / concourse toggle** (`FUN_10c8_04e0`): toggles a placeable concourse (sky-lobby) object. Wipes `g_floor_walkability_flags` (60 words), rescans all 64 placed concourse objects, recomputes per-floor walk bits (bit 0 = standard, bit 1 = sky lobby), then `FUN_11b8_06a4` + both rebuilds + redraw + chime.
 
@@ -2738,9 +2769,9 @@ Because random news events are cosmetic — they do not alter the simulation at 
 Confirmed per-type floor-range constraints (recovered from checkpoint sweeps and placement flags):
 
 - **Evaluation entities (`0x24..0x28`)**: floors `0x6d..0x77` (109–119) only. Initialized at checkpoint `0x000` step 5 when `star_count > 2`.
-- **Metro station (`0x0e`)**: basement only. First placement sets `metro_placed` (`0xc19e`) via `check_and_trigger_treasure` at `0x11500167` and is required for 2→3 star advancement.
+- **Security office (`0x0e`)**: basement only. First placement sets `security_office_placed` (`0xc19e`) via `check_and_trigger_treasure` at `0x11500167` and is required for 2→3 star advancement.
 - **Office (`0x07`)**: any above-grade floor. First placement sets `office_placed` (`0xc19f`) and is required for 3→4 star advancement.
-- **VIP hotel suite (`0x1f..0x21`)**: first placement sets `g_vip_system_eligibility` (`0xbc5c`) to the chosen floor. Subsequent placement below `bc5c − 1` is rejected. Required for 4→5 star advancement.
+- **Metro station (`0x1f..0x21`)**: first placement sets `g_metro_station_floor_index` (`0xbc5c`) to the chosen floor. Subsequent placement below `bc5c − 1` is rejected. Required for 4→5 star advancement.
 - **Fire suppressor (`0x28`)**: setting `fire_suppressor_subtype` on placement disables the fire event entirely (checkpoint `0x0f0` gate `fire_suppressor_subtype < 0`).
 - **Transit concourse (`0x18`)**: placement triggers `rebuild_transfer_group_cache`; the rebuild requires at least one carrier within ±6 floors (local elevator) or ±4 floors (express) overlapping the concourse.
 - **Carrier shafts (`0x01`, `0x1b`, `0x2a`, `0x2b`)**: `top_served_floor ≤ 109`, span `≤ 29` for express/escalator mode, no hard top-span cap for standard local elevator but constrained by the 10-slot floor-to-slot mapping.
@@ -2781,13 +2812,13 @@ Dispatch order:
 | `0x09` | Condo | `FUN_1200_1847(..., counter=*0x8140)` | rotation `*0x8140 % 3` |
 | `0x0b` | Lobby (drag) | `FUN_1200_24fe` after `FUN_11a0_0bba(x)` validator | `FUN_11a0_0bba == 0` → error `0x22` |
 | `0x0d` | Medical / sky lobby | `FUN_1200_1847(..., counter=*0x8146)` | **cap `*0xbc72 < 10`**, else error `0x1e`; rotation `*0x8146 % 3` |
-| `0x0e` | Metro | `FUN_1200_1847` | **cap `*0xbc6e < 10`**, else error `0x1e` |
+| `0x0e` | Security office | `FUN_1200_1847` | **cap `*0xbc6e < 10`**, else error `0x1e` |
 | `0x12`/`0x1d` | Cinema (paired) / Party Hall (single-link) | `FUN_1200_1fef` | **cap `g_active_entertainment_link_count < 0x10` (16)**, else error `0x1e` |
 | `0x14` | Security | `FUN_1200_1fef`; bumps `g_security_ledger_scale` on success | — |
 | `0x16` | Stairs | `FUN_1200_149c(..., flag=1)` | parking-helper emits `0x15` (shared with parking placement) |
 | `0x18` | Parking lot (drag) | `FUN_1200_27ce(..., uVar4=0x18, ...)` → `FUN_1200_293e` (generic span placer) | drag-laid parking row; corrected from prior "Express Elevator drag" misreading |
 | `0x1b` | Escalator | `FUN_1200_149c(..., flag=0)` | — |
-| `0x1f` | VIP suite | `pre_day_4(...)` → `FUN_1200_2159(...)`; stores floor in `g_vip_system_eligibility` | **singleton: `g_vip_system_eligibility >= 0` → error `0x11`** |
+| `0x1f` | Metro station | `pre_day_4(...)` → `FUN_1200_2159(...)`; stores floor in `g_metro_station_floor_index` | **singleton: `g_metro_station_floor_index >= 0` → error `0x11`** |
 | `0x24` | Cathedral / evaluation | `pre_day_4` → `FUN_1200_2347`; stores floor in `g_eval_entity_index` | **singleton: `g_eval_entity_index >= 0` → error `0x13`** |
 | `0x2a` | Carrier sub `0x2a` | `place_carrier_shaft(..., mode=0, sub=0x2a)` | — |
 | `0x2b` | Carrier sub `0x15` mode 2 | `place_carrier_shaft(..., mode=2, sub=0x15)` | — |
@@ -2795,7 +2826,7 @@ Dispatch order:
 | default | any unrecognized 0..0x32 | `FUN_1200_1847(..., counter=0)` | generic |
 
 **Error-code → dispatch-level emission sites:**
-- `0x11` — VIP suite already placed.
+- `0x11` — Metro station already placed.
 - `0x13` — Evaluation entity already placed.
 - `0x1e` — Per-kind quota exhausted (commercial venues / sky lobby / metro / entertainment links).
 - `0x1f` — Vertical anchor column mismatch (must be `x == 9`).
@@ -2821,7 +2852,7 @@ Function at `0x1148041d`. Reads `g_primary_family_ledger_total` and returns tier
 
 #### New Game Initial State — RESOLVED (caveat: `g_star_count` initial write site)
 
-`new_game_initializer` at `0x10d8_07f6`. Full initialization documented in "New Game Initialization" section. Starting cash is $2,000,000 (`g_cash_balance = 20000` in $100 units), `g_day_tick = 2533`, `g_day_counter = 0`, no pre-placed objects, VIP eligibility = −1, all star gate flags cleared except the `0xc198..0xc19b` 4-byte word which is initialized to `0xffffffff`.
+`new_game_initializer` at `0x10d8_07f6`. Full initialization documented in "New Game Initialization" section. Starting cash is $2,000,000 (`g_cash_balance = 20000` in $100 units), `g_day_tick = 2533`, `g_day_counter = 0`, no pre-placed objects, metro-station floor index = −1, all star gate flags cleared except the `0xc198..0xc19b` 4-byte word which is initialized to `0xffffffff`.
 
 **Remaining sub-blocker**: `g_star_count` initial value and the caller of `new_game_initializer` (presumably the menu "New Tower" handler). Expected `g_star_count = 1` based on gameplay. Low priority.
 
@@ -2877,9 +2908,9 @@ These numbers are **runtime entity slot counts**, not geometric tile widths. The
 | `0x1c` | 8 | explicit | (escalator variant) |
 | `0x1d` | 24 | explicit | Party hall |
 | `0x1e` | 24 | inherits 0x1d | Party hall variant |
-| `0x1f` | 30 | explicit | VIP hotel suite |
-| `0x20` | 30 | inherits 0x1f | VIP suite tile 2 |
-| `0x21` | 30 | inherits 0x20 | VIP suite tile 3 |
+| `0x1f` | 30 | explicit | Metro station |
+| `0x20` | 30 | inherits 0x1f | Metro station tile 2 |
+| `0x21` | 30 | inherits 0x20 | Metro station tile 3 |
 | `0x22` | 7 | explicit | Entertainment link forward half |
 | `0x23` | 7 | inherits 0x22 | Entertainment link reverse half |
 | `0x24` | 28 | explicit | Cathedral / evaluation entity |
@@ -2898,16 +2929,16 @@ These numbers are **runtime entity slot counts**, not geometric tile widths. The
 
 **Source-column legend:**
 - **explicit** — handler in `FUN_1200_0000` writes a literal tile-width immediate (e.g. `MOV word ptr [BX + 0x7ca4], 0x18` writes 24).
-- **inherits N-1** — handler at offset `0x00e9`: copies the tile width from the previous type code (`*(0x7c98 + N*12)` = `*(0x7ca4 + (N-1)*12)`). Used for variant codes that share geometry with the prior code (cinema/party-hall halves, VIP suite tiles, eval-entity chain).
+- **inherits N-1** — handler at offset `0x00e9`: copies the tile width from the previous type code (`*(0x7c98 + N*12)` = `*(0x7ca4 + (N-1)*12)`). Used for variant codes that share geometry with the prior code (cinema/party-hall halves, metro-station tiles, eval-entity chain).
 - **resource icon** — handler at offset `0x0105` (default): calls `FUN_1038:0000(1000 + (type<<6))` which loads the menu-button bitmap resource, reads the bitmap RECT's `right` field, and shifts right by 3 to get tile width. This means the width for these types is encoded in the per-type menu icon resource width, not in code. Verified externally: `0x03` = 4 tiles (32-pixel icon), `0x09` = 16 tiles (128-pixel icon), `0x0b` = 1 tile (8-pixel icon), `0x2c` = 1 tile (column-marker icon).
 - **skipped (no width)** — type codes `0x19`, `0x1a` go through handler `0x0159` which does **not** write a tile width (the BSS slot stays at 0). These codes are internal sub-tile variants for parking and are never placed directly by the menu, so a zero width is correct.
 
 **Heights**: there is no per-type height table. Every above-grade non-carrier object is exactly **1 floor tall**. Carriers (`0x01` standard, `0x2a` express, `0x2b` service elevator; `0x16` stairs; `0x1b` escalator) have variable height set at placement: top floor ≤ 109 (`new_top < 0x6e`); span ≤ 29 floors for express/escalator; standard local elevator constrained by the 10-slot served-floor mapping. Vertical anchor `0x2c` is single-tile, single-floor, locked to column 9.
 
 **Why this is no longer a sim-correctness or implementation blocker**: every consumer of width inside the simulation (support search, demolition sweep, drawing, support-radius pairing) reads the per-object `+0x06`/`+0x08` left/right tile fields directly. The placer stamps these at placement time from `*0x8032`. A clean-room implementation can hard-code the table above as a 49-entry constants array (with the 6 resource-loaded entries either extracted from the NE bitmap resources at IDs `1000 + (type << 6)` or supplied as known-good values from in-game observation: 0x03=4, 0x09=16, 0x0b=1, 0x2c=1; the remaining unidentified codes 0x02/0x04/0x05/0x0e/0x0f/0x10/0x14/0x29/0x2d/0x2e/0x2f need either resource extraction or are not player-placeable).
-- Placement geometry rules per type code (floor range, adjacency, basement-only vs above-grade) live inside the per-family helpers `FUN_1200_1847` (priced families 3/4/5/7/9 + capped families 6/0xa/0xc/0xd/0xe), `FUN_1200_1fef` (entertainment + security), `FUN_1200_149c` (escalator + stairs), `FUN_1200_2159` (VIP suite), `FUN_1200_2347` (cathedral/eval), `FUN_1200_24fe` (lobby), `FUN_1200_2693` (vertical anchor — column-9 constraint already documented), `FUN_1200_27ce/293e` (floor + parking drag), and `place_carrier_shaft` (mode-1/0/2 carriers). Each helper emits a recovered error code on rejection. A conservative headless implementation can enforce the documented per-type quotas, singleton gates, and floor-range constraints; the remaining intra-helper structural rules are Tier 3 (player-interaction completeness, not sim-correctness).
+- Placement geometry rules per type code (floor range, adjacency, basement-only vs above-grade) live inside the per-family helpers `FUN_1200_1847` (priced families 3/4/5/7/9 + capped families 6/0xa/0xc/0xd/0xe), `FUN_1200_1fef` (entertainment + security), `FUN_1200_149c` (escalator + stairs), `FUN_1200_2159` (metro station), `FUN_1200_2347` (cathedral/eval), `FUN_1200_24fe` (lobby), `FUN_1200_2693` (vertical anchor — column-9 constraint already documented), `FUN_1200_27ce/293e` (floor + parking drag), and `place_carrier_shaft` (mode-1/0/2 carriers). Each helper emits a recovered error code on rejection. A conservative headless implementation can enforce the documented per-type quotas, singleton gates, and floor-range constraints; the remaining intra-helper structural rules are Tier 3 (player-interaction completeness, not sim-correctness).
 - Parking variant disambiguation (`0x18/0x19/0x1a`): all three are swept identically by `add_parking_operating_expense` so there is no mechanical distinction — the variants differ only by visual depth. The drag-placed parking lot writes type `0x18` directly (confirmed via `FUN_1200_27ce`). Codes `0x19/0x1a` are most likely sub-tile variants written by the parking entrance helper `FUN_1200_149c` when the player drops the entrance-style parking object. The mechanical effect is identical regardless of variant.
-- VIP hotel suite variant disambiguation (`0x1f/0x20/0x21`): all three are swept identically by `trigger_vip_special_visitor` and all three gate the 4→5 star advancement. The cost table shows `0x1f = $1,000,000` with `0x20/0x21 = 0`, confirming the three codes are paired tile segments of one multi-tile suite (similar to `0x22/0x23` being paired halves of an entertainment link). The placement helper `FUN_1200_2159` writes all three on a single placement. Mechanically a clean-room reimplementation can treat them as one logical "VIP suite" object spanning three tiles.
+- Metro station variant disambiguation (`0x1f/0x20/0x21`): the selected-object string resource names base type `0x1f` as `Metro Station`, and `FUN_1108_2582` normalizes `0x20/0x21` back to that base type before loading the label. All three are swept identically by the metro-station display toggle and all three gate the 4→5 star advancement. The placement helper `FUN_1200_2159` writes all three on a single placement, so a clean-room reimplementation can treat them as one logical metro station stack spanning three floors.
 - `0x22/0x23` are not player-facing placement codes — they are the forward/reverse halves of a paired entertainment link, assigned internally by the placement dispatcher when a family-`0x12` object is built. `0x24..0x28` are the evaluation entities (floors 109–119, 8 slots each).
 - **`carrier_mode` semantic labels — RESOLVED.** Confirmed via `FUN_1200_082c`:
   - Family `0x01` (player tool: Standard Elevator) → `place_carrier_shaft(., mode=1, sub=0x15)` → carrier_record.carrier_mode = 1, charged YEN[0x01]=$200k.
@@ -3076,13 +3107,13 @@ Step 4 is `FUN_1048_0179` — **evaluation entity midday return dispatch**. See 
 
 Fully described. See checkpoint `0x0a06` section for the complete behavior. Called three times per day with escalating thresholds: `param=0` at `0x0640` (always resets to tier 0), `param=2` at `0x07d0` (awards up to tier 2), `param=5` at `0x0a06` (awards up to tier 5). Affects `stay_phase` of type-0x14 (security) and type-0x15 (housekeeping) objects. The bomb-patrol path reads these stay_phase values.
 
-#### Per-Tick VIP/Special Visitor Check — RESOLVED
+#### Per-Tick Metro Station Display Check — RESOLVED
 
-Fully described. See "VIP/Special Visitor Toggle" section. It is **not** connected to star-rating evaluation. It toggles the `object[+0xc]` sidecar field on types `0x1f`/`0x20`/`0x21` and fires notification `0x271a`.
+Fully described. See "Metro Station Display Toggle" section. It is **not** connected to star-rating evaluation. It toggles the `object[+0xc]` sidecar field on types `0x1f`/`0x20`/`0x21` and fires notification `0x271a`.
 
-#### VIP System Eligibility Flag And Star Advancement Gate — RESOLVED
+#### Metro Station Floor Flag And Star Advancement Gate — RESOLVED
 
-`g_vip_system_eligibility` (`[0xbc5c]`) stores the floor index of the placed VIP hotel suite. Set during object placement by the placement dispatch handler. Initialized to `0xffff` (−1). The 4→5 star advancement gate requires `bc5c >= 0` (VIP suite placed). Full per-star gate conditions documented in "Star Advancement Gate" section. The VIP visitor animation (toggle on `0x1f/0x20/0x21`) is cosmetic only and does not affect advancement.
+`g_metro_station_floor_index` (`[0xbc5c]`) stores the floor index of the placed metro station stack. Set during object placement by the placement dispatch handler. Initialized to `0xffff` (−1). The 4→5 star advancement gate requires `bc5c >= 0` (metro station placed). Full per-star gate conditions are documented in "Star Advancement Gate". The `0x1f/0x20/0x21` display toggle is cosmetic only and does not affect advancement.
 
 ### Tier 3: Player Interaction Gaps
 
@@ -3135,9 +3166,9 @@ These do not affect simulation correctness or player-command semantics.
 
 ### Confidence Notes
 
-- **Fully specified and implementable now**: time model, money model (cash/ledgers/expense sweep), condo family 9 (complete state machine + scoring + sale/refund + A/B/C rating, including state 0x01 calendar-phase stagger special path), hotel rooms families 3/4/5 (complete state machine + stay_phase lifecycle + multi-tile checkout), hotel guests family 0x21 (complete state machine with all states 0x01/0x22/0x27/0x41/0x62 + venue selection + slot acquisition/release + minimum stay wait + return routing), commercial venues 6/0xc/10 (CommercialVenueRecord full layout + slot protocol + capacity recompute + progress slot logic + venue allocation initialization), parking (family `0x18`), route resolution (full selection algorithm + scoring + walkability + transfer-group cache + queue drain + arrival dispatch + out-of-range car reset + all delay values), payout and expense tables, object placement/demolish framework, operational scoring pipeline, demand counter pipeline, entertainment link phase machine + entity state machine + all income rates, demand history log + service request pipeline, fire event (full bidirectional spread + object deletion + interval prompt + extinguish), bomb/terrorist event (full setup + blast + security hit-check + resolution), VIP/security/treasure event triggers and flow (including VIP toggle mechanics + VIP suite placement gate for 4→5 star advancement), star advancement gate (all per-star conditions for 1→2 through 4→5, including metro/office/office-service/security/VIP-suite gates), prompt blocking semantics, family 0x0f vacancy claimant (full state machine + claim-completion writes), path-seed bucket table (full source table + bucket layout), security/housekeeping state machine (all three daily checkpoints + full tier logic), full scheduler checkpoint bodies including 0x04b0 step 4 (eval midday return dispatch) and 0x0a06 (final security check), retail derived_state_code (confirmed always 0), star-rating evaluation failure path (fail = no upgrade, no carry-over).
+- **Fully specified and implementable now**: time model, money model (cash/ledgers/expense sweep), condo family 9 (complete state machine + scoring + sale/refund + A/B/C rating, including state 0x01 calendar-phase stagger special path), hotel rooms families 3/4/5 (complete state machine + stay_phase lifecycle + multi-tile checkout), hotel guests family 0x21 (complete state machine with all states 0x01/0x22/0x27/0x41/0x62 + venue selection + slot acquisition/release + minimum stay wait + return routing), commercial venues 6/0xc/10 (CommercialVenueRecord full layout + slot protocol + capacity recompute + progress slot logic + venue allocation initialization), parking (family `0x18`), route resolution (full selection algorithm + scoring + walkability + transfer-group cache + queue drain + arrival dispatch + out-of-range car reset + all delay values), payout and expense tables, object placement/demolish framework, operational scoring pipeline, demand counter pipeline, entertainment link phase machine + entity state machine + all income rates, demand history log + service request pipeline, fire event (full bidirectional spread + object deletion + interval prompt + extinguish), bomb/terrorist event (full setup + blast + security hit-check + resolution), metro/security/treasure event triggers and flow (including the metro display toggle + metro placement gate for 4→5 star advancement), star advancement gate (all per-star conditions for 1→2 through 4→5, including security/office/office-service/security/metro gates), prompt blocking semantics, family 0x0f vacancy claimant (full state machine + claim-completion writes), path-seed bucket table (full source table + bucket layout), security/housekeeping state machine (all three daily checkpoints + full tier logic), full scheduler checkpoint bodies including 0x04b0 step 4 (eval midday return dispatch) and 0x0a06 (final security check), retail derived_state_code (confirmed always 0), star-rating evaluation failure path (fail = no upgrade, no carry-over).
 - **Additional fully specified in the most recent review pass**: facility readiness and support search (full per-tile metric, variant modifier, support-family remap table, `+60` support bonus, per-star pairing-status thresholds, warning-state rules); rent-change command (variant_index at `object+0x04`, condo `stay_phase < 0x18` guard, `recompute_object_operational_status` follow-up); demolition teardown (per-family ledger-mutation and sidecar-freeing table via `delete_placed_object_and_release_sidecars`, non-removable family list, no cash refund); fire/helicopter rescue prompt scheduling (resource IDs, pause-via-modal-notification, `rescue_cost` at DS `0xe64c`); random news events (confirmed cosmetic-only, no simulation side effects); carrier `carrier_mode` corrected (2 = Service, not escalator; escalators are special-link segments); YEN #1001/#1002 unit scale confirmed at $100/unit; new-game caller `FUN_1130_0005` identified with no hidden RNG/day-of-week seeding.
-- **Additional fully specified in this review pass**: construction-tool dispatcher identified at `FUN_1200_082c` (not `FUN_1060_0000`, which is the elevator-editor click router); per-family handler routing, quota caps (commercial venues ≤ 200, sky lobby ≤ 10, metro ≤ 10, entertainment links ≤ 16), singleton gates (VIP suite, cathedral/eval entity), vertical-anchor column constraint (`x == 9`), and dispatch-level error-code emission sites (`0x11`, `0x13`, `0x1e`, `0x1f`, `0x20`, `0x22`) enumerated; elevator-editor adjacency rules recovered (6-tile min gap to standard elevator, 4-tile min gap to express/escalator, `+2` right-side clearance, `tile_x < left_edge - 2` left-side, blocker-walk costs 1 or 2 tiles); **carrier_mode player-facing labels resolved** (mode 0 = Express Elevator, 1 = Standard Elevator, 2 = Service Elevator); **PlacedObjectRecord layout** confirmed at offsets `+0x06`/`+0x08`/`+0x0a`/`+0x0b`/`+0x0c`/`+0x12..+0x17` from `FUN_1200_1847` and `FUN_1200_293e` placer initialisation; **default `variant_index`** at placement (1 for priced families 3/4/5/7/9/10, 4 sentinel for everything else) confirmed at the `switch(param_2)` block in `FUN_1200_1847`; **drag families corrected**: family `0x00` is the floor-tile drag placer (not Standard Elevator) and family `0x18` is the parking-lot drag placer (not Express Elevator); the four drag-laid families are `0x00`, `0x0b`, `0x18`, `0x2c`, all routed through `FUN_1200_293e` (or its lobby/anchor variants). **Tile widths are per-tool constants, not a per-type table**: each menu-button writer sets `*0x8032` (active object pixel width) at the same time it writes `*0x802c = 1000 + (family << 6)`; placer code reads `right = left + (*0x8032 / 8)` from the click position. Sim-correctness consumers (support search, demolition, drawing) all read width from the placed-object's own `+0x06`/`+0x08` fields, so the per-tool width table is needed only by the menu-bar UI — a Tier 3/4 player-interaction concern, not a sim blocker.
+- **Additional fully specified in this review pass**: construction-tool dispatcher identified at `FUN_1200_082c` (not `FUN_1060_0000`, which is the elevator-editor click router); per-family handler routing, quota caps (commercial venues ≤ 200, sky lobby ≤ 10, security offices ≤ 10, entertainment links ≤ 16), singleton gates (metro station, cathedral/eval entity), vertical-anchor column constraint (`x == 9`), and dispatch-level error-code emission sites (`0x11`, `0x13`, `0x1e`, `0x1f`, `0x20`, `0x22`) enumerated; elevator-editor adjacency rules recovered (6-tile min gap to standard elevator, 4-tile min gap to express/escalator, `+2` right-side clearance, `tile_x < left_edge - 2` left-side, blocker-walk costs 1 or 2 tiles); **carrier_mode player-facing labels resolved** (mode 0 = Express Elevator, 1 = Standard Elevator, 2 = Service Elevator); **PlacedObjectRecord layout** confirmed at offsets `+0x06`/`+0x08`/`+0x0a`/`+0x0b`/`+0x0c`/`+0x12..+0x17` from `FUN_1200_1847` and `FUN_1200_293e` placer initialisation; **default `variant_index`** at placement (1 for priced families 3/4/5/7/9/10, 4 sentinel for everything else) confirmed at the `switch(param_2)` block in `FUN_1200_1847`; **drag families corrected**: family `0x00` is the floor-tile drag placer (not Standard Elevator) and family `0x18` is the parking-lot drag placer (not Express Elevator); the four drag-laid families are `0x00`, `0x0b`, `0x18`, `0x2c`, all routed through `FUN_1200_293e` (or its lobby/anchor variants). **Tile widths are per-tool constants, not a per-type table**: each menu-button writer sets `*0x8032` (active object pixel width) at the same time it writes `*0x802c = 1000 + (family << 6)`; placer code reads `right = left + (*0x8032 / 8)` from the click position. Sim-correctness consumers (support search, demolition, drawing) all read width from the placed-object's own `+0x06`/`+0x08` fields, so the per-tool width table is needed only by the menu-bar UI — a Tier 3/4 player-interaction concern, not a sim blocker.
 - **Partially specified (player interaction)**: elevator editor controls (per-daypart schedule-edit handler candidate narrowed to message-table entries 4/5 at `0x10a0:12c9`); per-family placer helpers (`FUN_1200_1847` / `1fef` / `149c` / `2159` / `2347` / `24fe` / `2693` / `27ce`) — dispatcher and quota gates recovered but intra-helper floor-range and adjacency rules not fully enumerated; rent-change dialog UI (proc location unknown, mutation target known).
 - **Cosmetic only (Tier 4)**: player-facing tier labels, calendar phase and progress-override player meanings, type 0x28 identity, ledger report presentation, news-event text strings (confirmed cosmetic).
 - **Additional clarifications in this review pass**: runtime entity record consolidated layout (offsets `+0x00..+0x0f` documented in one table); manual-vs-binary hard-cap cross-check (24 shafts, 8 cars/elevator, 30/29-floor span, 109 top, 39-cap commercial venues all confirmed; carrier passenger constants 17/36/17 not found as separate tunables and deferred to a Tier-2 sub-blocker on `floor_queue_span_count` field semantics); per-trip stair/escalator hop limits (no per-entity counter — manual's 4/7 numbers descriptive aggregates of per-segment span check + cost cutoff); operational-score / manual-stress reconciliation (same quantity, different units, shared 80/150/200 thresholds); family-5 suite entity count (3 sub-tile entities, manual's "2 guests" is UI-only cosmetic); movie-theater management mapped to `family_selector` mutation on the entertainment link record.

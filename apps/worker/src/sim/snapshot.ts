@@ -45,6 +45,7 @@ export function createInitialSnapshot(
 			overlayToAnchor: {},
 			placedObjects: {},
 			sidecars: [],
+			entities: [],
 			carriers: [],
 			specialLinks: createEmptySpecialLinks(),
 			floorWalkabilityFlags: new Array(GRID_HEIGHT).fill(0),
@@ -115,6 +116,7 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 			overlayToAnchor: (old.overlayToAnchor as Record<string, string>) ?? {},
 			placedObjects: {},
 			sidecars: [],
+			entities: [],
 			carriers: [],
 			specialLinks: [],
 			floorWalkabilityFlags: [],
@@ -143,6 +145,7 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	snapshot.world.width ??= GRID_WIDTH;
 	snapshot.world.placedObjects ??= {};
 	snapshot.world.sidecars ??= [];
+	snapshot.world.entities ??= [];
 	snapshot.world.gateFlags ??= createGateFlags();
 	snapshot.world.carriers ??= [];
 	if (snapshot.world.specialLinks.length === 0) {

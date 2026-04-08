@@ -22,7 +22,7 @@ apps/
       carriers.ts               # CarrierRecord + CarrierCar state machine
       ledger.ts                 # cash_balance, primary / secondary / tertiary ledgers
       sidecars.ts               # ServiceRequestEntry, CommercialVenueRecord, EntertainmentLinkRecord
-      events.ts                 # Fire, bomb, VIP event state machines
+      events.ts                 # Fire, bomb, metro-display toggle, and prompt event state machines
       commands.ts               # build, demolish, rent-change, elevator-edit handlers
       resources.ts              # YEN #1000 / #1001 / #1002 tables + tuning constants
       families/
@@ -124,8 +124,8 @@ Add all SimTower tile types to both `types.ts` files and the tile registry:
 | 0x14 | Security Office | — | varies | Passive; enables bomb patrol; stay_phase = duty tier |
 | 0x15 | Housekeeping | — | varies | Passive cart; stay_phase = duty tier |
 | 0x18 | Parking | — | 4 | Passive; contributes to transfer cache |
-| 0x1f / 0x20 / 0x21 | VIP Hotel Suite | — | 30 | Required for 4→5 star; sets g_vip_system_eligibility |
-| 0x0e | Metro Station | — | varies | Required for 2→3 star; sets metro_placed gate flag |
+| 0x1f / 0x20 / 0x21 | Metro Station Stack | — | 30 | Required for 4→5 star; sets `g_metro_station_floor_index` |
+| 0x0e | Security Office | — | varies | Required for 2→3 star; sets `security_office_placed` gate flag |
 | 0x28 | Fire Suppressor | — | 28 | Prevents fire events (same width as eval entities) |
 | Elevator shaft (0x01) | — | — | 4 | Vertical anchor; multiple per column |
 | Lobby/floor (0x00) | — | — | 1 | Drag-placed, fills floor row |
@@ -164,10 +164,10 @@ Reproduce the exact initial state from `new_game_initializer` at `0x10d8_07f6`:
 - `g_day_tick = 0x9e5` (= **2533**) — starts mid-day; `daypart_index = 6`. First full day cycle begins on the second sim day.
 - `g_day_counter = 0`, `g_calendar_phase_flag = 0`
 - `g_star_count = 1` (hard-code; exact write site not recovered)
-- `g_vip_system_eligibility = 0xffff` (−1: no VIP suite)
+- `g_metro_station_floor_index = 0xffff` (−1: no metro station)
 - `g_eval_entity_index = 0xffff` (−1: no evaluation in progress)
 - `g_facility_progress_override = 0`, `g_security_ledger_scale = 0`
-- Star gate flags all zeroed: `metro_placed`, `office_placed`, `office_service_ok`, `security_adequate`, `routes_viable`, `office_service_in_progress`
+- Star gate flags all zeroed: `security_office_placed`, `office_placed`, `office_service_ok`, `security_adequate`, `routes_viable`, `office_service_in_progress`
 - `[0xc198..0xc19b] = 0xffffffff` (purpose unresolved, but must be all-ones)
 - No pre-placed objects, carriers, or special-link segments. Run `rebuild_transfer_group_cache` and `rebuild_route_reachability_tables` once at end of init.
 
@@ -557,12 +557,12 @@ Setup: pick random floor + tile, compute ransom by star rating, emit modal ranso
 
 Security guard patrol: deterministic tile sweep from right to left across floors. Hits bomb tile → disarmed. Fails to reach bomb tile before deadline → detonation. Blast: 6-floor tall × 40-tile wide rectangle destroyed via full teardown path.
 
-### 5.5 VIP Hotel Suite and Visitor Toggle
+### 5.5 Metro Station Display Toggle And 4→5 Gate
 
-**`g_vip_system_eligibility` (`[0xbc5c]`)**: stores the floor index of the placed VIP hotel suite (types `0x1f`, `0x20`, `0x21`). Initialized to `0xffff` (−1 signed) on new game. Set to the object's floor index when a VIP suite is first placed. Saved/restored with tower file.
+**`g_metro_station_floor_index` (`[0xbc5c]`)**: stores the floor index of the placed metro station stack (types `0x1f`, `0x20`, `0x21`). Initialized to `0xffff` (−1 signed) on new game. Set to the object's floor index when a metro station is first placed. Saved/restored with tower file.
 
 Gates two behaviors:
-1. **VIP/special visitor toggle**: runs each tick when `day_tick > 0x0f0` and `daypart_index < 4`, only when `[0xbc5c] >= 0`. Probability: 1% per tick. On trigger: sweep all type-`0x1f/0x20/0x21` objects — if `object[+0xc] == 0` set to 2 (activate); else set to 0 (deactivate). Fire notification `0x271a` if any activated. This is cosmetic only — no effect on star evaluation.
+1. **Metro-station display toggle**: runs each tick when `day_tick > 0x0f0` and `daypart_index < 4`, only when `[0xbc5c] >= 0`. Probability: 1% per tick. On trigger: sweep all type-`0x1f/0x20/0x21` objects. If `object[+0xc] == 0`, set it to `2`; otherwise set it to `0`. Fire notification `0x271a` if any object activated. This is cosmetic only and does not drive star evaluation.
 2. **4→5 star advancement gate** (see Star Advancement Gate below).
 
 **Secondary use**: `[0xbc5c]` is also used as a floor-range lower-bound for elevator-extension and object-placement validation. When `bc5c == −1`, the bound is `−2` and never activates.
@@ -581,23 +581,35 @@ On success: `bc40 += 1`, palette update fires, `FUN_1150_003d` resets evaluation
 | Current stars | Required before advancing |
 |---|---|
 | 1 | None — always eligible once ledger threshold met |
-| 2 | Metro station placed (`[0xc19e] == 1`) |
+| 2 | Security office placed (`[0xc19e] == 1`) |
 | 3 | Office placed (`[0xc19f] == 1`); `security_adequate [0xc1a0] == 1`; office service ok (`[0xc197] == 1`); `daypart_index >= 4`; `calendar_phase_flag != 1`; viable commercial routes (`[0xc1a1] == 1`) |
-| 4 | VIP suite placed (`[0xbc5c] >= 0`); `security_adequate [0xc1a0] == 1`; `daypart_index >= 4`; `calendar_phase_flag != 1`; `routes_viable [0xc1a1] == 1` |
-| 5 | Always blocked — Tower advancement is a separate mechanism |
+| 4 | Metro station placed (`[0xbc5c] >= 0`); `security_adequate [0xc1a0] == 1`; `daypart_index >= 4`; `calendar_phase_flag != 1`; `routes_viable [0xc1a1] == 1` |
+| 5 | Always blocked here; 5★ → Tower uses the cathedral evaluation pathway below |
 
 #### Gate Flags
 
 | Flag | Address | Set by |
 |---|---|---|
-| `metro_placed` | `0xc19e` | `check_and_trigger_treasure` on type-`0x0e` build |
+| `security_office_placed` | `0xc19e` | `check_and_trigger_treasure` on type-`0x0e` build |
 | `office_placed` | `0xc19f` | `check_and_trigger_treasure` on type-`0x05` build |
 | `office_service_ok` | `0xc197` | Office service evaluation (every 9th day at `star==3`) |
 | `security_adequate` | `0xc1a0` | `update_security_housekeeping_state` (param=2 or param=5) |
 | `routes_viable` | `0xc1a1` | `rebuild_path_seed_bucket_table` when `star > 2` |
-| `vip_suite_placed` | `0xbc5c` | VIP suite object placement handler (floor index ≥ 0) |
+| `metro_station_floor_index` | `0xbc5c` | Metro station placement handler (floor index ≥ 0) |
 
 All gate flags are cleared by `FUN_1150_0000` at new-game initialization.
+
+### 5.7 5★ → Tower Advancement Via Cathedral Evaluation
+
+The 5★ → Tower upgrade does not go through the normal `check_and_advance_star_rating` path. It is awarded through the cathedral-driven evaluation flow instead.
+
+Implementation checkpoints:
+- Building the cathedral (placement type `0x24`) stores its floor in `g_eval_entity_index` and is only available once the tower is already at 5 stars.
+- At day start, when `g_eval_entity_index >= 0` and `star_count > 2`, activate the upper-tower evaluation runtime group across floors `0x6d..0x77`, spawning 40 evaluation entities (5 object types × 8 slots).
+- Each arriving evaluation entity triggers `check_evaluation_completion_and_award`, but success only counts while `day_tick < 800`.
+- Award Tower only when both conditions hold: ledger-derived tier already exceeds the current star count (`g_primary_family_ledger_total >= 15000` for the final upgrade) and all 40 evaluation entities have reached state `0x03`.
+- On success, write `bc40 := 6`, fire the Tower popup/visual refresh, and reset the upper-tower evaluation objects for the next cycle.
+- On failure or missed deadline, mark the arrived slots for retry and let the next day-start activation rerun the evaluation.
 
 ### 5.8 Notification + Prompt System
 
@@ -649,10 +661,10 @@ Several tile types and mechanics are gated on star count. Star advancement itsel
 | Security/housekeeping state machine active | `star_count > 2` |
 | `routes_viable` flag computed | `star_count > 2` |
 | 1→2 star advancement | Ledger ≥ 300 (no qualitative gates) |
-| 2→3 star advancement | Ledger ≥ 1000 + metro station placed (`[0xc19e]`) |
+| 2→3 star advancement | Ledger ≥ 1000 + security office placed (`[0xc19e]`) |
 | 3→4 star advancement | Ledger ≥ 5000 + office placed + security adequate + office service ok + routes viable + `daypart >= 4` + `calendar_phase != 1` |
-| 4→5 star advancement | Ledger ≥ 10000 + VIP suite placed (`[0xbc5c] >= 0`) + security adequate + routes viable + `daypart >= 4` + `calendar_phase != 1` |
-| Tower win condition | `star_count == 6` (ledger ≥ 15000, separate mechanism from 4→5) |
+| 4→5 star advancement | Ledger ≥ 10000 + metro station placed (`[0xbc5c] >= 0`) + security adequate + routes viable + `daypart >= 4` + `calendar_phase != 1` |
+| Tower win condition | `star_count == 6` via cathedral evaluation (ledger ≥ 15000 and all 40 evaluation entities arrive before `day_tick < 800`) |
 
 The UI should communicate these unlocks: locked tile types are shown greyed out in the toolbar with a star requirement badge.
 

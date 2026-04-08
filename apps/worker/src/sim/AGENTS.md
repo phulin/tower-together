@@ -16,6 +16,9 @@ Simulation snapshot helpers. Owns new-game snapshot creation plus snapshot norma
 ### `world.ts`
 Grid constants (`GRID_WIDTH=64`, `GRID_HEIGHT=120`, lobby validation) and world data types. Key types: `PlacedObjectRecord` (18-byte record with spec-confirmed offsets; `stay_phase` at +0x0b, init values: `needs_refresh_flag=1`, `pairing_active_flag=1`, `pairing_status=-1`, `variant_index` = 1 for families 3/4/5/7/9/10 else 4), `GateFlags` + `createGateFlags()` (global star/security gate state, init per `new_game_initializer`), sidecar record types (`CommercialVenueRecord`, `ServiceRequestEntry`, `EntertainmentLinkRecord`), `CarrierRecord` (carrier_mode: 0=Express, 1=Standard, 2=Service elevator; escalators are NOT carriers), and `WorldState` (includes `gate_flags`).
 
+### `entities.ts`
+Runtime entity population + Phase 4 behavior hooks. Rebuilds `world.entities` from placed objects (`rebuild_runtime_entities`), resets them at the end-of-day refresh checkpoints (`reset_entity_runtime_state`), advances the 1/16 refresh stride (`advance_entity_refresh_stride`), manages commercial venue counters/open-close state, computes simplified office/condo operational scoring, runs office-service checks, applies security/housekeeping tier updates, and refunds unhappy condos at rollover.
+
 ### `resources.ts`
 All compile-time constants: `TILE_WIDTHS`, `TILE_COSTS`, `VALID_TILE_TYPES`, `FAMILY_CODE_TO_TILE` / `TILE_TO_FAMILY_CODE` (family ↔ tile-name mappings), `YEN_1001` (income payouts), `YEN_1002` (operating expenses), `OP_SCORE_THRESHOLDS`, `STAR_THRESHOLDS`, route delay constants.
 

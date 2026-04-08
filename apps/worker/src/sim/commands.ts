@@ -1,4 +1,5 @@
 import { rebuild_carrier_list } from "./carriers";
+import { rebuild_runtime_entities } from "./entities";
 import { type LedgerState, rebuild_facility_ledger } from "./ledger";
 import {
 	LEGACY_VIP_TILE_TO_STANDARD,
@@ -92,6 +93,9 @@ function alloc_sidecar(tileType: string, x: number, world: WorldState): number {
 			ownerSubtypeIndex: x,
 			capacity: tileType === "restaurant" ? 6 : tileType === "fastFood" ? 4 : 3,
 			visitCount: 0,
+			todayVisitCount: 0,
+			yesterdayVisitCount: 0,
+			availabilityState: 1,
 		};
 		record = r;
 	} else if (tileType === "security" || tileType === "housekeeping") {
@@ -165,7 +169,22 @@ export function run_global_rebuilds(
 	world: WorldState,
 	ledger: LedgerState,
 ): void {
+	world.gateFlags.officePlaced = 0;
+	world.gateFlags.metroPlaced = 0;
+	world.gateFlags.vipSuiteFloor = 0xffff;
+	world.gateFlags.securityLedgerScale = 0;
+	for (const [key, object] of Object.entries(world.placedObjects)) {
+		if (object.objectTypeCode === 7) world.gateFlags.officePlaced = 1;
+		if (object.objectTypeCode === 14) world.gateFlags.metroPlaced = 1;
+		if (object.objectTypeCode === 20) world.gateFlags.securityLedgerScale += 1;
+		if (object.vipFlag) {
+			const [, y] = key.split(",").map(Number);
+			world.gateFlags.vipSuiteFloor = world.height - 1 - y;
+		}
+	}
+
 	rebuild_facility_ledger(ledger, world);
+	rebuild_runtime_entities(world);
 	rebuild_carrier_list(world);
 	rebuild_special_links(world);
 	rebuild_walkability_flags(world);

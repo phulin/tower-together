@@ -19,6 +19,12 @@ import {
 	run_global_rebuilds,
 } from "./commands";
 import {
+	advance_entity_refresh_stride,
+	rebuild_runtime_entities,
+	resetCommercialVenueCycle,
+	update_security_housekeeping_state,
+} from "./entities";
+import {
 	add_cashflow_from_family_resource,
 	createLedgerState,
 	do_expense_sweep,
@@ -67,6 +73,7 @@ function makeWorld(_opts?: { cash?: number }): WorldState {
 		overlayToAnchor: {},
 		placedObjects: {},
 		sidecars: [],
+		entities: [],
 		carriers: [],
 		specialLinks: [],
 		floorWalkabilityFlags: new Array(GRID_HEIGHT).fill(0),
@@ -1412,5 +1419,123 @@ describe("car state machine", () => {
 			}
 		}
 		expect(doors_opened).toBe(true);
+	});
+});
+
+describe("Phase 4 runtime entities", () => {
+	function setupOccupiedFloor(world: WorldState, ledger: LedgerState) {
+		for (let x = 0; x < GRID_WIDTH; x++) {
+			world.cells[`${x},${GROUND_Y}`] = "floor";
+		}
+		void ledger;
+	}
+
+	it("rebuilds runtime population counts from placed objects", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		setupOccupiedFloor(world, ledger);
+
+		expect(
+			handle_place_tile(0, GROUND_Y - 1, "hotelTwin", world, ledger).accepted,
+		).toBe(true);
+		expect(
+			handle_place_tile(10, GROUND_Y - 1, "office", world, ledger).accepted,
+		).toBe(true);
+		expect(
+			handle_place_tile(24, GROUND_Y - 1, "condo", world, ledger).accepted,
+		).toBe(true);
+
+		rebuild_runtime_entities(world);
+		expect(
+			world.entities.filter((entity) => entity.familyCode === 4),
+		).toHaveLength(2);
+		expect(
+			world.entities.filter((entity) => entity.familyCode === 7),
+		).toHaveLength(6);
+		expect(
+			world.entities.filter((entity) => entity.familyCode === 9),
+		).toHaveLength(3);
+	});
+
+	it("resets commercial venue counters at the daily cycle checkpoint", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		setupOccupiedFloor(world, ledger);
+
+		handle_place_tile(0, GROUND_Y - 1, "restaurant", world, ledger);
+		const venueObject = world.placedObjects[`0,${GROUND_Y - 1}`];
+		const venue = world.sidecars[
+			venueObject.linkedRecordIndex
+		] as WorldState["sidecars"][number] & { kind: "commercial_venue" };
+
+		if (venue.kind !== "commercial_venue")
+			throw new Error("expected commercial venue");
+		venue.todayVisitCount = 4;
+		venue.visitCount = 4;
+		venue.availabilityState = 3;
+
+		resetCommercialVenueCycle(world);
+		expect(venue.yesterdayVisitCount).toBe(4);
+		expect(venue.todayVisitCount).toBe(0);
+		expect(venue.visitCount).toBe(0);
+		expect(venue.availabilityState).toBe(1);
+	});
+
+	it("marks security adequate when the checkpoint tier meets the scaled requirement", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		const time = createTimeState();
+		setupOccupiedFloor(world, ledger);
+
+		handle_place_tile(0, GROUND_Y - 1, "security", world, ledger);
+		ledger.primaryLedger[7] = 300;
+		update_security_housekeeping_state(
+			world,
+			ledger,
+			{ ...time, starCount: 4 },
+			5,
+		);
+
+		expect(world.gateFlags.securityAdequate).toBe(1);
+		expect(world.placedObjects[`0,${GROUND_Y - 1}`].stayPhase).toBe(1);
+	});
+
+	it("sells condos and checks out hotel rooms through the entity refresh stride", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		setupOccupiedFloor(world, ledger);
+
+		handle_place_tile(0, GROUND_Y - 1, "restaurant", world, ledger);
+		handle_place_tile(24, GROUND_Y - 1, "condo", world, ledger);
+		handle_place_tile(40, GROUND_Y - 1, "hotelSingle", world, ledger);
+		placeElevatorShaft(world, ledger, 0, 10, 15);
+		rebuild_runtime_entities(world);
+
+		const condoBefore = ledger.cashBalance;
+		for (let tick = 0; tick < 64; tick++) {
+			advance_entity_refresh_stride(world, ledger, {
+				...createTimeState(),
+				dayTick: tick,
+				daypartIndex: 1,
+				dayCounter: 3,
+				starCount: 4,
+			});
+		}
+		expect(ledger.cashBalance).toBeGreaterThan(condoBefore);
+		expect(world.placedObjects[`24,${GROUND_Y - 1}`].stayPhase).toBeLessThan(
+			0x18,
+		);
+
+		const hotelBefore = ledger.cashBalance;
+		for (let tick = 64; tick < 160; tick++) {
+			advance_entity_refresh_stride(world, ledger, {
+				...createTimeState(),
+				dayTick: tick,
+				daypartIndex: 4,
+				dayCounter: 3,
+				starCount: 4,
+			});
+		}
+		expect(ledger.cashBalance).toBeGreaterThan(hotelBefore);
 	});
 });

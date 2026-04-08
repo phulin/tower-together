@@ -1,6 +1,10 @@
 import { init_carrier_state, tick_all_carriers } from "./carriers";
 import type { CellPatch, CommandResult, SimCommand } from "./commands";
 import { handle_place_tile, handle_remove_tile } from "./commands";
+import {
+	advance_entity_refresh_stride,
+	rebuild_runtime_entities,
+} from "./entities";
 import { createLedgerState, type LedgerState } from "./ledger";
 import { STARTING_CASH } from "./resources";
 import {
@@ -56,6 +60,7 @@ export class TowerSim {
 			normalized.world.height = GRID_HEIGHT;
 		normalized.world.placedObjects ??= {};
 		normalized.world.sidecars ??= [];
+		normalized.world.entities ??= [];
 
 		// Migrate old saves that stored cash in world instead of ledger
 		if (!normalized.ledger) {
@@ -81,6 +86,7 @@ export class TowerSim {
 		rebuild_special_links(normalized.world);
 		rebuild_walkability_flags(normalized.world);
 		rebuild_transfer_group_cache(normalized.world);
+		rebuild_runtime_entities(normalized.world);
 
 		return new TowerSim(normalized.time, normalized.world, normalized.ledger);
 	}
@@ -101,6 +107,7 @@ export class TowerSim {
 			ledger: this.ledger,
 		};
 		run_checkpoints(state, prevTick, currTick);
+		advance_entity_refresh_stride(this.world, this.ledger, this.time);
 		tick_all_carriers(this.world);
 
 		return {
@@ -153,6 +160,9 @@ export class TowerSim {
 			sidecars: JSON.parse(
 				JSON.stringify(this.world.sidecars),
 			) as WorldState["sidecars"],
+			entities: JSON.parse(
+				JSON.stringify(this.world.entities),
+			) as WorldState["entities"],
 			carriers: JSON.parse(
 				JSON.stringify(this.world.carriers),
 			) as WorldState["carriers"],

@@ -60,6 +60,27 @@ export interface CarrierRecord {
 	cars: CarrierCar[];
 }
 
+// ─── Runtime entities ────────────────────────────────────────────────────────
+
+export interface EntityRecord {
+	floorAnchor: number;
+	subtypeIndex: number;
+	baseOffset: number;
+	familyCode: number;
+	stateCode: number;
+	selectedFloor: number;
+	originFloor: number;
+	encodedRouteTarget: number;
+	auxState: number;
+	queueTick: number;
+	accumulatedDelay: number;
+	auxCounter: number;
+	word0a: number;
+	word0c: number;
+	word0e: number;
+	byte09: number;
+}
+
 // ─── Routing types ────────────────────────────────────────────────────────────
 
 export const MAX_SPECIAL_LINKS = 64;
@@ -169,6 +190,9 @@ export interface CommercialVenueRecord {
 	ownerSubtypeIndex: number;
 	capacity: number;
 	visitCount: number;
+	todayVisitCount: number;
+	yesterdayVisitCount: number;
+	availabilityState: number;
 }
 
 export interface ServiceRequestEntry {
@@ -213,6 +237,8 @@ export interface WorldState {
 	placedObjects: Record<string, PlacedObjectRecord>;
 	/** Sidecar records, indexed by PlacedObjectRecord.linkedRecordIndex. */
 	sidecars: SidecarRecord[];
+	/** Runtime entity population rebuilt from placed objects. */
+	entities: EntityRecord[];
 	/** One CarrierRecord per elevator/escalator shaft. Rebuilt from cells on mutation. */
 	carriers: CarrierRecord[];
 	/** Special-link segment table (max MAX_SPECIAL_LINKS entries). Rebuilt from carriers. */

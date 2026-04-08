@@ -1,4 +1,13 @@
 import {
+	closeCommercialVenues,
+	refund_unhappy_condos,
+	reset_entity_runtime_state,
+	resetCommercialVenueCycle,
+	resetHousekeepingDutyTier,
+	runOfficeServiceEvaluation,
+	update_security_housekeeping_state,
+} from "./entities";
+import {
 	do_ledger_rollover,
 	type LedgerState,
 	rebuild_facility_ledger,
@@ -21,7 +30,7 @@ function checkpoint_start_of_day(_s: SimState): void {
 }
 
 function checkpoint_housekeeping_reset(_s: SimState): void {
-	// Phase 4: reset housekeeping cart duty tier
+	resetHousekeepingDutyTier(_s.world);
 }
 
 function checkpoint_facility_ledger_rebuild(s: SimState): void {
@@ -29,7 +38,7 @@ function checkpoint_facility_ledger_rebuild(s: SimState): void {
 }
 
 function checkpoint_entertainment_half1(_s: SimState): void {
-	// Phase 4: entertainment venue phase 1 admission
+	resetCommercialVenueCycle(_s.world);
 }
 
 function checkpoint_hotel_sale_reset(_s: SimState): void {
@@ -37,7 +46,7 @@ function checkpoint_hotel_sale_reset(_s: SimState): void {
 }
 
 function checkpoint_entertainment_half2(_s: SimState): void {
-	// Phase 4: entertainment venue phase 2 admission
+	resetCommercialVenueCycle(_s.world);
 }
 
 function checkpoint_entertainment_phase1(_s: SimState): void {
@@ -45,7 +54,8 @@ function checkpoint_entertainment_phase1(_s: SimState): void {
 }
 
 function checkpoint_midday(_s: SimState): void {
-	// Phase 4: security/housekeeping tier-0 reset (always inadequate at midday)
+	resetCommercialVenueCycle(_s.world);
+	update_security_housekeeping_state(_s.world, _s.ledger, _s.time, 0);
 }
 
 function checkpoint_afternoon_notification(_s: SimState): void {
@@ -57,15 +67,16 @@ function checkpoint_noop(_s: SimState): void {
 }
 
 function checkpoint_entertainment_phase2(_s: SimState): void {
-	// Phase 4
+	closeCommercialVenues(_s.world);
 }
 
 function checkpoint_late_facility(_s: SimState): void {
-	// Phase 4: security/housekeeping tier-2 check
+	update_security_housekeeping_state(_s.world, _s.ledger, _s.time, 2);
+	runOfficeServiceEvaluation(_s.world, _s.time);
 }
 
 function checkpoint_type6_advance(_s: SimState): void {
-	// Phase 4: family-6 (restaurant) state advance
+	closeCommercialVenues(_s.world);
 }
 
 function checkpoint_day_counter(s: SimState): void {
@@ -76,11 +87,12 @@ function checkpoint_day_counter(s: SimState): void {
 }
 
 function checkpoint_runtime_refresh(_s: SimState): void {
-	// Phase 4: reset entity runtime state (restore idle without reallocating)
+	reset_entity_runtime_state(_s.world);
 }
 
 function checkpoint_ledger_rollover(s: SimState): void {
 	do_ledger_rollover(s.ledger, s.world, s.time.dayCounter);
+	refund_unhappy_condos(s.world, s.ledger);
 }
 
 function checkpoint_end_of_day(_s: SimState): void {
@@ -88,7 +100,7 @@ function checkpoint_end_of_day(_s: SimState): void {
 }
 
 function checkpoint_security_final(_s: SimState): void {
-	// Phase 4: final daily security/housekeeping adequacy check
+	update_security_housekeeping_state(_s.world, _s.ledger, _s.time, 5);
 }
 
 // ─── Checkpoint table ─────────────────────────────────────────────────────────
