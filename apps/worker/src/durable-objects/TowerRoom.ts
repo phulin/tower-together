@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { TowerSim, type SimSnapshot } from "../sim/index";
+import { type SimSnapshot, TowerSim } from "../sim/index";
 import type { ClientMessage, ServerMessage } from "../types";
 
 interface Env {
@@ -37,7 +37,21 @@ export class TowerRoom extends DurableObject<Env> {
 		const row = cursor.toArray()[0] as { value: string } | undefined;
 		if (!row) return null;
 		const snap = JSON.parse(row.value) as SimSnapshot;
-		// Back-compat: old saves may not have a `time` key
+		// Back-compat: old saves were a flat TowerState, not { time, world }
+		const old = snap as unknown as Record<string, unknown>;
+		if (!snap.world) {
+			snap.world = {
+				towerId: old.towerId as string,
+				name: old.name as string,
+				width: (old.width as number) ?? 64,
+				height: (old.height as number) ?? 120,
+				cash: (old.cash as number) ?? 2_000_000,
+				cells: (old.cells as Record<string, string>) ?? {},
+				cellToAnchor: (old.cellToAnchor as Record<string, string>) ?? {},
+				overlays: (old.overlays as Record<string, string>) ?? {},
+				overlayToAnchor: (old.overlayToAnchor as Record<string, string>) ?? {},
+			};
+		}
 		if (!snap.time) {
 			snap.time = {
 				day_tick: 0,
@@ -45,7 +59,7 @@ export class TowerRoom extends DurableObject<Env> {
 				day_counter: 0,
 				calendar_phase_flag: 0,
 				star_count: 1,
-				total_ticks: (snap as unknown as Record<string, number>)["simTime"] ?? 0,
+				total_ticks: (old.simTime as number) ?? 0,
 			};
 		}
 		return TowerSim.from_snapshot(snap);
@@ -92,7 +106,10 @@ export class TowerRoom extends DurableObject<Env> {
 			const towerId = url.searchParams.get("towerId");
 			const name = url.searchParams.get("name");
 			if (!towerId || !name) {
-				return Response.json({ error: "Missing towerId or name" }, { status: 400 });
+				return Response.json(
+					{ error: "Missing towerId or name" },
+					{ status: 400 },
+				);
 			}
 			await this.initializeTower(towerId, name);
 			return Response.json({ towerId, name });
@@ -100,7 +117,8 @@ export class TowerRoom extends DurableObject<Env> {
 
 		if (request.method === "GET" && path === "/info") {
 			const sim = this.sim ?? this.loadSim();
-			if (!sim) return Response.json({ error: "Tower not found" }, { status: 404 });
+			if (!sim)
+				return Response.json({ error: "Tower not found" }, { status: 404 });
 			return Response.json({
 				towerId: sim.towerId,
 				name: sim.name,
@@ -129,7 +147,11 @@ export class TowerRoom extends DurableObject<Env> {
 
 		if (!this.sim) this.sim = this.loadSim();
 		if (!this.sim) {
-			this.sendTo(ws, { type: "command_result", accepted: false, reason: "Tower not initialized" });
+			this.sendTo(ws, {
+				type: "command_result",
+				accepted: false,
+				reason: "Tower not initialized",
+			});
 			return;
 		}
 
@@ -144,7 +166,10 @@ export class TowerRoom extends DurableObject<Env> {
 				height: this.sim.height,
 				cells: this.sim.cellsToArray(),
 			});
-			this.broadcast({ type: "presence_update", playerCount: this.sockets.size });
+			this.broadcast({
+				type: "presence_update",
+				playerCount: this.sockets.size,
+			});
 			if (!this.isRunning) {
 				this.isRunning = true;
 				this.startTick();
@@ -160,13 +185,21 @@ export class TowerRoom extends DurableObject<Env> {
 		// Command (place_tile / remove_tile)
 		const result = this.sim.submit_command(msg);
 		if (!result.accepted) {
-			this.sendTo(ws, { type: "command_result", accepted: false, reason: result.reason });
+			this.sendTo(ws, {
+				type: "command_result",
+				accepted: false,
+				reason: result.reason,
+			});
 			return;
 		}
 
 		const patch = result.patch ?? [];
 		this.broadcast({ type: "state_patch", cells: patch });
-		this.sendTo(ws, { type: "command_result", accepted: true, patch: { cells: patch } });
+		this.sendTo(ws, {
+			type: "command_result",
+			accepted: true,
+			patch: { cells: patch },
+		});
 		if (result.economyChanged) {
 			this.broadcast({ type: "economy_update", cash: this.sim.cash });
 		}
@@ -179,7 +212,10 @@ export class TowerRoom extends DurableObject<Env> {
 			this.stopTick();
 			this.persistSim();
 		} else {
-			this.broadcast({ type: "presence_update", playerCount: this.sockets.size });
+			this.broadcast({
+				type: "presence_update",
+				playerCount: this.sockets.size,
+			});
 		}
 	}
 
