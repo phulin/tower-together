@@ -34,6 +34,8 @@ interface TowerState {
 	cash: number;
 	cells: Record<string, string>; // "x,y" -> tileType (all cells incl. extensions)
 	cellToAnchor: Record<string, string>; // extension cell key -> anchor cell key
+	overlays: Record<string, string>; // anchor "x,y" -> overlay tileType (e.g. "stairs")
+	overlayToAnchor: Record<string, string>; // extension "x,y" -> anchor "x,y"
 }
 
 export class TowerRoom extends DurableObject<Env> {
@@ -65,6 +67,8 @@ export class TowerRoom extends DurableObject<Env> {
 			cash: STARTING_CASH,
 			cells: {},
 			cellToAnchor: {},
+			overlays: {},
+			overlayToAnchor: {},
 		};
 		await this.saveState();
 	}
@@ -79,6 +83,8 @@ export class TowerRoom extends DurableObject<Env> {
 		const parsed = JSON.parse(row.value) as TowerState;
 		if (!parsed.cash) parsed.cash = STARTING_CASH;
 		if (!parsed.cellToAnchor) parsed.cellToAnchor = {};
+		if (!parsed.overlays) parsed.overlays = {};
+		if (!parsed.overlayToAnchor) parsed.overlayToAnchor = {};
 		if (parsed.height < 110) parsed.height = 110;
 		return parsed;
 	}
@@ -210,15 +216,46 @@ export class TowerRoom extends DurableObject<Env> {
 					});
 					return;
 				}
+
+				if (x < 0 || x >= this.state.width || y < 0 || y >= this.state.height) {
+					this.sendTo(ws, {
+						type: "command_result",
+						accepted: false,
+						reason: "Out of bounds",
+					});
+					return;
+				}
+
+				// Stairs are a 2-wide overlay sitting on top of existing base tiles.
+				if (tileType === "stairs") {
+					if (x + 1 >= this.state.width) {
+						this.sendTo(ws, { type: "command_result", accepted: false, reason: "Out of bounds" });
+						return;
+					}
+					for (let dx = 0; dx < 2; dx++) {
+						const key = `${x + dx},${y}`;
+						if (!this.state.cells[key] && !this.state.cellToAnchor[key]) {
+							this.sendTo(ws, { type: "command_result", accepted: false, reason: "Stairs require a base tile" });
+							return;
+						}
+						if (this.state.overlays[key] || this.state.overlayToAnchor[key]) {
+							this.sendTo(ws, { type: "command_result", accepted: false, reason: "Cell already has an overlay" });
+							return;
+						}
+					}
+					this.state.overlays[`${x},${y}`] = "stairs";
+					this.state.overlayToAnchor[`${x + 1},${y}`] = `${x},${y}`;
+					const patch = [{ x, y, tileType: "stairs", isAnchor: true, isOverlay: true }];
+					this.broadcast({ type: "state_patch", cells: patch });
+					this.sendTo(ws, { type: "command_result", accepted: true, patch: { cells: patch } });
+					this.saveState();
+					break;
+				}
+
 				const w = TILE_WIDTHS[tileType] ?? 1;
 				const cost = TILE_COSTS[tileType] ?? 0;
 
-				if (
-					x < 0 ||
-					x + w - 1 >= this.state.width ||
-					y < 0 ||
-					y >= this.state.height
-				) {
+				if (x + w - 1 >= this.state.width) {
 					this.sendTo(ws, {
 						type: "command_result",
 						accepted: false,
@@ -325,6 +362,25 @@ export class TowerRoom extends DurableObject<Env> {
 					return;
 				}
 				const clickedKey = `${x},${y}`;
+
+				// Remove overlay first if present (before touching the base tile).
+				const overlayAnchorKey = this.state.overlayToAnchor[clickedKey] ?? (this.state.overlays[clickedKey] ? clickedKey : null);
+				if (overlayAnchorKey !== null) {
+					const overlayType = this.state.overlays[overlayAnchorKey];
+					const ow = TILE_WIDTHS[overlayType] ?? 1;
+					const [ax] = overlayAnchorKey.split(",").map(Number);
+					delete this.state.overlays[overlayAnchorKey];
+					for (let dx = 1; dx < ow; dx++) {
+						delete this.state.overlayToAnchor[`${ax + dx},${y}`];
+					}
+					const [oax, oay] = overlayAnchorKey.split(",").map(Number);
+					const patch = [{ x: oax, y: oay, tileType: "empty", isAnchor: true, isOverlay: true }];
+					this.broadcast({ type: "state_patch", cells: patch });
+					this.sendTo(ws, { type: "command_result", accepted: true, patch: { cells: patch } });
+					this.saveState();
+					break;
+				}
+
 				const anchorKey = this.state.cellToAnchor[clickedKey] ?? clickedKey;
 				const tileType = this.state.cells[anchorKey];
 				if (!tileType) {
@@ -484,10 +540,16 @@ export class TowerRoom extends DurableObject<Env> {
 
 	private cellsToArray(
 		cells: Record<string, string>,
-	): Array<{ x: number; y: number; tileType: string; isAnchor: boolean }> {
-		return Object.entries(cells).map(([key, tileType]) => {
+	): Array<{ x: number; y: number; tileType: string; isAnchor: boolean; isOverlay?: boolean }> {
+		const result: Array<{ x: number; y: number; tileType: string; isAnchor: boolean; isOverlay?: boolean }> = [];
+		for (const [key, tileType] of Object.entries(cells)) {
 			const [x, y] = key.split(",").map(Number);
-			return { x, y, tileType, isAnchor: !this.state!.cellToAnchor[key] };
-		});
+			result.push({ x, y, tileType, isAnchor: !this.state!.cellToAnchor[key] });
+		}
+		for (const [key, tileType] of Object.entries(this.state!.overlays)) {
+			const [x, y] = key.split(",").map(Number);
+			result.push({ x, y, tileType, isAnchor: true, isOverlay: true });
+		}
+		return result;
 	}
 }

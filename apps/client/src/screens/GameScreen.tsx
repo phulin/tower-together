@@ -31,6 +31,7 @@ const TOOLS: ToolDef[] = [
 	{ id: "empty", label: "Erase", color: "#888", cost: 0 },
 	{ id: "floor", label: "Floor", color: "#777", cost: TILE_COSTS.floor },
 	{ id: "lobby", label: "Lobby", color: "#c9a84c", cost: TILE_COSTS.lobby },
+	{ id: "stairs", label: "Stairs", color: "#e8d5a3", cost: TILE_COSTS.stairs },
 	{
 		id: "hotel_single",
 		label: "Single",

@@ -22,7 +22,8 @@ export interface TowerRuntimeState {
 // Tile width in grid cells
 export const TILE_WIDTHS: Record<string, number> = {
 	floor: 1,
-	lobby: 4,
+	lobby: 1,
+	stairs: 2,
 	hotel_single: 1,
 	hotel_twin: 2,
 	hotel_suite: 3,
@@ -32,6 +33,7 @@ export const TILE_WIDTHS: Record<string, number> = {
 export const TILE_COSTS: Record<string, number> = {
 	floor: 5_000,
 	lobby: 0,
+	stairs: 0,
 	hotel_single: 50_000,
 	hotel_twin: 80_000,
 	hotel_suite: 120_000,
@@ -65,16 +67,16 @@ export type ServerMessage =
 			cash: number;
 			width: number;
 			height: number;
-			cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }>;
+			cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean; isOverlay?: boolean }>;
 	  }
 	| {
 			type: "state_patch";
-			cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }>;
+			cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean; isOverlay?: boolean }>;
 	  }
 	| {
 			type: "command_result";
 			accepted: boolean;
-			patch?: { cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }> };
+			patch?: { cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean; isOverlay?: boolean }> };
 			reason?: string;
 	  }
 	| { type: "presence_update"; playerCount: number }

@@ -39,6 +39,8 @@ export class GameScene extends Phaser.Scene {
 	private grid: Map<string, string> = new Map();
 	// Keys of anchor cells only (used for rendering)
 	private anchorSet: Set<string> = new Set();
+	// Overlay tiles (e.g. stairs) keyed by "x,y"
+	private overlayGrid: Map<string, string> = new Map();
 
 	private hoveredCell: { x: number; y: number } | null = null;
 	private selectedTool: string = "floor";
@@ -173,6 +175,8 @@ export class GameScene extends Phaser.Scene {
 		tileWidth: number,
 		tentative: Set<string>,
 	): boolean {
+		// Stairs sit on top of existing tiles — not shift-fillable via this path.
+		if (this.selectedTool === "stairs") return false;
 		if (this.selectedTool === "lobby") {
 			const groundY = GRID_HEIGHT - 1 - UNDERGROUND_FLOORS;
 			const floorsAboveGround = groundY - y;
@@ -199,13 +203,16 @@ export class GameScene extends Phaser.Scene {
 	}
 
 	applyInitState(
-		cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }>,
+		cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean; isOverlay?: boolean }>,
 	): void {
 		this.grid.clear();
 		this.anchorSet.clear();
+		this.overlayGrid.clear();
 		for (const cell of cells) {
-			if (cell.tileType !== "empty") {
-				const key = `${cell.x},${cell.y}`;
+			const key = `${cell.x},${cell.y}`;
+			if (cell.isOverlay) {
+				if (cell.tileType !== "empty") this.overlayGrid.set(key, cell.tileType);
+			} else if (cell.tileType !== "empty") {
 				this.grid.set(key, cell.tileType);
 				if (cell.isAnchor) this.anchorSet.add(key);
 			}
@@ -214,11 +221,17 @@ export class GameScene extends Phaser.Scene {
 	}
 
 	applyPatch(
-		cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean }>,
+		cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean; isOverlay?: boolean }>,
 	): void {
 		for (const cell of cells) {
 			const key = `${cell.x},${cell.y}`;
-			if (cell.tileType === "empty") {
+			if (cell.isOverlay) {
+				if (cell.tileType === "empty") {
+					this.overlayGrid.delete(key);
+				} else {
+					this.overlayGrid.set(key, cell.tileType);
+				}
+			} else if (cell.tileType === "empty") {
 				this.grid.delete(key);
 				this.anchorSet.delete(key);
 			} else {
@@ -360,10 +373,13 @@ export class GameScene extends Phaser.Scene {
 			(GRID_HEIGHT - UNDERGROUND_Y) * CELL_SIZE,
 		);
 
-		// Only iterate anchor cells; draw each as a single rectangle spanning its full width.
+		// Tile types that should be merged into contiguous runs per row.
+		const MERGE_TYPES = new Set(["floor", "lobby"]);
+
+		// Draw non-merge anchor tiles (hotel tiles etc.) individually.
 		for (const key of this.anchorSet) {
 			const tileType = this.grid.get(key);
-			if (!tileType) continue;
+			if (!tileType || MERGE_TYPES.has(tileType)) continue;
 			const color = TILE_COLORS[tileType];
 			if (!color) continue;
 
@@ -371,12 +387,60 @@ export class GameScene extends Phaser.Scene {
 			const w = TILE_WIDTHS[tileType] ?? 1;
 
 			g.fillStyle(color, 1);
-			g.fillRect(
-				x * CELL_SIZE + 1,
-				y * CELL_SIZE + 1,
-				w * CELL_SIZE - 1,
-				CELL_SIZE - 1,
-			);
+			g.fillRect(x * CELL_SIZE + 1, y * CELL_SIZE + 1, w * CELL_SIZE - 1, CELL_SIZE - 1);
+		}
+
+		// Draw floor/lobby as merged runs per row.
+		for (let y = 0; y < GRID_HEIGHT; y++) {
+			let runStart = -1;
+			let runType: string | null = null;
+			for (let x = 0; x <= GRID_WIDTH; x++) {
+				const cellType = x < GRID_WIDTH ? (this.grid.get(`${x},${y}`) ?? null) : null;
+				const isMerge = cellType !== null && MERGE_TYPES.has(cellType);
+				if (isMerge && cellType === runType) {
+					// extend current run
+				} else {
+					if (runStart !== -1 && runType !== null) {
+						const color = TILE_COLORS[runType];
+						if (color) {
+							g.fillStyle(color, 1);
+							g.fillRect(
+								runStart * CELL_SIZE + 1,
+								y * CELL_SIZE + 1,
+								(x - runStart) * CELL_SIZE - 1,
+								CELL_SIZE - 1,
+							);
+						}
+					}
+					runStart = isMerge ? x : -1;
+					runType = isMerge ? cellType : null;
+				}
+			}
+		}
+
+		// Draw overlay tiles (stairs) on top of base tiles.
+		for (const [key] of this.overlayGrid) {
+			const [x, y] = key.split(",").map(Number);
+			this.drawStairs(g, x, y);
+		}
+	}
+
+	/** Draw a 4-step staircase bridging the floor at (gx,gy) and the floor above (gy-1),
+	 *  spanning 2 cells wide and 2 cells tall. */
+	private drawStairs(g: Phaser.GameObjects.Graphics, gx: number, gy: number): void {
+		const startX = gx * CELL_SIZE + 1;
+		const startY = (gy + 1) * CELL_SIZE; // bottom edge of cell gy
+		// 4 steps across 2×2 cells: each step is exactly 8×8px
+		const numSteps = 4;
+		const sw = (CELL_SIZE * 2 - 2) / numSteps; // 7.5px — step width
+		const sh = (CELL_SIZE * 2) / numSteps;       // 8px — step height
+
+		g.fillStyle(0xffffff, 0.65);
+		for (let i = 0; i < numSteps; i++) {
+			const sx = startX + i * sw;
+			const sy = startY - (i + 1) * sh;
+			g.fillRect(sx, sy, 2, sh);   // riser (vertical)
+			g.fillRect(sx, sy, sw, 2);   // tread (horizontal)
 		}
 	}
 
@@ -408,20 +472,25 @@ export class GameScene extends Phaser.Scene {
 
 		const width =
 			this.selectedTool !== "empty" ? (TILE_WIDTHS[this.selectedTool] ?? 1) : 1;
+		// Stairs also span the floor above
+		const heightCells = this.selectedTool === "stairs" ? 2 : 1;
 
 		// Clamp to grid
 		const startX = Math.max(0, x);
 		const endX = Math.min(GRID_WIDTH - 1, x + width - 1);
+		const startY = Math.max(0, y - heightCells + 1);
 		if (startX > endX) return;
 
 		g.fillStyle(COLOR_HOVER, 0.35);
-		for (let cx = startX; cx <= endX; cx++) {
-			g.fillRect(
-				cx * CELL_SIZE + 1,
-				y * CELL_SIZE + 1,
-				CELL_SIZE - 1,
-				CELL_SIZE - 1,
-			);
+		for (let cy = startY; cy <= y; cy++) {
+			for (let cx = startX; cx <= endX; cx++) {
+				g.fillRect(
+					cx * CELL_SIZE + 1,
+					cy * CELL_SIZE + 1,
+					CELL_SIZE - 1,
+					CELL_SIZE - 1,
+				);
+			}
 		}
 	}
 
