@@ -18,6 +18,7 @@ import {
 	isValidLobbyY,
 	type PlacedObjectRecord,
 	type ServiceRequestEntry,
+	UNDERGROUND_Y,
 	type WorldState,
 } from "./world";
 
@@ -152,13 +153,19 @@ export function handle_place_tile(
 			return { accepted: false, reason: "Cell already has an overlay" };
 		}
 		const patch: CellPatch[] = [];
-		// Auto-place a floor tile if the cell is empty but has support below
+		// Auto-place a floor tile if the cell is empty but has support
+		// (below for above-ground; above for underground floors).
 		if (!world.cells[key] && !world.cellToAnchor[key]) {
-			const belowKey = `${x},${y + 1}`;
-			if (y + 1 >= world.height || !world.cells[belowKey]) {
+			const supportY = y >= UNDERGROUND_Y ? y - 1 : y + 1;
+			const supportKey = `${x},${supportY}`;
+			if (
+				supportY < 0 ||
+				supportY >= world.height ||
+				!world.cells[supportKey]
+			) {
 				return {
 					accepted: false,
-					reason: "Elevator requires a base tile or support below",
+					reason: "Elevator requires a base tile or support",
 				};
 			}
 			world.cells[key] = "floor";
@@ -226,12 +233,18 @@ export function handle_place_tile(
 		}
 	}
 
-	// All non-lobby tiles need support from the row below
+	// All non-lobby tiles need support from the adjacent row
+	// (below for above-ground tiles; above for underground floors).
 	if (tileType !== "lobby") {
+		const supportY = y >= UNDERGROUND_Y ? y - 1 : y + 1;
 		for (let dx = 0; dx < tileWidth; dx++) {
-			const belowKey = `${x + dx},${y + 1}`;
-			if (y + 1 >= world.height || !world.cells[belowKey]) {
-				return { accepted: false, reason: "No support below" };
+			const supportKey = `${x + dx},${supportY}`;
+			if (
+				supportY < 0 ||
+				supportY >= world.height ||
+				!world.cells[supportKey]
+			) {
+				return { accepted: false, reason: "No support" };
 			}
 		}
 	}
@@ -361,7 +374,8 @@ export function fill_row_gaps(
 	world: WorldState,
 	patch: CellPatch[],
 ): void {
-	if (y + 1 >= world.height) return;
+	const supportY = y >= UNDERGROUND_Y ? y - 1 : y + 1;
+	if (supportY < 0 || supportY >= world.height) return;
 
 	let leftmost = -1;
 	let rightmost = -1;
@@ -376,7 +390,7 @@ export function fill_row_gaps(
 	for (let x = leftmost; x <= rightmost; x++) {
 		const key = `${x},${y}`;
 		if (world.cells[key]) continue;
-		if (!world.cells[`${x},${y + 1}`]) continue;
+		if (!world.cells[`${x},${supportY}`]) continue;
 		world.cells[key] = "floor";
 		patch.push({ x, y, tileType: "floor", isAnchor: true });
 	}
