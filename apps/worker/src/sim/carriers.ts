@@ -49,6 +49,7 @@ function reset_car_to_home(carrier: CarrierRecord, car: CarrierCar): void {
 	car.assignedCount = 0;
 	car.pendingAssignmentCount = 0;
 	car.departureFlag = 0;
+	car.destinationCountByFloor.fill(0);
 }
 
 function compute_car_motion_mode(
@@ -129,6 +130,7 @@ function make_carrier_car(
 		departureTimestamp: 0,
 		scheduleFlag: 0,
 		waitingCount: new Array(numSlots).fill(0),
+		destinationCountByFloor: new Array(numSlots).fill(0),
 		pendingRouteIds: [],
 	};
 }
@@ -173,8 +175,20 @@ function sync_waiting_count(
 	carIndex: number,
 ): void {
 	car.waitingCount.fill(0);
+	car.destinationCountByFloor.fill(0);
 	for (const route of carrier.pendingRoutes) {
-		if (route.boarded || route.assignedCarIndex !== carIndex) continue;
+		if (route.boarded) {
+			const slot = floor_to_slot(carrier, route.destinationFloor);
+			if (
+				route.assignedCarIndex === carIndex &&
+				slot >= 0 &&
+				slot < car.destinationCountByFloor.length
+			) {
+				car.destinationCountByFloor[slot] += 1;
+			}
+			continue;
+		}
+		if (route.assignedCarIndex !== carIndex) continue;
 		const slot = floor_to_slot(carrier, route.sourceFloor);
 		if (slot < 0 || slot >= car.waitingCount.length) continue;
 		car.waitingCount[slot] += 1;
@@ -381,6 +395,18 @@ function select_next_target(
 		.map((route) =>
 			route.boarded ? route.destinationFloor : route.sourceFloor,
 		);
+
+	for (
+		let floor = carrier.bottomServedFloor;
+		floor <= carrier.topServedFloor;
+		floor++
+	) {
+		const slot = floor_to_slot(carrier, floor);
+		if (slot < 0) continue;
+		if ((car.destinationCountByFloor[slot] ?? 0) > 0) {
+			targets.push(floor);
+		}
+	}
 
 	for (
 		let floor = carrier.bottomServedFloor;
@@ -625,6 +651,9 @@ export function rebuild_carrier_list(world: WorldState): void {
 			for (const car of existing.cars) {
 				if (car.waitingCount.length !== numSlots) {
 					car.waitingCount = new Array(numSlots).fill(0);
+				}
+				if (car.destinationCountByFloor.length !== numSlots) {
+					car.destinationCountByFloor = new Array(numSlots).fill(0);
 				}
 				car.homeFloor = Math.min(top, Math.max(bottom, car.homeFloor));
 				if (car.currentFloor < bottom || car.currentFloor > top) {

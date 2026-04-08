@@ -1345,6 +1345,14 @@ describe("select_best_route_candidate", () => {
 		expect(route?.cost).toBe(5 * 8); // |15-10| * 8 = 40
 	});
 
+	it("only uses special-link segment shortcuts from the segment entry floor", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		placeElevatorShaft(world, ledger, 0, 10, 20);
+		const route = select_best_route_candidate(world, 12, 15);
+		expect(route?.cost).toBe(0x280 + 3 * 8);
+	});
+
 	it("returns null if no carrier covers the span", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
@@ -1571,6 +1579,28 @@ describe("car state machine", () => {
 			carrier.pendingRoutes.find((route) => route.entityId === "high")
 				?.assignedCarIndex,
 		).toBe(1);
+	});
+
+	it("tracks boarded destinations with per-floor counters", () => {
+		const world = makeWorld();
+		world.carriers.push(make_carrier(0, 0, 2, 10, 20, 1));
+		const carrier = world.carriers[0];
+		const car = carrier.cars[0];
+		if (!car) throw new Error("expected car");
+
+		car.pendingRouteIds.push("r1");
+		carrier.pendingRoutes.push({
+			entityId: "r1",
+			sourceFloor: 10,
+			destinationFloor: 18,
+			boarded: true,
+			directionFlag: 0,
+			assignedCarIndex: 0,
+		});
+
+		tick_all_carriers(world, createTimeState());
+		const destinationSlot = floor_to_slot(carrier, 18);
+		expect(car.destinationCountByFloor[destinationSlot]).toBeGreaterThan(0);
 	});
 });
 

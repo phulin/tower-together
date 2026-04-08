@@ -96,6 +96,9 @@ export class TowerSim {
 				car.active ??= true;
 				car.pendingAssignmentCount ??= 0;
 				car.homeFloor ??= car.currentFloor ?? carrier.bottomServedFloor;
+				car.destinationCountByFloor ??= new Array(
+					Math.max(0, carrier.topServedFloor - carrier.bottomServedFloor + 1),
+				).fill(0);
 			}
 		}
 		normalized.world.specialLinks ??= Array.from(

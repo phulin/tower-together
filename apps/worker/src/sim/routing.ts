@@ -200,6 +200,7 @@ export function select_best_route_candidate(
 				if (!seg.active) continue;
 				if (seg.startFloor > lo || seg.startFloor + seg.heightMetric < hi)
 					continue;
+				if (!can_enter_segment_from_floor(seg, fromFloor, toFloor)) continue;
 				const isExpress = (seg.flags & 1) !== 0;
 				tryCandidate(seg.carrierId, isExpress ? delta * 8 + 0x280 : delta * 8);
 			}
@@ -213,6 +214,7 @@ export function select_best_route_candidate(
 			if ((seg.flags & 1) === 0) continue;
 			if (seg.startFloor > lo || seg.startFloor + seg.heightMetric < hi)
 				continue;
+			if (!can_enter_segment_from_floor(seg, fromFloor, toFloor)) continue;
 			tryCandidate(seg.carrierId, delta * 8 + 0x280);
 		}
 	}
@@ -316,4 +318,14 @@ function carrier_covers_floor(
 	floor: number,
 ): boolean {
 	return floor >= carrier.bottomServedFloor && floor <= carrier.topServedFloor;
+}
+
+function can_enter_segment_from_floor(
+	segment: WorldState["specialLinks"][number],
+	fromFloor: number,
+	toFloor: number,
+): boolean {
+	const topFloor = segment.startFloor + segment.heightMetric;
+	if (toFloor > fromFloor) return fromFloor === segment.startFloor;
+	return fromFloor === topFloor;
 }

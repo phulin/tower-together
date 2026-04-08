@@ -40,6 +40,7 @@ export interface CarrierCar {
 	scheduleFlag: number;
 	/** Waiting entity count indexed by floor slot. */
 	waitingCount: number[];
+	destinationCountByFloor: number[];
 	pendingRouteIds: string[];
 }
 
