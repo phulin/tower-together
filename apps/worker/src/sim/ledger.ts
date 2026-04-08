@@ -45,17 +45,17 @@ export function createLedgerState(starting_cash: number): LedgerState {
  */
 export function add_cashflow_from_family_resource(
 	ledger: LedgerState,
-	tile_name: string,
-	variant_index: number,
-	family_code: number,
+	tileName: string,
+	variantIndex: number,
+	familyCode: number,
 ): void {
-	const payouts = YEN_1001[tile_name];
+	const payouts = YEN_1001[tileName];
 	if (!payouts) return;
-	const amount = payouts[Math.min(variant_index, 3)] * YEN_UNIT;
+	const amount = payouts[Math.min(variantIndex, 3)] * YEN_UNIT;
 	ledger.cash_balance = Math.min(CASH_CAP, ledger.cash_balance + amount);
-	if (family_code >= 0 && family_code < 256) {
-		ledger.secondary_ledger[family_code] += amount;
-		ledger.primary_ledger[family_code] += amount;
+	if (familyCode >= 0 && familyCode < 256) {
+		ledger.secondary_ledger[familyCode] += amount;
+		ledger.primary_ledger[familyCode] += amount;
 	}
 }
 
@@ -69,16 +69,16 @@ export function do_expense_sweep(ledger: LedgerState, world: WorldState): void {
 	for (const obj of Object.values(world.placed_objects)) {
 		const code = obj.object_type_code;
 		// Carriers: use elevator_local / elevator_express / escalator keys
-		let expense_key: string;
+		let expenseKey: string;
 		if (code === 0x01) {
-			expense_key = "elevator_local";
+			expenseKey = "elevator_local";
 		} else if (code === 0x02) {
-			expense_key = "escalator";
+			expenseKey = "escalator";
 		} else {
 			// Map code → tile name via FAMILY_CODE_TO_TILE (imported lazily to avoid cycle)
-			expense_key = _codeToTile(code);
+			expenseKey = _codeToTile(code);
 		}
-		const rate = YEN_1002[expense_key];
+		const rate = YEN_1002[expenseKey];
 		if (!rate) continue;
 		const amount = rate * YEN_UNIT;
 		ledger.cash_balance = Math.max(0, ledger.cash_balance - amount);
@@ -117,9 +117,9 @@ export function rebuild_facility_ledger(
 export function do_ledger_rollover(
 	ledger: LedgerState,
 	world: WorldState,
-	day_counter: number,
+	dayCounter: number,
 ): void {
-	if (day_counter % 3 !== 0) return;
+	if (dayCounter % 3 !== 0) return;
 	do_expense_sweep(ledger, world);
 	ledger.cash_balance_cycle_base = ledger.cash_balance;
 	ledger.secondary_ledger.fill(0);

@@ -125,12 +125,14 @@ Within the occupied/sold band (`0x00..0x0F`) it acts as a **trip counter**: each
 
 **Per-family trip-counter reset values** (set when `stay_phase == 0x10` on dispatch entry):
 
-| Family | Tile span | Reset value | Trips per round |
+| Family | Population (sub-tile entity count) | Reset value | Trips per round |
 |---|---|---|---|
 | 3 (single room) | 1 | 1 | 1 |
 | 4 (hotel) | 2 | 2 | 2 |
 | 5 (hotel suite) | 3 | 2 | 2 |
 | 9 (condo) | 3 | 3 | ~2 (net, due to sub-tile stagger) |
+
+**Important**: the column above is the **runtime entity count** per object (one entity per occupant), not the geometric tile width. See the "Object Tile Widths" table in "Money Model → Construction Cost Table" for actual placement footprints. Per-family scoring loops iterate over **entities** (population), not tiles, so this is the correct count for state-machine logic; geometry is a separate concern handled at placement time.
 
 For hotels, when the counter reaches `& 7 == 0`, checkout fires and `stay_phase` advances to the checked-out range. For condos, income fires once on arrival (sale) — the ongoing trips maintain the operational score that prevents refund. See the per-family sections for detail.
 
@@ -149,7 +151,7 @@ A binary flag recomputed each day: `(day_counter % 12) % 3 >= 2 ? 1 : 0`. Set on
 
 ### `base_offset`
 
-Each runtime entity associated with a multi-tile object carries a `base_offset` value (entity record byte) that is its sub-tile index within the parent object's tile span — `0` for the leftmost tile, `1` for the next, and so on. For a 3-tile condo the values are `0`, `1`, `2`; for a 6-tile office `0`–`5`. `base_offset` is used to stagger per-entity behavior across a multi-tile span — only certain tiles perform specific actions per cycle.
+Each runtime entity associated with a multi-occupant object carries a `base_offset` value (entity record byte) that is its **occupant index** within the parent object — `0` for the first occupant, `1` for the next, and so on. For a 3-occupant condo (population 3) the values are `0`, `1`, `2`; for a 6-occupant office (population 6) they are `0`–`5`. `base_offset` is used to stagger per-entity behavior across the population — only certain occupants perform specific actions per cycle. **Note**: occupant count (population) is NOT the same as the geometric tile width of the object. For example, an office occupies 9 tiles of horizontal width but spawns 6 worker entities; a condo occupies 16 tiles but houses 3 inhabitants. `base_offset` indexes the population, not the tile geometry.
 
 ### `facility_progress_override`
 
@@ -2825,15 +2827,80 @@ A preliminary table keyed to the YEN #1000 cost values (verified against menu st
 
 **Remaining sub-blockers** (partially narrowed by investigation):
 
-Tile spans confirmed from family sections:
-- Family 3 (single room) / type `0x03`: 1 tile.
-- Family 4 (twin room) / type `0x04`: 2 tiles.
-- Family 5 (hotel suite) / type `0x05`: 3 tiles.
-- Family 7 (office) / type `0x07`: 6 tiles.
-- Family 9 (condo) / type `0x09`: 3 tiles.
+**Population (entity count) confirmed from family sections — NOT tile width:**
+- Family 3 (single room) / type `0x03`: 1 occupant.
+- Family 4 (twin room) / type `0x04`: 2 occupants.
+- Family 5 (hotel suite) / type `0x05`: 3 occupants.
+- Family 7 (office) / type `0x07`: 6 workers.
+- Family 9 (condo) / type `0x09`: 3 inhabitants.
 
-Still unresolved:
-- **Tile spans are not stored in a global per-type table.** Decompilation of `FUN_1200_082c` (the construction-tool dispatcher) shows that placement uses the click-derived `*0x2d18` (left tile) and `*0x2d1a = left + (*0x8032 / 8)` (right tile) values. The active build object's pixel width is held in global `*0x8032`; each menu-button writer (the menu/keyboard handler that sets `*0x802c = 1000 + (family << 6)`) also writes the corresponding pixel width into `*0x8032`. The width is therefore a **per-tool constant**, not a per-type-code constant — multiple tool families can share a type code at different widths. Confirmed family-3=1 tile, family-4=2 tiles, family-5=3 tiles, family-7=6 tiles, family-9=3 tiles match the documented behavioral spans. For the remaining types, a clean-room implementation should treat tile width as a per-tool constant table that is loaded alongside the menu icon dimensions; the precise widths in pixels need to be recovered from the menu-button writer table (a Tier 3 cosmetic resolution, not a sim-correctness blocker, because all sim mechanics that use width — support search, demolition, drawing — already read from the placed object's `+0x06`/`+0x08` left/right fields rather than from a per-type lookup).
+These numbers are **runtime entity slot counts**, not geometric tile widths. They are what the per-family state machines iterate over (one entity per occupant). Earlier revisions of this section conflated the two; that has been corrected — see the "Object Tile Widths" table below for the actual placement footprints.
+
+**Tile geometry**: tiles in the SimTower world are a 1:4 (width:height) aspect ratio — each tile is much taller than it is wide. Object footprints are measured in narrow tile units. The per-type tile-width table is initialized once at startup by `FUN_1200_0000` (segment 1200, offset 0), which dispatches each of the 49 type codes (0x00..0x30) through a 49-entry jump table at `1200:0254`. Each handler writes a tile-width word into `DS:0x7ca4 + (type * 12)`. At click time, `FUN_1200_0fad` (the menu-button writer) reads the per-type RECT and copies it to `DS:0x802e..0x8035`, where `*0x8032` becomes the active pixel width that the dispatcher reads as `tile_width = *0x8032 / 8` (the pixel width is the tile width × 8 because each tile is 8 pixels wide).
+
+**Authoritative per-type tile widths recovered from `FUN_1200_0000`** (49 entries, type codes 0x00..0x30):
+
+| Type | Width (tiles) | Source | Identity (from spec / cost table) |
+|---|---|---|---|
+| `0x00` | 1 | explicit | Floor |
+| `0x01` | 4 | explicit | Standard elevator shaft |
+| `0x02` | resource (≈?) | resource icon | (unused / placeholder) |
+| `0x03` | 4 | resource icon | Single hotel room |
+| `0x04` | resource | resource icon | Twin hotel room |
+| `0x05` | resource | resource icon | Hotel suite |
+| `0x06` | 24 | explicit | Restaurant |
+| `0x07` | 9 | explicit | Office |
+| `0x08` | 2 | explicit | (unidentified — possibly menu placeholder) |
+| `0x09` | 16 | resource icon | Condo |
+| `0x0a` | 12 | explicit | Fast food |
+| `0x0b` | 1 | resource icon | Lobby |
+| `0x0c` | 16 | explicit | Retail / shop |
+| `0x0d` | 26 | explicit | Sky lobby / medical |
+| `0x0e` | resource | resource icon | Metro station |
+| `0x0f` | resource | resource icon | (connector / stairwell entrance) |
+| `0x10` | resource | resource icon | (unidentified) |
+| `0x11` | 2 | explicit | (unidentified) |
+| `0x12` | 24 | explicit | Cinema (paired entertainment) |
+| `0x13` | 24 | inherits 0x12 | Cinema variant |
+| `0x14` | resource | resource icon | Security guard |
+| `0x15` | inherits 0x14 | inherit prev | Housekeeping cart |
+| `0x16` | 8 | explicit | Stairs |
+| `0x17` | 8 | explicit | (stairs variant) |
+| `0x18` | 4 | explicit | Parking lot |
+| `0x19` | 0 (no width set) | skipped | Parking sub-tile (not directly placed) |
+| `0x1a` | 0 (no width set) | skipped | Parking sub-tile (not directly placed) |
+| `0x1b` | 8 | explicit | Escalator |
+| `0x1c` | 8 | explicit | (escalator variant) |
+| `0x1d` | 24 | explicit | Party hall |
+| `0x1e` | 24 | inherits 0x1d | Party hall variant |
+| `0x1f` | 30 | explicit | VIP hotel suite |
+| `0x20` | 30 | inherits 0x1f | VIP suite tile 2 |
+| `0x21` | 30 | inherits 0x20 | VIP suite tile 3 |
+| `0x22` | 7 | explicit | Entertainment link forward half |
+| `0x23` | 7 | inherits 0x22 | Entertainment link reverse half |
+| `0x24` | 28 | explicit | Cathedral / evaluation entity |
+| `0x25` | 28 | inherits 0x24 | Eval entity variant |
+| `0x26` | 28 | inherits 0x25 | Eval entity variant |
+| `0x27` | 28 | inherits 0x26 | Eval entity variant |
+| `0x28` | 28 | inherits 0x27 | Eval entity variant (fire suppressor?) |
+| `0x29` | resource | resource icon | (unidentified) |
+| `0x2a` | 6 | explicit | Express elevator shaft |
+| `0x2b` | 4 | explicit | Service elevator shaft |
+| `0x2c` | 1 | resource icon | Vertical anchor (column-9 only) |
+| `0x2d` | resource | resource icon | (paired connector) |
+| `0x2e` | resource | resource icon | (paired connector) |
+| `0x2f` | resource | resource icon | (paired connector) |
+| `0x30` | 8 | explicit | (unidentified — large carrier?) |
+
+**Source-column legend:**
+- **explicit** — handler in `FUN_1200_0000` writes a literal tile-width immediate (e.g. `MOV word ptr [BX + 0x7ca4], 0x18` writes 24).
+- **inherits N-1** — handler at offset `0x00e9`: copies the tile width from the previous type code (`*(0x7c98 + N*12)` = `*(0x7ca4 + (N-1)*12)`). Used for variant codes that share geometry with the prior code (cinema/party-hall halves, VIP suite tiles, eval-entity chain).
+- **resource icon** — handler at offset `0x0105` (default): calls `FUN_1038:0000(1000 + (type<<6))` which loads the menu-button bitmap resource, reads the bitmap RECT's `right` field, and shifts right by 3 to get tile width. This means the width for these types is encoded in the per-type menu icon resource width, not in code. Verified externally: `0x03` = 4 tiles (32-pixel icon), `0x09` = 16 tiles (128-pixel icon), `0x0b` = 1 tile (8-pixel icon), `0x2c` = 1 tile (column-marker icon).
+- **skipped (no width)** — type codes `0x19`, `0x1a` go through handler `0x0159` which does **not** write a tile width (the BSS slot stays at 0). These codes are internal sub-tile variants for parking and are never placed directly by the menu, so a zero width is correct.
+
+**Heights**: there is no per-type height table. Every above-grade non-carrier object is exactly **1 floor tall**. Carriers (`0x01` standard, `0x2a` express, `0x2b` service elevator; `0x16` stairs; `0x1b` escalator) have variable height set at placement: top floor ≤ 109 (`new_top < 0x6e`); span ≤ 29 floors for express/escalator; standard local elevator constrained by the 10-slot served-floor mapping. Vertical anchor `0x2c` is single-tile, single-floor, locked to column 9.
+
+**Why this is no longer a sim-correctness or implementation blocker**: every consumer of width inside the simulation (support search, demolition sweep, drawing, support-radius pairing) reads the per-object `+0x06`/`+0x08` left/right tile fields directly. The placer stamps these at placement time from `*0x8032`. A clean-room implementation can hard-code the table above as a 49-entry constants array (with the 6 resource-loaded entries either extracted from the NE bitmap resources at IDs `1000 + (type << 6)` or supplied as known-good values from in-game observation: 0x03=4, 0x09=16, 0x0b=1, 0x2c=1; the remaining unidentified codes 0x02/0x04/0x05/0x0e/0x0f/0x10/0x14/0x29/0x2d/0x2e/0x2f need either resource extraction or are not player-placeable).
 - Placement geometry rules per type code (floor range, adjacency, basement-only vs above-grade) live inside the per-family helpers `FUN_1200_1847` (priced families 3/4/5/7/9 + capped families 6/0xa/0xc/0xd/0xe), `FUN_1200_1fef` (entertainment + security), `FUN_1200_149c` (escalator + stairs), `FUN_1200_2159` (VIP suite), `FUN_1200_2347` (cathedral/eval), `FUN_1200_24fe` (lobby), `FUN_1200_2693` (vertical anchor — column-9 constraint already documented), `FUN_1200_27ce/293e` (floor + parking drag), and `place_carrier_shaft` (mode-1/0/2 carriers). Each helper emits a recovered error code on rejection. A conservative headless implementation can enforce the documented per-type quotas, singleton gates, and floor-range constraints; the remaining intra-helper structural rules are Tier 3 (player-interaction completeness, not sim-correctness).
 - Parking variant disambiguation (`0x18/0x19/0x1a`): all three are swept identically by `add_parking_operating_expense` so there is no mechanical distinction — the variants differ only by visual depth. The drag-placed parking lot writes type `0x18` directly (confirmed via `FUN_1200_27ce`). Codes `0x19/0x1a` are most likely sub-tile variants written by the parking entrance helper `FUN_1200_149c` when the player drops the entrance-style parking object. The mechanical effect is identical regardless of variant.
 - VIP hotel suite variant disambiguation (`0x1f/0x20/0x21`): all three are swept identically by `trigger_vip_special_visitor` and all three gate the 4→5 star advancement. The cost table shows `0x1f = $1,000,000` with `0x20/0x21 = 0`, confirming the three codes are paired tile segments of one multi-tile suite (similar to `0x22/0x23` being paired halves of an entertainment link). The placement helper `FUN_1200_2159` writes all three on a single placement. Mechanically a clean-room reimplementation can treat them as one logical "VIP suite" object spanning three tiles.

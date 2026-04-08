@@ -35,12 +35,15 @@ import {
 import { run_checkpoints, type SimState } from "./scheduler";
 import {
 	advanceOneTick,
+	createNewGameTimeState,
 	createTimeState,
 	DAY_TICK_INCOME,
 	DAY_TICK_MAX,
+	NEW_GAME_DAY_TICK,
 	pre_day_4,
 } from "./time";
 import {
+	createGateFlags,
 	GRID_HEIGHT,
 	GRID_WIDTH,
 	GROUND_Y,
@@ -57,6 +60,7 @@ function makeWorld(_opts?: { cash?: number }): WorldState {
 		name: "Test Tower",
 		width: GRID_WIDTH,
 		height: GRID_HEIGHT,
+		gate_flags: createGateFlags(),
 		cells: {},
 		cellToAnchor: {},
 		overlays: {},
@@ -94,7 +98,7 @@ function placeSupportRow(y: number, world: WorldState, _ledger: LedgerState) {
 // ─── Phase 1: Time model ──────────────────────────────────────────────────────
 
 describe("time model", () => {
-	it("starts at tick 0 with all fields zeroed", () => {
+	it("createTimeState starts at tick 0 (test baseline)", () => {
 		const t = createTimeState();
 		expect(t.day_tick).toBe(0);
 		expect(t.daypart_index).toBe(0);
@@ -187,6 +191,15 @@ describe("time model", () => {
 		}
 	});
 
+	it("createNewGameTimeState starts at NEW_GAME_DAY_TICK (0x9e5 = 2533), daypart 6", () => {
+		const t = createNewGameTimeState();
+		expect(t.day_tick).toBe(NEW_GAME_DAY_TICK);
+		expect(t.day_tick).toBe(0x9e5);
+		expect(t.daypart_index).toBe(6);
+		expect(t.day_counter).toBe(0);
+		expect(t.star_count).toBe(1);
+	});
+
 	it("pre_day_4 returns true for daypart < 4, false otherwise", () => {
 		const t = createTimeState();
 		expect(pre_day_4({ ...t, daypart_index: 0 })).toBe(true);
@@ -199,7 +212,7 @@ describe("time model", () => {
 // ─── Phase 2.1: PlacedObjectRecord ───────────────────────────────────────────
 
 describe("PlacedObjectRecord", () => {
-	it("is created with all required fields when placing a hotel_single", () => {
+	it("is created with correct spec-compliant init values for hotel_single", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		placeSupportRow(GROUND_Y + 1, world, ledger); // support one row below
@@ -214,14 +227,13 @@ describe("PlacedObjectRecord", () => {
 		expect(rec.left_tile_index).toBe(0);
 		expect(rec.right_tile_index).toBe(0); // width 1
 		expect(rec.object_type_code).toBe(3); // family code for hotel_single
-		expect(rec.object_state_code).toBe(0);
+		expect(rec.stay_phase).toBe(0); // init = 0
 		expect(rec.linked_record_index).toBe(-1); // no sidecar for hotel
-		expect(rec.subtype_tile_offset).toBe(0);
-		expect(rec.needs_refresh_flag).toBe(0);
-		expect(rec.pairing_status).toBe(0);
-		expect(rec.pairing_active_flag).toBe(0);
+		expect(rec.needs_refresh_flag).toBe(1); // init = 1 (dirty — picked up next sweep)
+		expect(rec.pairing_status).toBe(-1); // init = -1 (invalid; first sweep populates)
+		expect(rec.pairing_active_flag).toBe(1); // init = 1 (first-activation latch)
 		expect(rec.activation_tick_count).toBe(0);
-		expect(rec.variant_index).toBe(0);
+		expect(rec.variant_index).toBe(1); // family 3 → init = 1
 	});
 
 	it("sets right_tile_index = left + width - 1 for multi-tile objects", () => {
@@ -541,21 +553,19 @@ describe("ledger: rebuild_facility_ledger", () => {
 			left_tile_index: 0,
 			right_tile_index: 0,
 			object_type_code: 3,
-			object_state_code: 0,
+			stay_phase: 0,
 			linked_record_index: -1,
 			aux_value_or_timer: 0,
-			subtype_tile_offset: 0,
-			needs_refresh_flag: 0,
-			pairing_status: 0,
-			pairing_active_flag: 0,
+			needs_refresh_flag: 1,
+			pairing_status: -1,
+			pairing_active_flag: 1,
 			activation_tick_count: 0,
-			variant_index: 0,
+			variant_index: 1,
 		};
 		world.placed_objects[`1,${y}`] = {
 			...world.placed_objects[`0,${y}`],
 			left_tile_index: 1,
 			right_tile_index: 1,
-			subtype_tile_offset: 1,
 		};
 		rebuild_facility_ledger(ledger, world);
 		expect(ledger.primary_ledger[3]).toBe(2);
@@ -603,15 +613,14 @@ describe("ledger: do_expense_sweep", () => {
 			left_tile_index: 0,
 			right_tile_index: 1,
 			object_type_code: 6, // restaurant
-			object_state_code: 0,
+			stay_phase: 0,
 			linked_record_index: -1,
 			aux_value_or_timer: 0,
-			subtype_tile_offset: 0,
-			needs_refresh_flag: 0,
-			pairing_status: 0,
-			pairing_active_flag: 0,
+			needs_refresh_flag: 1,
+			pairing_status: -1,
+			pairing_active_flag: 1,
 			activation_tick_count: 0,
-			variant_index: 0,
+			variant_index: 4, // family 6 (restaurant) → init = 4
 		};
 		do_expense_sweep(ledger, world);
 		expect(ledger.cash_balance).toBe(0);
@@ -868,15 +877,14 @@ describe("handle_remove_tile", () => {
 			left_tile_index: 0,
 			right_tile_index: 0,
 			object_type_code: 3,
-			object_state_code: 0,
+			stay_phase: 0,
 			linked_record_index: -1,
 			aux_value_or_timer: 0,
-			subtype_tile_offset: 0,
-			needs_refresh_flag: 0,
-			pairing_status: 0,
-			pairing_active_flag: 0,
+			needs_refresh_flag: 1,
+			pairing_status: -1,
+			pairing_active_flag: 1,
 			activation_tick_count: 0,
-			variant_index: 0,
+			variant_index: 1,
 		};
 		// Place a floor tile directly above
 		world.cells[`0,${y - 1}`] = "floor";
@@ -1064,8 +1072,9 @@ function placeElevatorShaft(
 }
 
 describe("floor_to_slot", () => {
-	it("returns floor offset from bottom for express carrier", () => {
-		const carrier = make_carrier(0, 5, 1, 10, 30);
+	it("returns direct floor offset for mode-2 (Service/express) carrier", () => {
+		// mode 2 = Service Elevator (express-mode routing): direct offset
+		const carrier = make_carrier(0, 5, 2, 10, 30);
 		expect(floor_to_slot(carrier, 10)).toBe(0);
 		expect(floor_to_slot(carrier, 15)).toBe(5);
 		expect(floor_to_slot(carrier, 30)).toBe(20);
@@ -1077,9 +1086,14 @@ describe("floor_to_slot", () => {
 		expect(floor_to_slot(carrier, 21)).toBe(-1);
 	});
 
-	it("returns floor offset for escalator", () => {
-		const carrier = make_carrier(0, 3, 2, 10, 15);
-		expect(floor_to_slot(carrier, 12)).toBe(2);
+	it("mode-0/1 (local-mode) returns rel offset for the first 10 floors", () => {
+		// Modes 0 and 1 are local-mode; first 10 floors (rel 0–9) map directly
+		const carrier = make_carrier(0, 3, 0, 10, 20);
+		expect(floor_to_slot(carrier, 10)).toBe(0); // rel 0
+		expect(floor_to_slot(carrier, 14)).toBe(4); // rel 4
+		expect(floor_to_slot(carrier, 19)).toBe(9); // rel 9
+		// rel 10+ (beyond the 10-slot limit) without a sky-lobby slot returns -1
+		expect(floor_to_slot(carrier, 20)).toBe(-1);
 	});
 });
 
@@ -1103,7 +1117,7 @@ describe("rebuild_carrier_list", () => {
 		expect(world.carriers).toHaveLength(2);
 	});
 
-	it("escalator cell creates a mode-2 carrier", () => {
+	it("escalator cells do NOT create a carrier (spec: escalators are special-link segments)", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		world.cells[`2,${GRID_HEIGHT - 1 - 10}`] = "floor";
@@ -1111,7 +1125,15 @@ describe("rebuild_carrier_list", () => {
 		world.overlays[`2,${GRID_HEIGHT - 1 - 10}`] = "escalator";
 		world.overlays[`2,${GRID_HEIGHT - 1 - 11}`] = "escalator";
 		run_global_rebuilds(world, ledger);
-		expect(world.carriers[0].carrier_mode).toBe(2);
+		// No carrier record for escalators
+		expect(world.carriers).toHaveLength(0);
+		// But a special-link segment covers floors 10–11
+		const active = world.special_links.filter((s) => s.active);
+		expect(active).toHaveLength(1);
+		expect(active[0].start_floor).toBe(10);
+		expect(active[0].height_metric).toBe(1); // floors 10 and 11
+		expect(active[0].flags & 1).toBe(0); // local-mode (not express)
+		expect(active[0].carrier_id).toBe(-1); // no carrier_id
 	});
 
 	it("preserves car position when carrier range extends", () => {

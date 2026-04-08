@@ -11,11 +11,14 @@ import {
 
 const LOCAL_TICKS_PER_FLOOR = 8;
 const EXPRESS_TICKS_PER_FLOOR = 4;
-const ESCALATOR_TICKS_PER_FLOOR = 16;
 
+/**
+ * Ticks required to travel one floor.
+ * mode 2 (Service Elevator, used for express-mode long-hop routing) moves faster.
+ * modes 0/1 (Express/Standard Elevators, local-mode routing) use standard speed.
+ */
 function speed_ticks(mode: 0 | 1 | 2): number {
-	if (mode === 1) return EXPRESS_TICKS_PER_FLOOR;
-	if (mode === 2) return ESCALATOR_TICKS_PER_FLOOR;
+	if (mode === 2) return EXPRESS_TICKS_PER_FLOOR;
 	return LOCAL_TICKS_PER_FLOOR;
 }
 
@@ -25,43 +28,43 @@ function speed_ticks(mode: 0 | 1 | 2): number {
  * Map a floor index to the car's waiting_count slot index.
  * Returns -1 if the floor is outside the carrier's range or not served.
  *
- * Local elevator: floors relative to bottom (0–N). Per spec, local elevators
- * serve at most 10 regular slots plus sky-lobby slots (encoded as 10+).
- * Express/escalator: direct offset from bottom_served_floor.
+ * Modes 0/1 (Express/Standard Elevator, local-mode): serve at most 10 regular
+ * slots plus sky-lobby slots (encoded as 10+). Sky-lobby formula: floor just
+ * below each sky lobby (i.e. (floor-10)%15 == 14).
  *
- * The sky-lobby extra slot formula `(floor-10)%15==14` is from the spec;
- * it encodes the floor just below each sky lobby as an additional stop slot.
+ * Mode 2 (Service Elevator, express-mode): direct offset from bottom_served_floor,
+ * can serve any floor in range.
  */
 export function floor_to_slot(carrier: CarrierRecord, floor: number): number {
 	if (floor < carrier.bottom_served_floor || floor > carrier.top_served_floor) {
 		return -1;
 	}
-	if (carrier.carrier_mode === 0) {
-		// Local elevator: up to 10 regular slots (0–9), then sky-lobby slots (10+)
+	if (carrier.carrier_mode === 0 || carrier.carrier_mode === 1) {
+		// Local-mode elevator: up to 10 regular slots (0–9), then sky-lobby slots (10+)
 		const rel = floor - carrier.bottom_served_floor;
 		if (rel >= 0 && rel < 10) return rel;
 		if ((floor - 10) % 15 === 14) return Math.floor((floor - 10) / 15) + 10;
 		return -1;
 	}
-	// Express or escalator: direct offset
+	// Mode 2 (Service/express-mode elevator): direct offset
 	return floor - carrier.bottom_served_floor;
 }
 
 // ─── Factory helpers ──────────────────────────────────────────────────────────
 
-function make_carrier_car(bottom_floor: number, num_slots: number): CarrierCar {
+function make_carrier_car(bottomFloor: number, numSlots: number): CarrierCar {
 	return {
-		current_floor: bottom_floor,
+		current_floor: bottomFloor,
 		door_wait_counter: 0,
 		speed_counter: 0,
 		assigned_count: 0,
 		direction_flag: 0,
-		target_floor: bottom_floor,
-		prev_floor: bottom_floor,
+		target_floor: bottomFloor,
+		prev_floor: bottomFloor,
 		departure_flag: 0,
 		departure_timestamp: 0,
 		schedule_flag: 0,
-		waiting_count: new Array(num_slots).fill(0),
+		waiting_count: new Array(numSlots).fill(0),
 	};
 }
 
@@ -72,7 +75,7 @@ export function make_carrier(
 	bottom: number,
 	top: number,
 ): CarrierRecord {
-	const num_slots = top - bottom + 1;
+	const numSlots = top - bottom + 1;
 	return {
 		carrier_id: id,
 		column: col,
@@ -80,9 +83,9 @@ export function make_carrier(
 		top_served_floor: top,
 		bottom_served_floor: bottom,
 		served_floor_flags: new Array(14).fill(1),
-		primary_route_status_by_floor: new Array(num_slots).fill(1),
-		secondary_route_status_by_floor: new Array(num_slots).fill(0),
-		cars: [make_carrier_car(bottom, num_slots)],
+		primary_route_status_by_floor: new Array(numSlots).fill(1),
+		secondary_route_status_by_floor: new Array(numSlots).fill(0),
+		cars: [make_carrier_car(bottom, numSlots)],
 	};
 }
 
@@ -202,7 +205,8 @@ export function tick_all_carriers(world: WorldState): void {
 // ─── Carrier list rebuild ─────────────────────────────────────────────────────
 
 /**
- * Scan elevator/escalator cells, group by column, and rebuild world.carriers.
+ * Scan elevator cells, group by column, and rebuild world.carriers.
+ * Escalators are NOT carriers — they become special-link segments in routing.ts.
  * Preserves car state for existing columns; creates fresh records for new ones.
  * Called by run_global_rebuilds() after any build/demolish.
  */
@@ -210,10 +214,9 @@ export function rebuild_carrier_list(world: WorldState): void {
 	const columns = new Map<number, { floors: Set<number>; mode: 0 | 1 | 2 }>();
 
 	for (const [key, type] of Object.entries(world.overlays)) {
-		let mode: 0 | 1 | 2 | null = null;
-		if (type === "elevator") mode = 0;
-		else if (type === "escalator") mode = 2;
-		if (mode === null) continue;
+		// Only elevators become carrier records; escalators are special-link segments.
+		if (type !== "elevator") continue;
+		const mode: 0 | 1 | 2 = 0; // mode 0 = Express Elevator (standard player elevator)
 
 		const [xStr, yStr] = key.split(",");
 		const x = Number(xStr);
@@ -225,14 +228,14 @@ export function rebuild_carrier_list(world: WorldState): void {
 		columns.get(x)!.floors.add(floor);
 	}
 
-	const new_carriers: CarrierRecord[] = [];
+	const newCarriers: CarrierRecord[] = [];
 	let id = 0;
 
 	for (const [col, { floors, mode }] of columns) {
 		const sorted = [...floors].sort((a, b) => a - b);
 		const bottom = sorted[0];
 		const top = sorted[sorted.length - 1];
-		const num_slots = top - bottom + 1;
+		const numSlots = top - bottom + 1;
 
 		const existing = world.carriers.find((c) => c.column === col);
 		if (existing) {
@@ -243,9 +246,9 @@ export function rebuild_carrier_list(world: WorldState): void {
 			existing.bottom_served_floor = bottom;
 			if (existing.served_floor_flags.length !== 14)
 				existing.served_floor_flags = new Array(14).fill(1);
-			if (existing.primary_route_status_by_floor.length !== num_slots) {
-				existing.primary_route_status_by_floor = new Array(num_slots).fill(1);
-				existing.secondary_route_status_by_floor = new Array(num_slots).fill(0);
+			if (existing.primary_route_status_by_floor.length !== numSlots) {
+				existing.primary_route_status_by_floor = new Array(numSlots).fill(1);
+				existing.secondary_route_status_by_floor = new Array(numSlots).fill(0);
 			}
 			for (const car of existing.cars) {
 				if (car.current_floor < bottom || car.current_floor > top) {
@@ -254,16 +257,16 @@ export function rebuild_carrier_list(world: WorldState): void {
 					car.speed_counter = 0;
 					car.door_wait_counter = 0;
 				}
-				if (car.waiting_count.length !== num_slots)
-					car.waiting_count = new Array(num_slots).fill(0);
+				if (car.waiting_count.length !== numSlots)
+					car.waiting_count = new Array(numSlots).fill(0);
 			}
-			new_carriers.push(existing);
+			newCarriers.push(existing);
 		} else {
-			new_carriers.push(make_carrier(id++, col, mode, bottom, top));
+			newCarriers.push(make_carrier(id++, col, mode, bottom, top));
 		}
 	}
 
-	world.carriers = new_carriers;
+	world.carriers = newCarriers;
 }
 
 /** Initialize routing arrays for a fresh WorldState. */

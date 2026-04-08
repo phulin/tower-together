@@ -10,8 +10,9 @@ import {
 	rebuild_walkability_flags,
 } from "./routing";
 import { run_checkpoints, type SimState } from "./scheduler";
-import { advanceOneTick, createTimeState, type TimeState } from "./time";
+import { advanceOneTick, createNewGameTimeState, type TimeState } from "./time";
 import {
+	createGateFlags,
 	GRID_HEIGHT,
 	GRID_WIDTH,
 	MAX_SPECIAL_LINKS,
@@ -51,12 +52,14 @@ export class TowerSim {
 	// ── Factory methods ────────────────────────────────────────────────────────
 
 	static create(towerId: string, name: string): TowerSim {
-		const time = createTimeState();
+		// New game starts at tick 0x9e5 (mid-day) per new_game_initializer spec.
+		const time = createNewGameTimeState();
 		const world: WorldState = {
 			towerId,
 			name,
 			width: GRID_WIDTH,
 			height: GRID_HEIGHT,
+			gate_flags: createGateFlags(),
 			cells: {},
 			cellToAnchor: {},
 			overlays: {},
@@ -83,6 +86,7 @@ export class TowerSim {
 		if (snap.world.height < GRID_HEIGHT) snap.world.height = GRID_HEIGHT;
 		snap.world.placed_objects ??= {};
 		snap.world.sidecars ??= [];
+		snap.world.gate_flags ??= createGateFlags();
 
 		// Migrate old saves that stored cash in world instead of ledger
 		if (!snap.ledger) {
@@ -115,19 +119,19 @@ export class TowerSim {
 	// ── Tick ──────────────────────────────────────────────────────────────────
 
 	step(): StepResult {
-		const prev_tick = this.time.day_tick;
+		const prevTick = this.time.day_tick;
 		const balanceBefore = this.ledger.cash_balance;
 
 		const { time } = advanceOneTick(this.time);
 		this.time = time;
-		const curr_tick = this.time.day_tick;
+		const currTick = this.time.day_tick;
 
 		const state: SimState = {
 			time: this.time,
 			world: this.world,
 			ledger: this.ledger,
 		};
-		run_checkpoints(state, prev_tick, curr_tick);
+		run_checkpoints(state, prevTick, currTick);
 		tick_all_carriers(this.world);
 
 		return {
@@ -172,6 +176,7 @@ export class TowerSim {
 			name: this.world.name,
 			width: this.world.width,
 			height: this.world.height,
+			gate_flags: { ...this.world.gate_flags },
 			cells: { ...this.world.cells },
 			cellToAnchor: { ...this.world.cellToAnchor },
 			overlays: { ...this.world.overlays },

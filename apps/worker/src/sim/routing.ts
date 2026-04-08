@@ -1,11 +1,19 @@
-import { GRID_HEIGHT, MAX_SPECIAL_LINKS, type WorldState } from "./world";
+import {
+	GRID_HEIGHT,
+	MAX_SPECIAL_LINKS,
+	type WorldState,
+	yToFloor,
+} from "./world";
 
 // ─── Rebuild special-link segment table (§3.1) ────────────────────────────────
 
 /**
- * Populate world.special_links from world.carriers.
- * Each carrier registers one segment covering its full floor span.
- * bit 0 of flags = express carrier (mode 1).
+ * Populate world.special_links from world.carriers (elevators) and world.overlays (escalators).
+ * Each carrier registers one segment; escalators are grouped by column.
+ * bit 0 of flags: 1 = express-mode segment (carrier_mode 2), 0 = local-mode.
+ *
+ * Escalators are special-link segments with carrier_id = -1. They always use local-mode
+ * routing (flags bit 0 = 0). Grouped by column; one segment covers the full contiguous span.
  */
 export function rebuild_special_links(world: WorldState): void {
 	world.special_links = Array.from({ length: MAX_SPECIAL_LINKS }, () => ({
@@ -17,14 +25,41 @@ export function rebuild_special_links(world: WorldState): void {
 	}));
 
 	let idx = 0;
+
+	// Elevator carriers
 	for (const carrier of world.carriers) {
 		if (idx >= MAX_SPECIAL_LINKS) break;
 		const seg = world.special_links[idx++];
 		seg.active = true;
-		seg.flags = carrier.carrier_mode === 1 ? 1 : 0; // bit 0 = express
+		// mode 2 (Service Elevator) = express-mode; modes 0/1 = local-mode
+		seg.flags = carrier.carrier_mode === 2 ? 1 : 0;
 		seg.start_floor = carrier.bottom_served_floor;
 		seg.height_metric = carrier.top_served_floor - carrier.bottom_served_floor;
 		seg.carrier_id = carrier.carrier_id;
+	}
+
+	// Escalator overlays: group by column, one segment per column covering the full span
+	const escColumns = new Map<number, Set<number>>();
+	for (const [key, type] of Object.entries(world.overlays)) {
+		if (type !== "escalator") continue;
+		const [xStr, yStr] = key.split(",");
+		const col = Number(xStr);
+		const floor = yToFloor(Number(yStr));
+		if (!escColumns.has(col)) escColumns.set(col, new Set());
+		// biome-ignore lint/style/noNonNullAssertion: just inserted
+		escColumns.get(col)!.add(floor);
+	}
+	for (const [, floors] of escColumns) {
+		if (idx >= MAX_SPECIAL_LINKS) break;
+		const sorted = [...floors].sort((a, b) => a - b);
+		const bottom = sorted[0];
+		const top = sorted[sorted.length - 1];
+		const seg = world.special_links[idx++];
+		seg.active = true;
+		seg.flags = 0; // escalators are always local-mode
+		seg.start_floor = bottom;
+		seg.height_metric = top - bottom;
+		seg.carrier_id = -1;
 	}
 }
 
@@ -80,11 +115,11 @@ export function rebuild_transfer_group_cache(world: WorldState): void {
  */
 export function is_floor_span_walkable_for_local_route(
 	world: WorldState,
-	from_floor: number,
-	to_floor: number,
+	fromFloor: number,
+	toFloor: number,
 ): boolean {
-	const lo = Math.min(from_floor, to_floor);
-	const hi = Math.max(from_floor, to_floor);
+	const lo = Math.min(fromFloor, toFloor);
+	const hi = Math.max(fromFloor, toFloor);
 	for (let f = lo; f <= hi; f++) {
 		if (!(world.floor_walkability_flags[f] & 1)) return false;
 	}
@@ -97,11 +132,11 @@ export function is_floor_span_walkable_for_local_route(
  */
 export function is_floor_span_walkable_for_express_route(
 	world: WorldState,
-	from_floor: number,
-	to_floor: number,
+	fromFloor: number,
+	toFloor: number,
 ): boolean {
-	const lo = Math.min(from_floor, to_floor);
-	const hi = Math.max(from_floor, to_floor);
+	const lo = Math.min(fromFloor, toFloor);
+	const hi = Math.max(fromFloor, toFloor);
 	for (let f = lo; f <= hi; f++) {
 		if (!(world.floor_walkability_flags[f] & 2)) return false;
 	}
@@ -128,18 +163,18 @@ export interface RouteCandidate {
  */
 export function select_best_route_candidate(
 	world: WorldState,
-	from_floor: number,
-	to_floor: number,
+	fromFloor: number,
+	toFloor: number,
 ): RouteCandidate | null {
-	if (from_floor === to_floor) return null;
+	if (fromFloor === toFloor) return null;
 
-	const delta = Math.abs(from_floor - to_floor);
-	const lo = Math.min(from_floor, to_floor);
-	const hi = Math.max(from_floor, to_floor);
+	const delta = Math.abs(fromFloor - toFloor);
+	const lo = Math.min(fromFloor, toFloor);
+	const hi = Math.max(fromFloor, toFloor);
 	let best: RouteCandidate | null = null;
 
-	function try_c(carrier_id: number, cost: number): void {
-		if (!best || cost < best.cost) best = { carrier_id, cost };
+	function tryCandidate(carrierId: number, cost: number): void {
+		if (!best || cost < best.cost) best = { carrier_id: carrierId, cost };
 	}
 
 	// Check special-link segments first (covers local + express carriers)
@@ -147,28 +182,28 @@ export function select_best_route_candidate(
 		if (!seg.active) continue;
 		if (seg.start_floor > lo || seg.start_floor + seg.height_metric < hi)
 			continue;
-		const is_express = (seg.flags & 1) !== 0;
-		try_c(seg.carrier_id, is_express ? delta * 8 + 0x280 : delta * 8);
+		const isExpress = (seg.flags & 1) !== 0;
+		tryCandidate(seg.carrier_id, isExpress ? delta * 8 + 0x280 : delta * 8);
 	}
 
 	// Check direct carrier connections (safety net if special_links not rebuilt)
 	for (const carrier of world.carriers) {
 		if (carrier.bottom_served_floor > lo || carrier.top_served_floor < hi)
 			continue;
-		try_c(carrier.carrier_id, delta * 8 + 0x280);
+		tryCandidate(carrier.carrier_id, delta * 8 + 0x280);
 	}
 
 	// Check transfer routes via transfer_group_cache
-	const a_mask = world.transfer_group_cache[from_floor] ?? 0;
-	const b_mask = world.transfer_group_cache[to_floor] ?? 0;
+	const aMask = world.transfer_group_cache[fromFloor] ?? 0;
+	const bMask = world.transfer_group_cache[toFloor] ?? 0;
 	for (let t = 0; t < GRID_HEIGHT; t++) {
-		if (t === from_floor || t === to_floor) continue;
-		const t_mask = world.transfer_group_cache[t] ?? 0;
-		const leg1 = a_mask & t_mask; // carriers covering from_floor → t
-		const leg2 = t_mask & b_mask; // carriers covering t → to_floor
+		if (t === fromFloor || t === toFloor) continue;
+		const tMask = world.transfer_group_cache[t] ?? 0;
+		const leg1 = aMask & tMask; // carriers covering fromFloor → t
+		const leg2 = tMask & bMask; // carriers covering t → toFloor
 		// Valid transfer: leg1 and leg2 non-zero and distinct (different carriers)
 		if (leg1 && leg2 && (leg1 & leg2) === 0) {
-			try_c(ctz(leg1), delta * 8 + 3000);
+			tryCandidate(ctz(leg1), delta * 8 + 3000);
 			break; // first transfer found is sufficient for cost comparison
 		}
 	}

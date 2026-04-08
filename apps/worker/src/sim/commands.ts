@@ -42,6 +42,9 @@ export interface CommandResult {
 
 const INFRASTRUCTURE_TILES = new Set(["floor", "lobby", "stairs"]);
 
+// Families whose variant_index initialises to 1; all others initialise to 4 (no payout).
+const VARIANT_INIT_ONE_FAMILIES = new Set([3, 4, 5, 7, 9, 10]);
+
 // ─── PlacedObjectRecord helpers ───────────────────────────────────────────────
 
 function make_placed_object(
@@ -50,21 +53,20 @@ function make_placed_object(
 	world: WorldState,
 ): PlacedObjectRecord {
 	const width = TILE_WIDTHS[tileType] ?? 1;
-	const family_code = TILE_TO_FAMILY_CODE[tileType] ?? 0;
-	const sidecar_index = alloc_sidecar(tileType, x, world);
+	const familyCode = TILE_TO_FAMILY_CODE[tileType] ?? 0;
+	const sidecarIndex = alloc_sidecar(tileType, x, world);
 	return {
 		left_tile_index: x,
 		right_tile_index: x + width - 1,
-		object_type_code: family_code,
-		object_state_code: 0,
-		linked_record_index: sidecar_index,
+		object_type_code: familyCode,
+		stay_phase: 0,
+		linked_record_index: sidecarIndex,
 		aux_value_or_timer: 0,
-		subtype_tile_offset: x,
-		needs_refresh_flag: 0,
-		pairing_status: 0,
-		pairing_active_flag: 0,
+		needs_refresh_flag: 1, // picked up by next refresh sweep
+		pairing_status: -1, // invalid; first scoring sweep populates
+		pairing_active_flag: 1, // first-activation latch
 		activation_tick_count: 0,
-		variant_index: 0,
+		variant_index: VARIANT_INIT_ONE_FAMILIES.has(familyCode) ? 1 : 4,
 	};
 }
 
