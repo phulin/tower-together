@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { runMigrations } from "../db/migrations";
 import { type SimSnapshot, TowerSim } from "../sim/index";
 import type { ClientMessage, ServerMessage } from "../types";
 
@@ -14,12 +15,7 @@ export class TowerRoom extends DurableObject<Env> {
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
-		this.ctx.storage.sql.exec(`
-      CREATE TABLE IF NOT EXISTS tower (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      )
-    `);
+		runMigrations(this.ctx.storage.sql);
 	}
 
 	// ─── Persistence ────────────────────────────────────────────────────────────
