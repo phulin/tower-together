@@ -21,6 +21,61 @@ import {
 
 export type { CellPatch, CommandResult };
 
+// ─── Snake_case → camelCase migration (pre-rename saves) ────────────────────
+
+function snakeToCamel(s: string): string {
+	return s.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+
+function renameKeysShallow(obj: unknown): void {
+	if (!obj || typeof obj !== "object") return;
+	const o = obj as Record<string, unknown>;
+	for (const k of Object.keys(o)) {
+		if (k.includes("_")) {
+			const camel = snakeToCamel(k);
+			if (!(camel in o)) o[camel] = o[k];
+			delete o[k];
+		}
+	}
+}
+
+function renameKeysDeep(obj: unknown): void {
+	if (!obj || typeof obj !== "object") return;
+	if (Array.isArray(obj)) {
+		for (const item of obj) renameKeysDeep(item);
+		return;
+	}
+	const o = obj as Record<string, unknown>;
+	for (const k of Object.keys(o)) {
+		if (k.includes("_")) {
+			const camel = snakeToCamel(k);
+			if (!(camel in o)) o[camel] = o[k];
+			delete o[k];
+		}
+	}
+	for (const v of Object.values(o)) renameKeysDeep(v);
+}
+
+function migrate_snake_to_camel(snap: SimSnapshot): void {
+	if (snap.time) renameKeysShallow(snap.time);
+	if (snap.ledger) renameKeysShallow(snap.ledger);
+	if (snap.world) {
+		// Don't recurse into cells/overlays/cellToAnchor — those are
+		// Record<"x,y", string> and rewriting their keys would corrupt them.
+		const w = snap.world as unknown as Record<string, unknown>;
+		const skipKeys = new Set([
+			"cells",
+			"overlays",
+			"cellToAnchor",
+			"overlayToAnchor",
+		]);
+		renameKeysShallow(w);
+		for (const [k, v] of Object.entries(w)) {
+			if (!skipKeys.has(k)) renameKeysDeep(v);
+		}
+	}
+}
+
 // ─── Snapshot type ────────────────────────────────────────────────────────────
 
 export interface SimSnapshot {

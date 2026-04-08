@@ -329,7 +329,9 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 				</div>
 
 				<div style={styles.toolbarRight}>
-					<span style={styles.cashDisplay}>${cash.toLocaleString()}</span>
+					<span style={styles.cashDisplay}>
+						${(cash ?? 0).toLocaleString()}
+					</span>
 					<span style={styles.statItem}>
 						Day {day} · {String(hour).padStart(2, "0")}h
 					</span>
