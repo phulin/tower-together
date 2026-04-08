@@ -33,11 +33,17 @@ app.get("/api/ws/:towerId", async (c) => {
 app.get("/api/resolve/:slug", async (c) => {
 	const slug = c.req.param("slug");
 
-	// Treat as an alias — query TowerRegistry only.
-	const res = await resolveTowerAlias(c.env, slug);
-	if (res.ok) {
-		const data = (await res.json()) as { towerId: string };
+	// Try alias lookup first.
+	const aliasRes = await resolveTowerAlias(c.env, slug);
+	if (aliasRes.ok) {
+		const data = (await aliasRes.json()) as { towerId: string };
 		return c.json({ towerId: data.towerId });
+	}
+
+	// Fall back to treating the slug as a raw tower ID.
+	const towerRes = await fetchTowerInfo(c.env, slug);
+	if (towerRes.ok) {
+		return c.json({ towerId: slug });
 	}
 
 	return c.json({ error: "Not found" }, 404);
