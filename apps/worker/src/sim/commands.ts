@@ -120,6 +120,41 @@ function free_sidecar(index: number, world: WorldState): void {
 	if (rec) rec.ownerSubtypeIndex = 0xff;
 }
 
+function get_overlay_anchor_key(
+	world: WorldState,
+	x: number,
+	y: number,
+): string | null {
+	const key = `${x},${y}`;
+	return world.overlayToAnchor[key] ?? (world.overlays[key] ? key : null);
+}
+
+function has_misaligned_adjacent_overlay(
+	world: WorldState,
+	x: number,
+	y: number,
+	type: "elevator" | "escalator",
+	width: number,
+): boolean {
+	for (const adjacentY of [y - 1, y + 1]) {
+		if (adjacentY < 0 || adjacentY >= world.height) continue;
+		const adjacentAnchors = new Set<string>();
+		for (let dx = 0; dx < width; dx++) {
+			const anchorKey = get_overlay_anchor_key(world, x + dx, adjacentY);
+			if (!anchorKey) continue;
+			if (world.overlays[anchorKey] !== type) continue;
+			adjacentAnchors.add(anchorKey);
+		}
+		if (adjacentAnchors.size === 0) continue;
+		if (adjacentAnchors.size > 1) return true;
+		const [anchorKey] = adjacentAnchors;
+		if (!anchorKey) continue;
+		const [anchorX] = anchorKey.split(",").map(Number);
+		if (anchorX !== x) return true;
+	}
+	return false;
+}
+
 // ─── Global rebuilds ──────────────────────────────────────────────────────────
 
 /**
@@ -168,6 +203,21 @@ export function handle_place_tile(
 			if (world.overlays[key] || world.overlayToAnchor[key]) {
 				return { accepted: false, reason: "Cell already has an overlay" };
 			}
+		}
+		if (
+			normalizedTileType === "elevator" &&
+			has_misaligned_adjacent_overlay(
+				world,
+				x,
+				y,
+				normalizedTileType,
+				overlayWidth,
+			)
+		) {
+			return {
+				accepted: false,
+				reason: "Elevator must align with adjacent shaft segments",
+			};
 		}
 		// Auto-place floor tiles where empty but supported
 		// (below for above-ground; above for underground floors).

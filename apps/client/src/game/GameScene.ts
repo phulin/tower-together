@@ -454,27 +454,50 @@ export class GameScene extends Phaser.Scene {
 		}
 
 		// Draw overlay tiles on top of base tiles.
-		const shaftAnchors = new Map<
-			string,
-			{ x: number; y: number; type: string }
-		>();
+		const shaftRows = new Map<string, number[]>();
 		for (const [key, type] of this.overlayGrid) {
 			const [x, y] = key.split(",").map(Number);
 			if (type === "stairs") {
 				this.drawStairs(g, x, y);
 			} else {
-				shaftAnchors.set(key, { x, y, type });
+				const shaftKey = `${type}:${x}`;
+				const rows = shaftRows.get(shaftKey);
+				if (rows) {
+					rows.push(y);
+				} else {
+					shaftRows.set(shaftKey, [y]);
+				}
 			}
 		}
 
-		for (const { x, y, type } of shaftAnchors.values()) {
+		for (const [shaftKey, rows] of shaftRows) {
+			const [type, xText] = shaftKey.split(":");
+			const x = Number(xText);
 			const width = TILE_WIDTHS[type] ?? 1;
 			g.lineStyle(2, 0x222222, 1.0);
+			const sortedRows = rows.slice().sort((a, b) => a - b);
+			let runStart = sortedRows[0];
+			let previousRow = sortedRows[0];
+			for (let i = 1; i < sortedRows.length; i++) {
+				const row = sortedRows[i];
+				if (row === previousRow + 1) {
+					previousRow = row;
+					continue;
+				}
+				g.strokeRect(
+					x * TILE_WIDTH + 1,
+					runStart * TILE_HEIGHT + 1,
+					width * TILE_WIDTH - 2,
+					(previousRow - runStart + 1) * TILE_HEIGHT - 2,
+				);
+				runStart = row;
+				previousRow = row;
+			}
 			g.strokeRect(
 				x * TILE_WIDTH + 1,
-				y * TILE_HEIGHT + 1,
+				runStart * TILE_HEIGHT + 1,
 				width * TILE_WIDTH - 2,
-				TILE_HEIGHT - 2,
+				(previousRow - runStart + 1) * TILE_HEIGHT - 2,
 			);
 		}
 	}
@@ -537,17 +560,15 @@ export class GameScene extends Phaser.Scene {
 		const startY = Math.max(0, y - heightCells + 1);
 		if (startX > endX) return;
 
-		g.fillStyle(COLOR_HOVER, 0.35);
-		for (let cy = startY; cy <= y; cy++) {
-			for (let cx = startX; cx <= endX; cx++) {
-				g.fillRect(
-					cx * TILE_WIDTH + 1,
-					cy * TILE_HEIGHT + 1,
-					TILE_WIDTH - 1,
-					TILE_HEIGHT - 1,
-				);
-			}
-		}
+		const previewX = startX * TILE_WIDTH + 1;
+		const previewY = startY * TILE_HEIGHT + 1;
+		const previewWidth = (endX - startX + 1) * TILE_WIDTH - 1;
+		const previewHeight = (y - startY + 1) * TILE_HEIGHT - 1;
+
+		g.fillStyle(COLOR_HOVER, 0.2);
+		g.lineStyle(1, COLOR_HOVER, 0.9);
+		g.fillRect(previewX, previewY, previewWidth, previewHeight);
+		g.strokeRect(previewX, previewY, previewWidth, previewHeight);
 	}
 
 	private drawShiftPreview(): void {

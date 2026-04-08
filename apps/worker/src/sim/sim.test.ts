@@ -854,6 +854,53 @@ describe("handle_place_tile", () => {
 		);
 	});
 
+	it("rejects elevator placement when adjacent shaft segment is partially misaligned", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		for (let x = 0; x < 5; x++) {
+			world.cells[`${x},${GROUND_Y}`] = "floor";
+			world.cells[`${x},${GROUND_Y + 1}`] = "floor";
+		}
+		const initial = handle_place_tile(0, GROUND_Y, "elevator", world, ledger);
+		expect(initial.accepted).toBe(true);
+
+		const misaligned = handle_place_tile(
+			1,
+			GROUND_Y - 1,
+			"elevator",
+			world,
+			ledger,
+		);
+		expect(misaligned.accepted).toBe(false);
+		expect(misaligned.reason).toBe(
+			"Elevator must align with adjacent shaft segments",
+		);
+	});
+
+	it("allows elevator placement when adjacent shaft segment is fully aligned", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		for (let x = 0; x < 4; x++) {
+			world.cells[`${x},${GROUND_Y}`] = "floor";
+			world.cells[`${x},${GROUND_Y + 1}`] = "floor";
+		}
+		const initial = handle_place_tile(0, GROUND_Y, "elevator", world, ledger);
+		expect(initial.accepted).toBe(true);
+
+		const aligned = handle_place_tile(
+			0,
+			GROUND_Y - 1,
+			"elevator",
+			world,
+			ledger,
+		);
+		expect(aligned.accepted).toBe(true);
+		expect(world.overlays[`0,${GROUND_Y - 1}`]).toBe("elevator");
+		expect(world.overlayToAnchor[`3,${GROUND_Y - 1}`]).toBe(
+			`0,${GROUND_Y - 1}`,
+		);
+	});
+
 	it("runs global rebuilds (facility ledger updated) after placement", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
