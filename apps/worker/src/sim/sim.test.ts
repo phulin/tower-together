@@ -90,7 +90,7 @@ function makeState(opts?: { cash?: number }): SimState {
  * Place a supported row of floor tiles at `y` so tiles at `y-1` have support.
  */
 function placeSupportRow(y: number, world: WorldState, _ledger: LedgerState) {
-	for (let x = 0; x < 10; x++) {
+	for (let x = 0; x < GRID_WIDTH; x++) {
 		world.cells[`${x},${y}`] = "floor";
 	}
 }
@@ -225,7 +225,7 @@ describe("PlacedObjectRecord", () => {
 		const rec = world.placedObjects[`0,${y}`];
 		expect(rec).toBeDefined();
 		expect(rec.leftTileIndex).toBe(0);
-		expect(rec.rightTileIndex).toBe(0); // width 1
+		expect(rec.rightTileIndex).toBe(3); // width 4
 		expect(rec.objectTypeCode).toBe(3); // family code for hotelSingle
 		expect(rec.stayPhase).toBe(0); // init = 0
 		expect(rec.linkedRecordIndex).toBe(-1); // no sidecar for hotel
@@ -234,25 +234,28 @@ describe("PlacedObjectRecord", () => {
 		expect(rec.pairingActiveFlag).toBe(1); // init = 1 (first-activation latch)
 		expect(rec.activationTickCount).toBe(0);
 		expect(rec.variantIndex).toBe(1); // family 3 → init = 1
+		expect(rec.vipFlag).toBe(false);
 	});
 
 	it("sets rightTileIndex = left + width - 1 for multi-tile objects", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		const y = GROUND_Y - 1;
-		for (let x = 0; x < 6; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			world.cells[`${x},${GROUND_Y}`] = "floor";
 		const result = handle_place_tile(0, y, "hotelTwin", world, ledger);
 		expect(result.accepted).toBe(true);
 		const rec = world.placedObjects[`0,${y}`];
 		expect(rec.leftTileIndex).toBe(0);
-		expect(rec.rightTileIndex).toBe(1); // width 2
+		expect(rec.rightTileIndex).toBe(7); // width 8
 	});
 
 	it("stores placedObjects keyed by anchor position", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		const y = GROUND_Y - 1;
-		for (let x = 0; x < 6; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, y, "hotelSuite", world, ledger);
 		expect(world.placedObjects[`0,${y}`]).toBeDefined();
 		// extension cells don't get their own record
@@ -273,7 +276,7 @@ describe("PlacedObjectRecord", () => {
 describe("sidecar allocation", () => {
 	function setupSupport(world: WorldState) {
 		const y = GROUND_Y;
-		for (let x = 0; x < 8; x++) world.cells[`${x},${y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++) world.cells[`${x},${y}`] = "floor";
 	}
 
 	it("allocates CommercialVenueRecord for restaurant", () => {
@@ -369,7 +372,8 @@ describe("checkpoint dispatcher", () => {
 		const state = makeState();
 		// Place a tile so primaryLedger has something to count
 		const y = GROUND_Y - 1;
-		state.world.cells[`0,${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			state.world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, y, "hotelSingle", state.world, state.ledger);
 		// primaryLedger is zeroed after rebuild_facility_ledger from handle_place_tile
 		// Now manually zero primaryLedger to simulate it being dirty
@@ -381,7 +385,8 @@ describe("checkpoint dispatcher", () => {
 
 	it("does NOT fire 0x0f0 checkpoint when tick range excludes it", () => {
 		const state = makeState();
-		state.world.cells[`0,${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			state.world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(
 			0,
 			GROUND_Y - 1,
@@ -401,8 +406,8 @@ describe("checkpoint dispatcher", () => {
 		state.time = { ...state.time, dayCounter: 3 };
 		const _cashBefore = state.ledger.cashBalance;
 		// Place a restaurant to generate an expense
-		state.world.cells[`0,${GROUND_Y}`] = "floor";
-		for (let x = 0; x < 2; x++) state.world.cells[`${x},${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			state.world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, GROUND_Y - 1, "restaurant", state.world, state.ledger);
 		const cashAfterBuild = state.ledger.cashBalance;
 		state.ledger.secondaryLedger.fill(5);
@@ -420,7 +425,8 @@ describe("checkpoint dispatcher", () => {
 	it("does NOT run expense sweep on a non-3-day boundary", () => {
 		const state = makeState();
 		state.time = { ...state.time, dayCounter: 1 }; // not a multiple of 3
-		state.world.cells[`0,${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			state.world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, GROUND_Y - 1, "restaurant", state.world, state.ledger);
 		const cashAfterBuild = state.ledger.cashBalance;
 		run_checkpoints(state, 0x9e4, 0x9e5);
@@ -430,7 +436,8 @@ describe("checkpoint dispatcher", () => {
 	it("fires each checkpoint exactly once when tick crosses it", () => {
 		// Use the facility-ledger as a counter: each rebuild zeroes then resets
 		const state = makeState();
-		state.world.cells[`0,${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			state.world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(
 			0,
 			GROUND_Y - 1,
@@ -451,14 +458,21 @@ describe("checkpoint dispatcher", () => {
 		// but we can test the explicit wraparound dispatch by using a range that
 		// crosses 0x0f0 via wrap: prev=0x0f1, curr=0x0ef (wrapped).
 		const state = makeState();
-		state.world.cells[`0,${GROUND_Y}`] = "floor";
-		handle_place_tile(
-			0,
-			GROUND_Y - 1,
-			"hotelSingle",
-			state.world,
-			state.ledger,
-		);
+		const y = GROUND_Y - 1;
+		state.world.placedObjects[`0,${y}`] = {
+			leftTileIndex: 0,
+			rightTileIndex: 3,
+			objectTypeCode: 3,
+			stayPhase: 0,
+			linkedRecordIndex: -1,
+			auxValueOrTimer: 0,
+			needsRefreshFlag: 1,
+			pairingStatus: -1,
+			pairingActiveFlag: 1,
+			activationTickCount: 0,
+			variantIndex: 1,
+			vipFlag: false,
+		};
 		state.ledger.primaryLedger.fill(0);
 		// curr < prev ⟹ wrapped; 0x0f0 > 0x0ef so it qualifies via "tick > prev_tick"
 		run_checkpoints(state, 0x0ef, 0x0ee); // wrapped; 0x0f0 > 0x0ef → fires
@@ -583,7 +597,8 @@ describe("ledger: do_expense_sweep", () => {
 		const world = makeWorld();
 		const ledger = makeLedger(10_000_000);
 		const y = GROUND_Y - 1;
-		for (let x = 0; x < 2; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, y, "restaurant", world, ledger);
 		const cashAfterBuild = ledger.cashBalance;
 		do_expense_sweep(ledger, world);
@@ -595,7 +610,8 @@ describe("ledger: do_expense_sweep", () => {
 		const world = makeWorld();
 		const ledger = makeLedger(10_000_000);
 		const y = GROUND_Y - 1;
-		for (let x = 0; x < 2; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, y, "restaurant", world, ledger);
 		const rec = world.placedObjects[`0,${y}`];
 		do_expense_sweep(ledger, world);
@@ -606,7 +622,8 @@ describe("ledger: do_expense_sweep", () => {
 		const world = makeWorld();
 		const ledger = makeLedger(100); // barely any cash
 		const y = GROUND_Y - 1;
-		for (let x = 0; x < 2; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			world.cells[`${x},${GROUND_Y}`] = "floor";
 		world.placedObjects[`0,${y}`] = {
 			leftTileIndex: 0,
 			rightTileIndex: 1,
@@ -630,7 +647,8 @@ describe("ledger: do_ledger_rollover", () => {
 		const world = makeWorld();
 		const ledger = makeLedger(10_000_000);
 		const y = GROUND_Y - 1;
-		for (let x = 0; x < 2; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, y, "restaurant", world, ledger);
 		ledger.secondaryLedger[6] = 1000;
 		ledger.tertiaryLedger[6] = 500;
@@ -690,7 +708,7 @@ describe("handle_place_tile", () => {
 	it("rejects multi-tile placement that would overflow the grid", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		// office is 6 wide — place at x=60 → extends to x=65 ≥ GRID_WIDTH=64
+		// office is 9 wide — place at x=60 → extends past GRID_WIDTH=64
 		const r = handle_place_tile(60, GROUND_Y - 1, "office", world, ledger);
 		expect(r.accepted).toBe(false);
 	});
@@ -730,7 +748,8 @@ describe("handle_place_tile", () => {
 	it("rejects when insufficient funds", () => {
 		const world = makeWorld();
 		const ledger = makeLedger(0);
-		for (let x = 0; x < 6; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			world.cells[`${x},${GROUND_Y}`] = "floor";
 		const r = handle_place_tile(0, GROUND_Y - 1, "office", world, ledger);
 		expect(r.accepted).toBe(false);
 		expect(r.reason).toMatch(/insufficient funds/i);
@@ -739,7 +758,7 @@ describe("handle_place_tile", () => {
 	it("deducts construction cost on success", () => {
 		const world = makeWorld();
 		const ledger = makeLedger(1_000_000);
-		world.cells[`0,${GROUND_Y}`] = "floor";
+		for (let x = 0; x < 4; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
 		const cost = TILE_COSTS.hotelSingle;
 		const r = handle_place_tile(0, GROUND_Y - 1, "hotelSingle", world, ledger);
 		expect(r.accepted).toBe(true);
@@ -749,22 +768,25 @@ describe("handle_place_tile", () => {
 	it("returns a patch array covering each placed cell", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		for (let x = 0; x < 2; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			world.cells[`${x},${GROUND_Y}`] = "floor";
 		const r = handle_place_tile(0, GROUND_Y - 1, "hotelTwin", world, ledger);
 		expect(r.accepted).toBe(true);
-		expect(r.patch).toHaveLength(2);
+		expect(r.patch).toHaveLength(8);
 		expect(r.patch?.[0]).toMatchObject({ x: 0, isAnchor: true });
-		expect(r.patch?.[1]).toMatchObject({ x: 1, isAnchor: false });
+		expect(r.patch?.[7]).toMatchObject({ x: 7, isAnchor: false });
 	});
 
 	it("sets cellToAnchor for extension cells of multi-tile object", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		const y = GROUND_Y - 1;
-		for (let x = 0; x < 3; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, y, "hotelSuite", world, ledger);
 		expect(world.cellToAnchor[`1,${y}`]).toBe(`0,${y}`);
 		expect(world.cellToAnchor[`2,${y}`]).toBe(`0,${y}`);
+		expect(world.cellToAnchor[`11,${y}`]).toBe(`0,${y}`);
 	});
 
 	it("replaces floor tiles under a multi-cell build", () => {
@@ -772,7 +794,7 @@ describe("handle_place_tile", () => {
 		const ledger = makeLedger();
 		const y = GROUND_Y - 1;
 		// Pre-fill with floor
-		for (let x = 0; x < 3; x++) {
+		for (let x = 0; x < 12; x++) {
 			world.cells[`${x},${GROUND_Y}`] = "floor";
 			world.cells[`${x},${y}`] = "floor";
 		}
@@ -784,26 +806,59 @@ describe("handle_place_tile", () => {
 	it("stairs placement succeeds as overlay on existing base tiles", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		world.cells[`0,${GROUND_Y}`] = "floor";
-		world.cells[`1,${GROUND_Y}`] = "floor";
+		for (let x = 0; x < 8; x++) {
+			world.cells[`${x},${GROUND_Y}`] = "floor";
+		}
 		const r = handle_place_tile(0, GROUND_Y, "stairs", world, ledger);
 		expect(r.accepted).toBe(true);
 		expect(r.patch?.[0]).toMatchObject({ isOverlay: true });
 		expect(world.overlays[`0,${GROUND_Y}`]).toBe("stairs");
+		expect(world.overlayToAnchor[`7,${GROUND_Y}`]).toBe(`0,${GROUND_Y}`);
 	});
 
 	it("stairs rejected when base tile missing", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
+		for (let x = 0; x < 7; x++) {
+			world.cells[`${x},${GROUND_Y}`] = "floor";
+		}
 		const r = handle_place_tile(0, GROUND_Y, "stairs", world, ledger);
 		expect(r.accepted).toBe(false);
+	});
+
+	it("elevator placement occupies all overlay extension cells across its width", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		for (let x = 0; x < 4; x++) {
+			world.cells[`${x},${GROUND_Y}`] = "floor";
+		}
+		const r = handle_place_tile(0, GROUND_Y, "elevator", world, ledger);
+		expect(r.accepted).toBe(true);
+		expect(world.overlays[`0,${GROUND_Y}`]).toBe("elevator");
+		expect(world.overlayToAnchor[`3,${GROUND_Y}`]).toBe(`0,${GROUND_Y}`);
+	});
+
+	it("elevator auto-places supported floor cells across its full width", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		for (let x = 0; x < 4; x++) {
+			world.cells[`${x},${GROUND_Y + 1}`] = "floor";
+		}
+		const r = handle_place_tile(0, GROUND_Y, "elevator", world, ledger);
+		expect(r.accepted).toBe(true);
+		for (let x = 0; x < 4; x++) {
+			expect(world.cells[`${x},${GROUND_Y}`]).toBe("floor");
+		}
+		expect(r.patch?.filter((cell) => cell.tileType === "floor")).toHaveLength(
+			4,
+		);
 	});
 
 	it("runs global rebuilds (facility ledger updated) after placement", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		ledger.primaryLedger.fill(99);
-		world.cells[`0,${GROUND_Y}`] = "floor";
+		for (let x = 0; x < 4; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, GROUND_Y - 1, "hotelSingle", world, ledger);
 		// rebuild_facility_ledger zeroes then counts → should be 1 hotelSingle
 		expect(ledger.primaryLedger[3]).toBe(1);
@@ -831,22 +886,24 @@ describe("handle_remove_tile", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		const y = GROUND_Y - 1;
-		for (let x = 0; x < 2; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, y, "hotelTwin", world, ledger);
 		handle_remove_tile(0, y, world, ledger);
 		expect(world.cells[`0,${y}`]).toBeUndefined();
-		expect(world.cells[`1,${y}`]).toBeUndefined();
-		expect(world.cellToAnchor[`1,${y}`]).toBeUndefined();
+		expect(world.cells[`7,${y}`]).toBeUndefined();
+		expect(world.cellToAnchor[`7,${y}`]).toBeUndefined();
 	});
 
 	it("removes extension cell click (via cellToAnchor)", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		const y = GROUND_Y - 1;
-		for (let x = 0; x < 2; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
+		for (let x = 0; x < GRID_WIDTH; x++)
+			world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, y, "hotelTwin", world, ledger);
 		// Click extension cell
-		handle_remove_tile(1, y, world, ledger);
+		handle_remove_tile(7, y, world, ledger);
 		expect(world.cells[`0,${y}`]).toBeUndefined();
 	});
 
@@ -894,14 +951,16 @@ describe("handle_remove_tile", () => {
 	it("removes overlay before underlying tile when overlay present", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		world.cells[`0,${GROUND_Y}`] = "floor";
-		world.cells[`1,${GROUND_Y}`] = "floor";
+		for (let x = 0; x < 8; x++) {
+			world.cells[`${x},${GROUND_Y}`] = "floor";
+		}
 		handle_place_tile(0, GROUND_Y, "stairs", world, ledger);
 		// First remove should strip the overlay
-		const r1 = handle_remove_tile(0, GROUND_Y, world, ledger);
+		const r1 = handle_remove_tile(7, GROUND_Y, world, ledger);
 		expect(r1.accepted).toBe(true);
 		expect(r1.patch?.[0]).toMatchObject({ tileType: "empty", isOverlay: true });
 		expect(world.overlays[`0,${GROUND_Y}`]).toBeUndefined();
+		expect(world.overlayToAnchor[`7,${GROUND_Y}`]).toBeUndefined();
 		// Underlying tile still there
 		expect(world.cells[`0,${GROUND_Y}`]).toBe("floor");
 	});
@@ -909,7 +968,7 @@ describe("handle_remove_tile", () => {
 	it("runs global rebuilds after demolish", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		world.cells[`0,${GROUND_Y}`] = "floor";
+		for (let x = 0; x < 4; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, GROUND_Y - 1, "hotelSingle", world, ledger);
 		// Now rebuild primaryLedger artificially
 		ledger.primaryLedger[3] = 99;

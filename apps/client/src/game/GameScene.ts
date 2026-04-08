@@ -7,7 +7,8 @@ import {
 	UNDERGROUND_Y,
 } from "../types";
 
-const CELL_SIZE = 16;
+const TILE_WIDTH = 4;
+const TILE_HEIGHT = TILE_WIDTH * 4;
 
 // Tile fill colors
 const TILE_COLORS: Record<string, number> = {
@@ -16,9 +17,6 @@ const TILE_COLORS: Record<string, number> = {
 	hotelSingle: 0x2d9c8d,
 	hotelTwin: 0x2d7a9c,
 	hotelSuite: 0x2d4f9c,
-	vipSingle: 0x3d8c7d,
-	vipTwin: 0x3d6a8c,
-	vipSuite: 0x3d3f8c,
 	restaurant: 0xc07840,
 	fastFood: 0xc0a040,
 	retail: 0xa0c040,
@@ -274,12 +272,15 @@ export class GameScene extends Phaser.Scene {
 	}
 
 	create(): void {
-		const totalWidth = GRID_WIDTH * CELL_SIZE;
+		const totalWidth = GRID_WIDTH * TILE_WIDTH;
 
 		// Zoom so the grid fills the viewport horizontally, then center near ground floor
 		const initialZoom = this.scale.width / totalWidth;
 		this.cameras.main.setZoom(initialZoom);
-		this.cameras.main.centerOn(totalWidth / 2, (UNDERGROUND_Y - 8) * CELL_SIZE);
+		this.cameras.main.centerOn(
+			totalWidth / 2,
+			(UNDERGROUND_Y - 8) * TILE_HEIGHT,
+		);
 
 		this.gridGraphics = this.add.graphics();
 		this.cellGraphics = this.add.graphics();
@@ -324,7 +325,7 @@ export class GameScene extends Phaser.Scene {
 			const isUnderground = i >= UNDERGROUND_Y;
 			const text = this.add.text(
 				0,
-				i * CELL_SIZE + CELL_SIZE / 2,
+				i * TILE_HEIGHT + TILE_HEIGHT / 2,
 				String(uiLabel),
 				{
 					fontSize: "11px",
@@ -368,19 +369,19 @@ export class GameScene extends Phaser.Scene {
 		g.clear();
 		g.lineStyle(1, COLOR_GRID_LINE, 0.5);
 
-		const totalWidth = GRID_WIDTH * CELL_SIZE;
-		const totalHeight = GRID_HEIGHT * CELL_SIZE;
+		const totalWidth = GRID_WIDTH * TILE_WIDTH;
+		const totalHeight = GRID_HEIGHT * TILE_HEIGHT;
 
 		for (let x = 0; x <= GRID_WIDTH; x++) {
 			g.beginPath();
-			g.moveTo(x * CELL_SIZE, 0);
-			g.lineTo(x * CELL_SIZE, totalHeight);
+			g.moveTo(x * TILE_WIDTH, 0);
+			g.lineTo(x * TILE_WIDTH, totalHeight);
 			g.strokePath();
 		}
 		for (let y = 0; y <= GRID_HEIGHT; y++) {
 			g.beginPath();
-			g.moveTo(0, y * CELL_SIZE);
-			g.lineTo(totalWidth, y * CELL_SIZE);
+			g.moveTo(0, y * TILE_HEIGHT);
+			g.lineTo(totalWidth, y * TILE_HEIGHT);
 			g.strokePath();
 		}
 	}
@@ -391,14 +392,14 @@ export class GameScene extends Phaser.Scene {
 
 		// Sky background (above ground)
 		g.fillStyle(COLOR_SKY, 1);
-		g.fillRect(0, 0, GRID_WIDTH * CELL_SIZE, UNDERGROUND_Y * CELL_SIZE);
+		g.fillRect(0, 0, GRID_WIDTH * TILE_WIDTH, UNDERGROUND_Y * TILE_HEIGHT);
 		// Underground background
 		g.fillStyle(COLOR_UNDERGROUND, 1);
 		g.fillRect(
 			0,
-			UNDERGROUND_Y * CELL_SIZE,
-			GRID_WIDTH * CELL_SIZE,
-			(GRID_HEIGHT - UNDERGROUND_Y) * CELL_SIZE,
+			UNDERGROUND_Y * TILE_HEIGHT,
+			GRID_WIDTH * TILE_WIDTH,
+			(GRID_HEIGHT - UNDERGROUND_Y) * TILE_HEIGHT,
 		);
 
 		// Tile types that should be merged into contiguous runs per row.
@@ -416,10 +417,10 @@ export class GameScene extends Phaser.Scene {
 
 			g.fillStyle(color, 1);
 			g.fillRect(
-				x * CELL_SIZE + 1,
-				y * CELL_SIZE + 1,
-				w * CELL_SIZE - 1,
-				CELL_SIZE - 1,
+				x * TILE_WIDTH + 1,
+				y * TILE_HEIGHT + 1,
+				w * TILE_WIDTH - 1,
+				TILE_HEIGHT - 1,
 			);
 		}
 
@@ -439,10 +440,10 @@ export class GameScene extends Phaser.Scene {
 						if (color) {
 							g.fillStyle(color, 1);
 							g.fillRect(
-								runStart * CELL_SIZE + 1,
-								y * CELL_SIZE + 1,
-								(x - runStart) * CELL_SIZE - 1,
-								CELL_SIZE - 1,
+								runStart * TILE_WIDTH + 1,
+								y * TILE_HEIGHT + 1,
+								(x - runStart) * TILE_WIDTH - 1,
+								TILE_HEIGHT - 1,
 							);
 						}
 					}
@@ -453,54 +454,43 @@ export class GameScene extends Phaser.Scene {
 		}
 
 		// Draw overlay tiles on top of base tiles.
-		// Collect elevator/escalator cells grouped by column for merged shaft rendering.
-		const shaftColumns = new Map<number, { type: string; ys: number[] }>();
+		const shaftAnchors = new Map<
+			string,
+			{ x: number; y: number; type: string }
+		>();
 		for (const [key, type] of this.overlayGrid) {
 			const [x, y] = key.split(",").map(Number);
 			if (type === "stairs") {
 				this.drawStairs(g, x, y);
 			} else {
-				let col = shaftColumns.get(x);
-				if (!col) {
-					col = { type, ys: [] };
-					shaftColumns.set(x, col);
-				}
-				col.ys.push(y);
+				shaftAnchors.set(key, { x, y, type });
 			}
 		}
 
-		// Draw each contiguous vertical run as a single outlined shaft (no fill).
-		for (const [x, { ys }] of shaftColumns) {
-			ys.sort((a, b) => a - b);
-			let runStart = ys[0];
-			for (let i = 1; i <= ys.length; i++) {
-				if (i < ys.length && ys[i] === ys[i - 1] + 1) continue;
-				const runEnd = ys[i - 1];
-				g.lineStyle(2, 0x222222, 1.0);
-				g.strokeRect(
-					x * CELL_SIZE + 1,
-					runStart * CELL_SIZE + 1,
-					CELL_SIZE - 2,
-					(runEnd - runStart + 1) * CELL_SIZE - 2,
-				);
-				if (i < ys.length) runStart = ys[i];
-			}
+		for (const { x, y, type } of shaftAnchors.values()) {
+			const width = TILE_WIDTHS[type] ?? 1;
+			g.lineStyle(2, 0x222222, 1.0);
+			g.strokeRect(
+				x * TILE_WIDTH + 1,
+				y * TILE_HEIGHT + 1,
+				width * TILE_WIDTH - 2,
+				TILE_HEIGHT - 2,
+			);
 		}
 	}
 
-	/** Draw a 4-step staircase bridging the floor at (gx,gy) and the floor above (gy-1),
-	 *  spanning 2 cells wide and 2 cells tall. */
+	/** Draw stairs bridging the floor at (gx,gy) and the floor above (gy-1). */
 	private drawStairs(
 		g: Phaser.GameObjects.Graphics,
 		gx: number,
 		gy: number,
 	): void {
-		const startX = gx * CELL_SIZE + 1;
-		const startY = (gy + 1) * CELL_SIZE; // bottom edge of cell gy
-		// 4 steps across 2×2 cells: each step is exactly 8×8px
-		const numSteps = 4;
-		const sw = (CELL_SIZE * 2 - 2) / numSteps; // 7.5px — step width
-		const sh = (CELL_SIZE * 2) / numSteps; // 8px — step height
+		const startX = gx * TILE_WIDTH + 1;
+		const startY = (gy + 1) * TILE_HEIGHT;
+		const numSteps = 8;
+		const stairWidth = TILE_WIDTHS.stairs ?? 1;
+		const sw = (TILE_WIDTH * stairWidth - 2) / numSteps;
+		const sh = (TILE_HEIGHT * 2) / numSteps;
 
 		g.fillStyle(0xffffff, 0.65);
 		for (let i = 0; i < numSteps; i++) {
@@ -551,10 +541,10 @@ export class GameScene extends Phaser.Scene {
 		for (let cy = startY; cy <= y; cy++) {
 			for (let cx = startX; cx <= endX; cx++) {
 				g.fillRect(
-					cx * CELL_SIZE + 1,
-					cy * CELL_SIZE + 1,
-					CELL_SIZE - 1,
-					CELL_SIZE - 1,
+					cx * TILE_WIDTH + 1,
+					cy * TILE_HEIGHT + 1,
+					TILE_WIDTH - 1,
+					TILE_HEIGHT - 1,
 				);
 			}
 		}
@@ -567,14 +557,14 @@ export class GameScene extends Phaser.Scene {
 		if (fills.length === 0) return;
 
 		const tileWidth = TILE_WIDTHS[this.selectedTool] ?? 1;
-		const pw = tileWidth * CELL_SIZE - 1;
-		const ph = CELL_SIZE - 1;
+		const pw = tileWidth * TILE_WIDTH - 1;
+		const ph = TILE_HEIGHT - 1;
 
 		g.fillStyle(COLOR_HOVER, 0.12);
 		g.lineStyle(1, COLOR_HOVER, 0.75);
 		for (const { x, y } of fills) {
-			const px = x * CELL_SIZE + 1;
-			const py = y * CELL_SIZE + 1;
+			const px = x * TILE_WIDTH + 1;
+			const py = y * TILE_HEIGHT + 1;
 			g.fillRect(px, py, pw, ph);
 			g.strokeRect(px, py, pw, ph);
 		}
@@ -582,8 +572,8 @@ export class GameScene extends Phaser.Scene {
 
 	private worldToCell(wx: number, wy: number): { x: number; y: number } {
 		return {
-			x: Math.floor(wx / CELL_SIZE),
-			y: Math.floor(wy / CELL_SIZE),
+			x: Math.floor(wx / TILE_WIDTH),
+			y: Math.floor(wy / TILE_HEIGHT),
 		};
 	}
 

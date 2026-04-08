@@ -1,5 +1,6 @@
 import type { LedgerState } from "./ledger";
 import { createLedgerState } from "./ledger";
+import { LEGACY_VIP_TILE_TO_STANDARD } from "./resources";
 import { createNewGameTimeState, type TimeState } from "./time";
 import {
 	createGateFlags,
@@ -152,6 +153,24 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	}
 	if (snapshot.world.transferGroupCache.length !== GRID_HEIGHT) {
 		snapshot.world.transferGroupCache = new Array(GRID_HEIGHT).fill(0);
+	}
+
+	const vipAnchors = new Set<string>();
+	for (const [key, tileType] of Object.entries(snapshot.world.cells)) {
+		const standardTile = LEGACY_VIP_TILE_TO_STANDARD[tileType];
+		if (!standardTile) continue;
+		snapshot.world.cells[key] = standardTile;
+		const anchorKey = snapshot.world.cellToAnchor[key] ?? key;
+		vipAnchors.add(anchorKey);
+	}
+
+	for (const [anchorKey, record] of Object.entries(
+		snapshot.world.placedObjects,
+	)) {
+		if (record.objectTypeCode === 31) record.objectTypeCode = 3;
+		if (record.objectTypeCode === 32) record.objectTypeCode = 4;
+		if (record.objectTypeCode === 33) record.objectTypeCode = 5;
+		if (vipAnchors.has(anchorKey)) record.vipFlag = true;
 	}
 
 	return snapshot;

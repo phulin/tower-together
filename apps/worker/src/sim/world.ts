@@ -113,6 +113,8 @@ export interface PlacedObjectRecord {
 	variantIndex: number;
 	/** +0x17 byte: cumulative activation count; init = 0, capped at 0x78. */
 	activationTickCount: number;
+	/** Clean-room metadata: VIP suite flag normalized onto standard hotel room types. */
+	vipFlag?: boolean;
 }
 
 // ─── Gate flags ───────────────────────────────────────────────────────────────

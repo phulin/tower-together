@@ -7,34 +7,30 @@ export const TILE_WIDTHS: Record<string, number> = {
 	// Infrastructure
 	floor: 1,
 	lobby: 1,
-	stairs: 2,
-	elevator: 1,
-	escalator: 1,
+	stairs: 8,
+	elevator: 4,
+	escalator: 8,
 	// Hotels (families 3/4/5)
-	hotelSingle: 1,
-	hotelTwin: 2,
-	hotelSuite: 3,
-	// VIP Hotel Suites (families 0x1f/0x20/0x21)
-	vipSingle: 1,
-	vipTwin: 2,
-	vipSuite: 3,
+	hotelSingle: 4,
+	hotelTwin: 8,
+	hotelSuite: 12,
 	// Commercial (families 6/0x0a/0x0c)
-	restaurant: 2,
-	fastFood: 2,
-	retail: 2,
+	restaurant: 24,
+	fastFood: 12,
+	retail: 16,
 	// Office (family 7)
-	office: 6,
+	office: 9,
 	// Condo (family 9)
-	condo: 3,
+	condo: 16,
 	// Entertainment (families 0x12/0x1d)
-	cinema: 4,
-	entertainment: 4,
+	cinema: 24,
+	entertainment: 24,
 	// Services
-	security: 2, // family 0x14
-	housekeeping: 2, // family 0x15
+	security: 2, // family 0x14; SPEC.md marks this as a resource-icon-derived width
+	housekeeping: 2, // family 0x15; inherits security width in SPEC.md
 	parking: 4, // family 0x18
-	metro: 4, // family 0x0e
-	fireSuppressor: 2, // family 0x28
+	metro: 4, // family 0x0e; SPEC.md marks this as a resource-icon-derived width
+	fireSuppressor: 28, // family 0x28
 };
 
 /** One-time construction cost in dollars. */
@@ -47,9 +43,6 @@ export const TILE_COSTS: Record<string, number> = {
 	hotelSingle: 50_000,
 	hotelTwin: 80_000,
 	hotelSuite: 120_000,
-	vipSingle: 100_000,
-	vipTwin: 150_000,
-	vipSuite: 225_000,
 	restaurant: 500_000,
 	fastFood: 200_000,
 	retail: 300_000,
@@ -86,10 +79,13 @@ export const FAMILY_CODE_TO_TILE: Record<number, string> = {
 	21: "housekeeping",
 	24: "parking",
 	29: "entertainment",
-	31: "vipSingle",
-	32: "vipTwin",
-	33: "vipSuite",
 	40: "fireSuppressor",
+};
+
+export const LEGACY_VIP_TILE_TO_STANDARD: Record<string, string> = {
+	vipSingle: "hotelSingle",
+	vipTwin: "hotelTwin",
+	vipSuite: "hotelSuite",
 };
 
 export const TILE_TO_FAMILY_CODE: Record<string, number> = Object.fromEntries(

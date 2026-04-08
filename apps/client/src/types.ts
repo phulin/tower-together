@@ -1,10 +1,19 @@
-// ─── Grid constants (must match apps/worker/src/sim/world.ts) ────────────────
+import {
+	STARTING_CASH as WORKER_STARTING_CASH,
+	TILE_COSTS as WORKER_TILE_COSTS,
+	TILE_WIDTHS as WORKER_TILE_WIDTHS,
+} from "../../worker/src/sim/resources";
+import {
+	GRID_HEIGHT,
+	GRID_WIDTH,
+	GROUND_Y,
+	UNDERGROUND_FLOORS,
+	UNDERGROUND_Y,
+} from "../../worker/src/sim/world";
 
-export const GRID_WIDTH = 64;
-export const GRID_HEIGHT = 120;
-export const UNDERGROUND_FLOORS = 10;
-export const UNDERGROUND_Y = GRID_HEIGHT - UNDERGROUND_FLOORS; // Y=110
-export const GROUND_Y = GRID_HEIGHT - 1 - UNDERGROUND_FLOORS; // Y=109
+// ─── Grid constants (shared with apps/worker/src/sim) ────────────────────────
+
+export { GRID_HEIGHT, GRID_WIDTH, GROUND_Y, UNDERGROUND_FLOORS, UNDERGROUND_Y };
 
 // ─── Time constants (must match apps/worker/src/sim/time.ts) ─────────────────
 
@@ -25,10 +34,6 @@ export type TileType =
 	| "hotelSingle"
 	| "hotelTwin"
 	| "hotelSuite"
-	// VIP Hotels
-	| "vipSingle"
-	| "vipTwin"
-	| "vipSuite"
 	// Commercial
 	| "restaurant"
 	| "fastFood"
@@ -51,58 +56,11 @@ export type SelectedTool = TileType;
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
 /** Width in grid cells for each placeable tile type. */
-export const TILE_WIDTHS: Record<string, number> = {
-	floor: 1,
-	lobby: 1,
-	stairs: 2,
-	elevator: 1,
-	escalator: 1,
-	hotelSingle: 1,
-	hotelTwin: 2,
-	hotelSuite: 3,
-	vipSingle: 1,
-	vipTwin: 2,
-	vipSuite: 3,
-	restaurant: 2,
-	fastFood: 2,
-	retail: 2,
-	office: 6,
-	condo: 3,
-	cinema: 4,
-	entertainment: 4,
-	security: 2,
-	housekeeping: 2,
-	parking: 4,
-	metro: 4,
-	fireSuppressor: 2,
-};
+export const TILE_WIDTHS: Record<string, number> = WORKER_TILE_WIDTHS;
 
 /** Construction cost in dollars. */
-export const TILE_COSTS: Record<string, number> = {
-	floor: 5_000,
-	lobby: 0,
-	stairs: 0,
-	elevator: 0,
-	escalator: 0,
-	hotelSingle: 50_000,
-	hotelTwin: 80_000,
-	hotelSuite: 120_000,
-	vipSingle: 100_000,
-	vipTwin: 150_000,
-	vipSuite: 225_000,
-	restaurant: 500_000,
-	fastFood: 200_000,
-	retail: 300_000,
-	office: 900_000,
-	condo: 500_000,
-	cinema: 2_000_000,
-	entertainment: 500_000,
-	security: 500_000,
-	housekeeping: 100_000,
-	parking: 1_000_000,
-	metro: 2_000_000,
-	fireSuppressor: 500_000,
-};
+export const TILE_COSTS: Record<string, number> = WORKER_TILE_COSTS;
+export const STARTING_CASH = WORKER_STARTING_CASH;
 
 // ─── Wire protocol ────────────────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 import { rebuild_carrier_list } from "./carriers";
 import { type LedgerState, rebuild_facility_ledger } from "./ledger";
 import {
+	LEGACY_VIP_TILE_TO_STANDARD,
 	TILE_COSTS,
 	TILE_TO_FAMILY_CODE,
 	TILE_WIDTHS,
@@ -56,6 +57,7 @@ function make_placed_object(
 	x: number,
 	tileType: string,
 	world: WorldState,
+	vipFlag = false,
 ): PlacedObjectRecord {
 	const width = TILE_WIDTHS[tileType] ?? 1;
 	const familyCode = TILE_TO_FAMILY_CODE[tileType] ?? 0;
@@ -72,6 +74,7 @@ function make_placed_object(
 		pairingActiveFlag: 1, // first-activation latch
 		activationTickCount: 0,
 		variantIndex: VARIANT_INIT_ONE_FAMILIES.has(familyCode) ? 1 : 4,
+		vipFlag,
 	};
 }
 
@@ -143,25 +146,36 @@ export function handle_place_tile(
 	world: WorldState,
 	ledger: LedgerState,
 ): CommandResult {
-	if (!VALID_TILE_TYPES.has(tileType)) {
+	const normalizedTileType = LEGACY_VIP_TILE_TO_STANDARD[tileType] ?? tileType;
+	const vipFlag = tileType in LEGACY_VIP_TILE_TO_STANDARD;
+
+	if (!VALID_TILE_TYPES.has(normalizedTileType)) {
 		return { accepted: false, reason: "Invalid tile type" };
 	}
 	if (x < 0 || x >= world.width || y < 0 || y >= world.height) {
 		return { accepted: false, reason: "Out of bounds" };
 	}
 
-	// ── Elevator / Escalator: 1-wide overlay on a floor/lobby tile ──────────────
-	if (tileType === "elevator" || tileType === "escalator") {
-		const key = `${x},${y}`;
-		if (world.overlays[key] || world.overlayToAnchor[key]) {
-			return { accepted: false, reason: "Cell already has an overlay" };
-		}
+	// ── Elevator / Escalator: overlay on a floor/lobby tile ─────────────────────
+	if (normalizedTileType === "elevator" || normalizedTileType === "escalator") {
 		const patch: CellPatch[] = [];
-		// Auto-place a floor tile if the cell is empty but has support
+		const overlayWidth = TILE_WIDTHS[normalizedTileType] ?? 1;
+		if (x + overlayWidth - 1 >= world.width) {
+			return { accepted: false, reason: "Out of bounds" };
+		}
+		for (let dx = 0; dx < overlayWidth; dx++) {
+			const key = `${x + dx},${y}`;
+			if (world.overlays[key] || world.overlayToAnchor[key]) {
+				return { accepted: false, reason: "Cell already has an overlay" };
+			}
+		}
+		// Auto-place floor tiles where empty but supported
 		// (below for above-ground; above for underground floors).
-		if (!world.cells[key] && !world.cellToAnchor[key]) {
+		for (let dx = 0; dx < overlayWidth; dx++) {
+			const key = `${x + dx},${y}`;
+			if (world.cells[key] || world.cellToAnchor[key]) continue;
 			const supportY = y >= UNDERGROUND_Y ? y - 1 : y + 1;
-			const supportKey = `${x},${supportY}`;
+			const supportKey = `${x + dx},${supportY}`;
 			if (
 				supportY < 0 ||
 				supportY >= world.height ||
@@ -173,20 +187,30 @@ export function handle_place_tile(
 				};
 			}
 			world.cells[key] = "floor";
-			patch.push({ x, y, tileType: "floor", isAnchor: true });
+			patch.push({ x: x + dx, y, tileType: "floor", isAnchor: true });
 		}
-		world.overlays[key] = tileType;
-		patch.push({ x, y, tileType, isAnchor: true, isOverlay: true });
+		world.overlays[`${x},${y}`] = normalizedTileType;
+		for (let dx = 1; dx < overlayWidth; dx++) {
+			world.overlayToAnchor[`${x + dx},${y}`] = `${x},${y}`;
+		}
+		patch.push({
+			x,
+			y,
+			tileType: normalizedTileType,
+			isAnchor: true,
+			isOverlay: true,
+		});
 		run_global_rebuilds(world, ledger);
 		return { accepted: true, patch };
 	}
 
 	// ── Stairs: overlay on existing base tiles ────────────────────────────────
-	if (tileType === "stairs") {
-		if (x + 1 >= GRID_WIDTH) {
+	if (normalizedTileType === "stairs") {
+		const overlayWidth = TILE_WIDTHS.stairs ?? 1;
+		if (x + overlayWidth - 1 >= GRID_WIDTH) {
 			return { accepted: false, reason: "Out of bounds" };
 		}
-		for (let dx = 0; dx < 2; dx++) {
+		for (let dx = 0; dx < overlayWidth; dx++) {
 			const key = `${x + dx},${y}`;
 			if (!world.cells[key] && !world.cellToAnchor[key]) {
 				return { accepted: false, reason: "Stairs require a base tile" };
@@ -196,7 +220,9 @@ export function handle_place_tile(
 			}
 		}
 		world.overlays[`${x},${y}`] = "stairs";
-		world.overlayToAnchor[`${x + 1},${y}`] = `${x},${y}`;
+		for (let dx = 1; dx < overlayWidth; dx++) {
+			world.overlayToAnchor[`${x + dx},${y}`] = `${x},${y}`;
+		}
 		return {
 			accepted: true,
 			patch: [{ x, y, tileType: "stairs", isAnchor: true, isOverlay: true }],
@@ -204,13 +230,13 @@ export function handle_place_tile(
 	}
 
 	// ── Standard tile placement ───────────────────────────────────────────────
-	const tileWidth = TILE_WIDTHS[tileType] ?? 1;
-	const cost = TILE_COSTS[tileType] ?? 0;
+	const tileWidth = TILE_WIDTHS[normalizedTileType] ?? 1;
+	const cost = TILE_COSTS[normalizedTileType] ?? 0;
 
 	if (x + tileWidth - 1 >= world.width) {
 		return { accepted: false, reason: "Out of bounds" };
 	}
-	if (tileType === "lobby" && !isValidLobbyY(y)) {
+	if (normalizedTileType === "lobby" && !isValidLobbyY(y)) {
 		return {
 			accepted: false,
 			reason: "Lobby only allowed on ground floor or every 15 floors above",
@@ -220,7 +246,7 @@ export function handle_place_tile(
 		return { accepted: false, reason: "Insufficient funds" };
 	}
 
-	const canReplaceFloor = tileType !== "floor";
+	const canReplaceFloor = normalizedTileType !== "floor";
 	const floorToRemove: string[] = [];
 	for (let dx = 0; dx < tileWidth; dx++) {
 		const key = `${x + dx},${y}`;
@@ -239,7 +265,7 @@ export function handle_place_tile(
 
 	// All non-lobby tiles need support from the adjacent row
 	// (below for above-ground tiles; above for underground floors).
-	if (tileType !== "lobby") {
+	if (normalizedTileType !== "lobby") {
 		const supportY = y >= UNDERGROUND_Y ? y - 1 : y + 1;
 		for (let dx = 0; dx < tileWidth; dx++) {
 			const supportKey = `${x + dx},${supportY}`;
@@ -255,22 +281,27 @@ export function handle_place_tile(
 
 	// Apply placement
 	for (const key of floorToRemove) delete world.cells[key];
-	world.cells[`${x},${y}`] = tileType;
+	world.cells[`${x},${y}`] = normalizedTileType;
 	for (let dx = 1; dx < tileWidth; dx++) {
-		world.cells[`${x + dx},${y}`] = tileType;
+		world.cells[`${x + dx},${y}`] = normalizedTileType;
 		world.cellToAnchor[`${x + dx},${y}`] = `${x},${y}`;
 	}
 	ledger.cashBalance -= cost;
 
 	// PlacedObjectRecord
-	if (!INFRASTRUCTURE_TILES.has(tileType)) {
-		world.placedObjects[`${x},${y}`] = make_placed_object(x, tileType, world);
+	if (!INFRASTRUCTURE_TILES.has(normalizedTileType)) {
+		world.placedObjects[`${x},${y}`] = make_placed_object(
+			x,
+			normalizedTileType,
+			world,
+			vipFlag,
+		);
 	}
 
 	const patch: CellPatch[] = Array.from({ length: tileWidth }, (_, dx) => ({
 		x: x + dx,
 		y,
-		tileType,
+		tileType: normalizedTileType,
 		isAnchor: dx === 0,
 	}));
 

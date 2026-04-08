@@ -63,24 +63,6 @@ const TOOLS: ToolDef[] = [
 		cost: TILE_COSTS.hotelSuite,
 	},
 	{
-		id: "vipSingle",
-		label: "VIP S",
-		color: "#3d8c7d",
-		cost: TILE_COSTS.vipSingle,
-	},
-	{
-		id: "vipTwin",
-		label: "VIP T",
-		color: "#3d6a8c",
-		cost: TILE_COSTS.vipTwin,
-	},
-	{
-		id: "vipSuite",
-		label: "VIP Su",
-		color: "#3d3f8c",
-		cost: TILE_COSTS.vipSuite,
-	},
-	{
 		id: "restaurant",
 		label: "Restaurant",
 		color: "#c07840",

@@ -144,9 +144,9 @@ const CODE_TO_TILE: Record<number, string> = {
 	21: "housekeeping",
 	24: "parking",
 	29: "entertainment",
-	31: "vipSingle",
-	32: "vipTwin",
-	33: "vipSuite",
+	31: "hotelSingle",
+	32: "hotelTwin",
+	33: "hotelSuite",
 	40: "fireSuppressor",
 };
 
