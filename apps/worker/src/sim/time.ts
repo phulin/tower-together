@@ -1,5 +1,5 @@
 // Day cycle constants
-export const DAY_TICK_MAX = 0x0a28;    // 2600 ticks per day
+export const DAY_TICK_MAX = 0x0a28; // 2600 ticks per day
 export const DAY_TICK_INCOME = 0x08fc; // 2300: checkpoint where day_counter increments
 
 export interface TimeState {
@@ -32,7 +32,10 @@ export function createTimeState(): TimeState {
  * Advance time by one tick. Returns the new state and whether the
  * DAY_TICK_INCOME checkpoint was just crossed (triggers income collection).
  */
-export function advanceOneTick(t: TimeState): { time: TimeState; incomeCheckpoint: boolean } {
+export function advanceOneTick(t: TimeState): {
+	time: TimeState;
+	incomeCheckpoint: boolean;
+} {
 	const total_ticks = t.total_ticks + 1;
 	let day_tick = t.day_tick + 1;
 	let day_counter = t.day_counter;

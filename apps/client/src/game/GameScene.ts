@@ -1,32 +1,38 @@
 import Phaser from "phaser";
-import { GRID_HEIGHT, GRID_WIDTH, TILE_WIDTHS, UNDERGROUND_FLOORS, UNDERGROUND_Y } from "../types";
+import {
+	GRID_HEIGHT,
+	GRID_WIDTH,
+	TILE_WIDTHS,
+	UNDERGROUND_FLOORS,
+	UNDERGROUND_Y,
+} from "../types";
 
 const CELL_SIZE = 16;
 
 // Tile fill colors
 const TILE_COLORS: Record<string, number> = {
-	floor:          0x555555,
-	lobby:          0xc9a84c,
-	hotel_single:   0x2d9c8d,
-	hotel_twin:     0x2d7a9c,
-	hotel_suite:    0x2d4f9c,
-	vip_single:     0x3d8c7d,
-	vip_twin:       0x3d6a8c,
-	vip_suite:      0x3d3f8c,
-	restaurant:     0xc07840,
-	fast_food:      0xc0a040,
-	retail:         0xa0c040,
-	office:         0x8080c0,
-	condo:          0x60a080,
-	cinema:         0xc040a0,
-	entertainment:  0xa040c0,
-	security:       0xc04040,
-	housekeeping:   0x8cb0c0,
-	parking:        0x707080,
-	metro:          0x60c0c0,
+	floor: 0x555555,
+	lobby: 0xc9a84c,
+	hotel_single: 0x2d9c8d,
+	hotel_twin: 0x2d7a9c,
+	hotel_suite: 0x2d4f9c,
+	vip_single: 0x3d8c7d,
+	vip_twin: 0x3d6a8c,
+	vip_suite: 0x3d3f8c,
+	restaurant: 0xc07840,
+	fast_food: 0xc0a040,
+	retail: 0xa0c040,
+	office: 0x8080c0,
+	condo: 0x60a080,
+	cinema: 0xc040a0,
+	entertainment: 0xa040c0,
+	security: 0xc04040,
+	housekeeping: 0x8cb0c0,
+	parking: 0x707080,
+	metro: 0x60c0c0,
 	fire_suppressor: 0xe06060,
-	elevator:       0xb0a070,
-	escalator:      0xa0b070,
+	elevator: 0xb0a070,
+	escalator: 0xa0b070,
 };
 
 const COLOR_SKY = 0x5ba8d4; // blue sky (above ground)
@@ -188,7 +194,7 @@ export class GameScene extends Phaser.Scene {
 		// Stairs sit on top of existing tiles — not shift-fillable via this path.
 		if (this.selectedTool === "stairs") return false;
 		if (this.selectedTool === "lobby") {
-			const floorsAboveGround = (GRID_HEIGHT - 1 - UNDERGROUND_FLOORS) - y;
+			const floorsAboveGround = GRID_HEIGHT - 1 - UNDERGROUND_FLOORS - y;
 			if (floorsAboveGround < 0 || floorsAboveGround % 15 !== 0) return false;
 		}
 		const needsSupport = this.selectedTool !== "lobby";
@@ -212,7 +218,13 @@ export class GameScene extends Phaser.Scene {
 	}
 
 	applyInitState(
-		cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean; isOverlay?: boolean }>,
+		cells: Array<{
+			x: number;
+			y: number;
+			tileType: string;
+			isAnchor: boolean;
+			isOverlay?: boolean;
+		}>,
 	): void {
 		this.grid.clear();
 		this.anchorSet.clear();
@@ -230,7 +242,13 @@ export class GameScene extends Phaser.Scene {
 	}
 
 	applyPatch(
-		cells: Array<{ x: number; y: number; tileType: string; isAnchor: boolean; isOverlay?: boolean }>,
+		cells: Array<{
+			x: number;
+			y: number;
+			tileType: string;
+			isAnchor: boolean;
+			isOverlay?: boolean;
+		}>,
 	): void {
 		for (const cell of cells) {
 			const key = `${cell.x},${cell.y}`;
@@ -267,7 +285,8 @@ export class GameScene extends Phaser.Scene {
 		this.cellGraphics = this.add.graphics();
 		this.hoverGraphics = this.add.graphics();
 
-		this.arrowKeys = this.input.keyboard?.createCursorKeys() as Phaser.Types.Input.Keyboard.CursorKeys;
+		this.arrowKeys =
+			this.input.keyboard?.createCursorKeys() as Phaser.Types.Input.Keyboard.CursorKeys;
 
 		this.drawGrid();
 		this.drawAllCells();
@@ -396,7 +415,12 @@ export class GameScene extends Phaser.Scene {
 			const w = TILE_WIDTHS[tileType] ?? 1;
 
 			g.fillStyle(color, 1);
-			g.fillRect(x * CELL_SIZE + 1, y * CELL_SIZE + 1, w * CELL_SIZE - 1, CELL_SIZE - 1);
+			g.fillRect(
+				x * CELL_SIZE + 1,
+				y * CELL_SIZE + 1,
+				w * CELL_SIZE - 1,
+				CELL_SIZE - 1,
+			);
 		}
 
 		// Draw floor/lobby as merged runs per row.
@@ -404,7 +428,8 @@ export class GameScene extends Phaser.Scene {
 			let runStart = -1;
 			let runType: string | null = null;
 			for (let x = 0; x <= GRID_WIDTH; x++) {
-				const cellType = x < GRID_WIDTH ? (this.grid.get(`${x},${y}`) ?? null) : null;
+				const cellType =
+					x < GRID_WIDTH ? (this.grid.get(`${x},${y}`) ?? null) : null;
 				const isMerge = cellType !== null && MERGE_TYPES.has(cellType);
 				if (isMerge && cellType === runType) {
 					// extend current run
@@ -436,20 +461,24 @@ export class GameScene extends Phaser.Scene {
 
 	/** Draw a 4-step staircase bridging the floor at (gx,gy) and the floor above (gy-1),
 	 *  spanning 2 cells wide and 2 cells tall. */
-	private drawStairs(g: Phaser.GameObjects.Graphics, gx: number, gy: number): void {
+	private drawStairs(
+		g: Phaser.GameObjects.Graphics,
+		gx: number,
+		gy: number,
+	): void {
 		const startX = gx * CELL_SIZE + 1;
 		const startY = (gy + 1) * CELL_SIZE; // bottom edge of cell gy
 		// 4 steps across 2×2 cells: each step is exactly 8×8px
 		const numSteps = 4;
 		const sw = (CELL_SIZE * 2 - 2) / numSteps; // 7.5px — step width
-		const sh = (CELL_SIZE * 2) / numSteps;       // 8px — step height
+		const sh = (CELL_SIZE * 2) / numSteps; // 8px — step height
 
 		g.fillStyle(0xffffff, 0.65);
 		for (let i = 0; i < numSteps; i++) {
 			const sx = startX + i * sw;
 			const sy = startY - (i + 1) * sh;
-			g.fillRect(sx, sy, 2, sh);   // riser (vertical)
-			g.fillRect(sx, sy, sw, 2);   // tread (horizontal)
+			g.fillRect(sx, sy, 2, sh); // riser (vertical)
+			g.fillRect(sx, sy, sw, 2); // tread (horizontal)
 		}
 	}
 
@@ -474,7 +503,7 @@ export class GameScene extends Phaser.Scene {
 
 		// Lobby is only placeable on ground floor and every 15 floors above
 		if (this.selectedTool === "lobby") {
-			const floorsAboveGround = (GRID_HEIGHT - 1 - UNDERGROUND_FLOORS) - y;
+			const floorsAboveGround = GRID_HEIGHT - 1 - UNDERGROUND_FLOORS - y;
 			if (floorsAboveGround < 0 || floorsAboveGround % 15 !== 0) return;
 		}
 

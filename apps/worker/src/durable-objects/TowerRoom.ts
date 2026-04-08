@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { runMigrations } from "../db/migrations";
 import { type SimSnapshot, TowerSim } from "../sim/index";
+import { createLedgerState } from "../sim/ledger";
 import type { ClientMessage, ServerMessage } from "../types";
 
 interface Env {
@@ -41,12 +42,17 @@ export class TowerRoom extends DurableObject<Env> {
 				name: old.name as string,
 				width: (old.width as number) ?? 64,
 				height: (old.height as number) ?? 120,
-				cash: (old.cash as number) ?? 2_000_000,
 				cells: (old.cells as Record<string, string>) ?? {},
 				cellToAnchor: (old.cellToAnchor as Record<string, string>) ?? {},
 				overlays: (old.overlays as Record<string, string>) ?? {},
 				overlayToAnchor: (old.overlayToAnchor as Record<string, string>) ?? {},
+				placed_objects: {},
+				sidecars: [],
 			};
+			// cash lived at the flat root in the oldest save format; migrate to ledger
+			if (!snap.ledger) {
+				snap.ledger = createLedgerState((old.cash as number) ?? 2_000_000);
+			}
 		}
 		if (!snap.time) {
 			snap.time = {
