@@ -13,7 +13,6 @@ const TILE_WIDTH = 4;
 const TILE_HEIGHT = TILE_WIDTH * 4;
 
 const TILE_LABELS: Partial<Record<string, string>> = {
-	lobby: "L",
 	hotelSingle: "R",
 	hotelTwin: "T",
 	hotelSuite: "S",
@@ -30,7 +29,6 @@ const TILE_LABELS: Partial<Record<string, string>> = {
 };
 
 const TILE_LABEL_COLORS: Partial<Record<string, string>> = {
-	lobby: "#3e2d1d",
 	hotelSingle: "#ffffff",
 	hotelTwin: "#ffffff",
 	hotelSuite: "#ffffff",
@@ -614,7 +612,7 @@ export class GameScene extends Phaser.Scene {
 					fontFamily: "Arial, sans-serif",
 					fontStyle: "bold",
 					color: TILE_LABEL_COLORS[tileType] ?? "#ffffff",
-					resolution: window.devicePixelRatio * 2,
+					resolution: window.devicePixelRatio * 4,
 				},
 			);
 			label.setOrigin(0.5, 0.5);

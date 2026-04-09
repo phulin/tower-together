@@ -4,6 +4,7 @@ import { handle_place_tile, handle_remove_tile } from "./commands";
 import {
 	advance_entity_refresh_stride,
 	create_entity_state_records,
+	on_carrier_arrival,
 	populate_carrier_requests,
 	rebuild_runtime_entities,
 	reconcile_entity_transport,
@@ -22,7 +23,13 @@ import {
 	type SimSnapshot,
 } from "./snapshot";
 import { advanceOneTick, type TimeState } from "./time";
-import { GRID_HEIGHT, MAX_SPECIAL_LINKS, type WorldState } from "./world";
+import {
+	GRID_HEIGHT,
+	MAX_SPECIAL_LINK_RECORDS,
+	MAX_SPECIAL_LINKS,
+	MAX_TRANSFER_GROUPS,
+	type WorldState,
+} from "./world";
 
 export type { EntityStateRecord } from "./entities";
 export type { SimSnapshot } from "./snapshot";
@@ -89,6 +96,13 @@ export class TowerSim {
 		// Migrate old saves without Phase 3 carrier/routing fields
 		init_carrier_state(normalized.world);
 		for (const carrier of normalized.world.carriers) {
+			carrier.completedRouteIds ??= [];
+			if (
+				!Array.isArray(carrier.dwellMultiplierFlags) ||
+				carrier.dwellMultiplierFlags.length !== 14
+			) {
+				carrier.dwellMultiplierFlags = new Array(14).fill(1);
+			}
 			for (const route of carrier.pendingRoutes ?? []) {
 				route.assignedCarIndex ??= -1;
 			}
@@ -99,6 +113,7 @@ export class TowerSim {
 				car.destinationCountByFloor ??= new Array(
 					Math.max(0, carrier.topServedFloor - carrier.bottomServedFloor + 1),
 				).fill(0);
+				car.activeRouteSlots ??= [];
 			}
 		}
 		normalized.world.specialLinks ??= Array.from(
@@ -106,11 +121,35 @@ export class TowerSim {
 			() => ({
 				active: false,
 				flags: 0,
-				startFloor: 0,
 				heightMetric: 0,
-				carrierId: -1,
+				entryFloor: 0,
+				reservedByte: 0,
+				descendingLoadCounter: 0,
+				ascendingLoadCounter: 0,
 			}),
 		);
+		normalized.world.specialLinkRecords ??= Array.from(
+			{ length: MAX_SPECIAL_LINK_RECORDS },
+			() => ({
+				active: false,
+				lowerFloor: 0,
+				upperFloor: 0,
+				reachabilityMasksByFloor: new Array(GRID_HEIGHT).fill(0),
+			}),
+		);
+		normalized.world.transferGroupEntries ??= Array.from(
+			{ length: MAX_TRANSFER_GROUPS },
+			() => ({
+				active: false,
+				taggedFloor: -1,
+				carrierMask: 0,
+			}),
+		);
+		// Migrate entity fields added after initial release
+		for (const entity of normalized.world.entities) {
+			entity.routeRetryDelay ??= 0;
+		}
+
 		// Recompute derived routing state from carriers
 		rebuild_special_links(normalized.world);
 		rebuild_walkability_flags(normalized.world);
@@ -137,9 +176,17 @@ export class TowerSim {
 		};
 		run_checkpoints(state, prevTick, currTick);
 		advance_entity_refresh_stride(this.world, this.ledger, this.time);
-		populate_carrier_requests(this.world);
-		tick_all_carriers(this.world, this.time);
-		reconcile_entity_transport(this.world);
+		populate_carrier_requests(this.world, this.time);
+		tick_all_carriers(this.world, this.time, (routeId, arrivalFloor) => {
+			on_carrier_arrival(
+				this.world,
+				this.ledger,
+				this.time,
+				routeId,
+				arrivalFloor,
+			);
+		});
+		reconcile_entity_transport(this.world, this.ledger, this.time);
 
 		return {
 			simTime: this.time.totalTicks,
@@ -200,7 +247,13 @@ export class TowerSim {
 			specialLinks: JSON.parse(
 				JSON.stringify(this.world.specialLinks),
 			) as WorldState["specialLinks"],
+			specialLinkRecords: JSON.parse(
+				JSON.stringify(this.world.specialLinkRecords),
+			) as WorldState["specialLinkRecords"],
 			floorWalkabilityFlags: [...this.world.floorWalkabilityFlags],
+			transferGroupEntries: JSON.parse(
+				JSON.stringify(this.world.transferGroupEntries),
+			) as WorldState["transferGroupEntries"],
 			transferGroupCache: [...this.world.transferGroupCache],
 		};
 	}

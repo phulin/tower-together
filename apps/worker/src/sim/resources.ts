@@ -9,6 +9,8 @@ export const TILE_WIDTHS: Record<string, number> = {
 	lobby: 1,
 	stairs: 8,
 	elevator: 4,
+	elevatorExpress: 4,
+	elevatorService: 4,
 	escalator: 8,
 	// Hotels (families 3/4/5)
 	hotelSingle: 4,
@@ -35,25 +37,27 @@ export const TILE_WIDTHS: Record<string, number> = {
 
 /** One-time construction cost in dollars. */
 export const TILE_COSTS: Record<string, number> = {
-	floor: 5_000,
-	lobby: 0,
-	stairs: 0,
-	elevator: 0, // cost per car, handled separately
-	escalator: 0,
-	hotelSingle: 50_000,
-	hotelTwin: 80_000,
-	hotelSuite: 120_000,
-	restaurant: 500_000,
-	fastFood: 200_000,
-	retail: 300_000,
-	office: 900_000,
-	condo: 500_000,
-	cinema: 2_000_000,
-	entertainment: 500_000,
+	floor: 500,
+	lobby: 3_000,
+	stairs: 5_000,
+	elevator: 200_000,
+	elevatorExpress: 200_000,
+	elevatorService: 200_000,
+	escalator: 20_000,
+	hotelSingle: 20_000,
+	hotelTwin: 50_000,
+	hotelSuite: 100_000,
+	restaurant: 200_000,
+	fastFood: 100_000,
+	retail: 100_000,
+	office: 40_000,
+	condo: 80_000,
+	cinema: 500_000,
+	entertainment: 100_000,
 	security: 500_000,
-	housekeeping: 100_000,
-	parking: 1_000_000,
-	metro: 2_000_000,
+	housekeeping: 50_000,
+	parking: 5_000,
+	metro: 1_000_000,
 	fireSuppressor: 500_000,
 };
 
@@ -114,7 +118,8 @@ export const YEN_1002: Record<string, number> = {
 	security: 200,
 	housekeeping: 100,
 	elevatorLocal: 200, // per unit per 3-day period
-	elevatorExpress: 100,
+	elevatorExpress: 400,
+	elevatorService: 100,
 	escalator: 100,
 };
 

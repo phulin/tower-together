@@ -133,6 +133,15 @@ function get_overlay_anchor_key(
 	return world.overlayToAnchor[key] ?? (world.overlays[key] ? key : null);
 }
 
+function elevator_mode_for_overlay(
+	type: string,
+): "standard" | "express" | "service" | null {
+	if (type === "elevator") return "standard";
+	if (type === "elevatorExpress") return "express";
+	if (type === "elevatorService") return "service";
+	return null;
+}
+
 function has_misaligned_adjacent_overlay(
 	world: WorldState,
 	x: number,
@@ -156,6 +165,33 @@ function has_misaligned_adjacent_overlay(
 		const [anchorX] = anchorKey.split(",").map(Number);
 		if (anchorX !== x) return true;
 	}
+	return false;
+}
+
+function has_adjacent_elevator_mode_conflict(
+	world: WorldState,
+	x: number,
+	y: number,
+	type: string,
+	width: number,
+): boolean {
+	const mode = elevator_mode_for_overlay(type);
+	if (!mode) return false;
+
+	for (const adjacentY of [y - 1, y + 1]) {
+		if (adjacentY < 0 || adjacentY >= world.height) continue;
+		for (let dx = 0; dx < width; dx++) {
+			const anchorKey = get_overlay_anchor_key(world, x + dx, adjacentY);
+			if (!anchorKey) continue;
+			const adjacentType = world.overlays[anchorKey];
+			const adjacentMode = adjacentType
+				? elevator_mode_for_overlay(adjacentType)
+				: null;
+			if (!adjacentMode) continue;
+			if (adjacentMode !== mode) return true;
+		}
+	}
+
 	return false;
 }
 
@@ -211,7 +247,12 @@ export function handle_place_tile(
 	}
 
 	// ── Elevator / Escalator: overlay on a floor/lobby tile ─────────────────────
-	if (normalizedTileType === "elevator" || normalizedTileType === "escalator") {
+	if (
+		normalizedTileType === "elevator" ||
+		normalizedTileType === "elevatorExpress" ||
+		normalizedTileType === "elevatorService" ||
+		normalizedTileType === "escalator"
+	) {
 		const patch: CellPatch[] = [];
 		const overlayWidth = TILE_WIDTHS[normalizedTileType] ?? 1;
 		if (x + overlayWidth - 1 >= world.width) {
@@ -224,8 +265,18 @@ export function handle_place_tile(
 			}
 		}
 		if (
-			normalizedTileType === "elevator" &&
-			has_misaligned_adjacent_overlay(
+			(normalizedTileType === "elevator" ||
+				normalizedTileType === "elevatorExpress" ||
+				normalizedTileType === "elevatorService") &&
+			has_misaligned_adjacent_overlay(world, x, y, "elevator", overlayWidth)
+		) {
+			return {
+				accepted: false,
+				reason: "Elevator must align with adjacent shaft segments",
+			};
+		}
+		if (
+			has_adjacent_elevator_mode_conflict(
 				world,
 				x,
 				y,
@@ -235,7 +286,7 @@ export function handle_place_tile(
 		) {
 			return {
 				accepted: false,
-				reason: "Elevator must align with adjacent shaft segments",
+				reason: "Elevator shaft mode must match adjacent segments",
 			};
 		}
 		// Auto-place floor tiles where empty but supported
@@ -408,7 +459,12 @@ export function handle_remove_tile(
 		}
 		const [oax, oay] = overlayAnchorKey.split(",").map(Number);
 		// Carrier overlays require a routing rebuild on removal
-		if (overlayType === "elevator" || overlayType === "escalator") {
+		if (
+			overlayType === "elevator" ||
+			overlayType === "elevatorExpress" ||
+			overlayType === "elevatorService" ||
+			overlayType === "escalator"
+		) {
 			run_global_rebuilds(world, ledger);
 		}
 		return {

@@ -11,7 +11,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { floor_to_slot, make_carrier, tick_all_carriers } from "./carriers";
+import {
+	enqueue_carrier_route,
+	floor_to_slot,
+	make_carrier,
+	tick_all_carriers,
+} from "./carriers";
 import {
 	fill_row_gaps,
 	handle_place_tile,
@@ -80,7 +85,9 @@ function makeWorld(_opts?: { cash?: number }): WorldState {
 		entities: [],
 		carriers: [],
 		specialLinks: [],
+		specialLinkRecords: [],
 		floorWalkabilityFlags: new Array(GRID_HEIGHT).fill(0),
+		transferGroupEntries: [],
 		transferGroupCache: new Array(GRID_HEIGHT).fill(0),
 	};
 }
@@ -651,6 +658,21 @@ describe("ledger: do_expense_sweep", () => {
 		do_expense_sweep(ledger, world);
 		expect(ledger.cashBalance).toBe(0);
 	});
+
+	it("charges carrier operating expenses by mode and car count", () => {
+		const world = makeWorld();
+		const ledger = makeLedger(10_000_000);
+		world.carriers.push(make_carrier(0, 0, 1, 10, 20, 2));
+		world.carriers.push(make_carrier(1, 8, 0, 10, 20, 1));
+		world.carriers.push(make_carrier(2, 16, 2, 10, 20, 3));
+
+		const cashBefore = ledger.cashBalance;
+		do_expense_sweep(ledger, world);
+
+		expect(cashBefore - ledger.cashBalance).toBe(
+			(2 * 200 + 1 * 400 + 3 * 100) * 1000,
+		);
+	});
 });
 
 describe("ledger: do_ledger_rollover", () => {
@@ -912,6 +934,35 @@ describe("handle_place_tile", () => {
 		);
 	});
 
+	it("rejects aligned elevator placement when the adjacent shaft uses a different mode", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		for (let x = 0; x < 4; x++) {
+			world.cells[`${x},${GROUND_Y}`] = "floor";
+			world.cells[`${x},${GROUND_Y + 1}`] = "floor";
+		}
+		const initial = handle_place_tile(
+			0,
+			GROUND_Y,
+			"elevatorExpress",
+			world,
+			ledger,
+		);
+		expect(initial.accepted).toBe(true);
+
+		const conflict = handle_place_tile(
+			0,
+			GROUND_Y - 1,
+			"elevator",
+			world,
+			ledger,
+		);
+		expect(conflict.accepted).toBe(false);
+		expect(conflict.reason).toBe(
+			"Elevator shaft mode must match adjacent segments",
+		);
+	});
+
 	it("runs global rebuilds (facility ledger updated) after placement", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
@@ -1077,6 +1128,28 @@ describe("world constants", () => {
 // ─── Phase 2.1 / resources.ts: YEN tables ────────────────────────────────────
 
 describe("YEN tables", () => {
+	it("TILE_COSTS matches the spec construction table for shared tools", () => {
+		expect(TILE_COSTS.floor).toBe(500);
+		expect(TILE_COSTS.lobby).toBe(3_000);
+		expect(TILE_COSTS.stairs).toBe(5_000);
+		expect(TILE_COSTS.elevator).toBe(200_000);
+		expect(TILE_COSTS.escalator).toBe(20_000);
+		expect(TILE_COSTS.hotelSingle).toBe(20_000);
+		expect(TILE_COSTS.hotelTwin).toBe(50_000);
+		expect(TILE_COSTS.hotelSuite).toBe(100_000);
+		expect(TILE_COSTS.restaurant).toBe(200_000);
+		expect(TILE_COSTS.fastFood).toBe(100_000);
+		expect(TILE_COSTS.retail).toBe(100_000);
+		expect(TILE_COSTS.office).toBe(40_000);
+		expect(TILE_COSTS.condo).toBe(80_000);
+		expect(TILE_COSTS.cinema).toBe(500_000);
+		expect(TILE_COSTS.entertainment).toBe(100_000);
+		expect(TILE_COSTS.security).toBe(500_000);
+		expect(TILE_COSTS.housekeeping).toBe(50_000);
+		expect(TILE_COSTS.parking).toBe(5_000);
+		expect(TILE_COSTS.metro).toBe(1_000_000);
+	});
+
 	it("YEN_1001 hotel payout: [30, 20, 15, 5]", () => {
 		expect(YEN_1001.hotelSingle).toEqual([30, 20, 15, 5]);
 	});
@@ -1115,6 +1188,14 @@ describe("YEN tables", () => {
 
 	it("YEN_1002 elevatorLocal expense = 200", () => {
 		expect(YEN_1002.elevatorLocal).toBe(200);
+	});
+
+	it("YEN_1002 elevatorExpress expense = 400", () => {
+		expect(YEN_1002.elevatorExpress).toBe(400);
+	});
+
+	it("YEN_1002 elevatorService expense = 100", () => {
+		expect(YEN_1002.elevatorService).toBe(100);
 	});
 
 	it("YEN_1002 escalator expense = 100", () => {
@@ -1175,13 +1256,14 @@ function placeElevatorShaft(
 	x: number,
 	fromFloor: number, // inclusive, floor index
 	toFloor: number, // inclusive, floor index
+	overlayType: "elevator" | "elevatorExpress" | "elevatorService" = "elevator",
 ): void {
 	const lo = Math.min(fromFloor, toFloor);
 	const hi = Math.max(fromFloor, toFloor);
 	for (let f = lo; f <= hi; f++) {
 		const y = GRID_HEIGHT - 1 - f;
 		world.cells[`${x},${y}`] = "floor"; // base tile (elevator is an overlay)
-		world.overlays[`${x},${y}`] = "elevator";
+		world.overlays[`${x},${y}`] = overlayType;
 	}
 	run_global_rebuilds(world, ledger);
 }
@@ -1201,14 +1283,24 @@ describe("floor_to_slot", () => {
 		expect(floor_to_slot(carrier, 21)).toBe(-1);
 	});
 
-	it("mode-0/1 (local-mode) returns rel offset for the first 10 floors", () => {
-		// Modes 0 and 1 are local-mode; first 10 floors (rel 0–9) map directly
+	it("mode-0 (express sky-lobby) uses sparse slot mapping: lobby floors + sky-lobby stops only", () => {
+		// Mode 0 = Express Elevator: floors 1–10 → slots 0–9, sky-lobby floors → slots 10+
 		const carrier = make_carrier(0, 3, 0, 10, 20);
-		expect(floor_to_slot(carrier, 10)).toBe(0); // rel 0
-		expect(floor_to_slot(carrier, 14)).toBe(4); // rel 4
-		expect(floor_to_slot(carrier, 19)).toBe(9); // rel 9
-		// rel 10+ (beyond the 10-slot limit) without a sky-lobby slot returns -1
+		expect(floor_to_slot(carrier, 10)).toBe(0); // lobby band slot 0
+		expect(floor_to_slot(carrier, 14)).toBe(4); // lobby band slot 4
+		expect(floor_to_slot(carrier, 19)).toBe(9); // lobby band slot 9
+		// Non-sky-lobby floor above the lobby band returns -1 for mode-0 carriers
 		expect(floor_to_slot(carrier, 20)).toBe(-1);
+	});
+
+	it("mode-1 (standard elevator) uses linear slot mapping across its full range", () => {
+		// Mode 1 = Standard Elevator: all floors in [bottom, top] are valid slots
+		const carrier = make_carrier(0, 3, 1, 10, 25);
+		expect(floor_to_slot(carrier, 10)).toBe(0);
+		expect(floor_to_slot(carrier, 19)).toBe(9);
+		expect(floor_to_slot(carrier, 20)).toBe(10); // beyond lobby band, still valid
+		expect(floor_to_slot(carrier, 25)).toBe(15);
+		expect(floor_to_slot(carrier, 26)).toBe(-1); // above top served floor
 	});
 });
 
@@ -1222,6 +1314,17 @@ describe("rebuild_carrier_list", () => {
 		expect(world.carriers[0].bottomServedFloor).toBe(10);
 		expect(world.carriers[0].topServedFloor).toBe(15);
 		expect(world.carriers[0].carrierMode).toBe(1);
+	});
+
+	it("rebuilds express and service elevator overlays with distinct modes", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		placeElevatorShaft(world, ledger, 0, 10, 20, "elevatorExpress");
+		placeElevatorShaft(world, ledger, 8, 10, 20, "elevatorService");
+
+		expect(world.carriers).toHaveLength(2);
+		expect(world.carriers[0]?.carrierMode).toBe(0);
+		expect(world.carriers[1]?.carrierMode).toBe(2);
 	});
 
 	it("creates separate carriers for separate columns", () => {
@@ -1245,10 +1348,9 @@ describe("rebuild_carrier_list", () => {
 		// But a special-link segment covers floors 10–11
 		const active = world.specialLinks.filter((s) => s.active);
 		expect(active).toHaveLength(1);
-		expect(active[0].startFloor).toBe(10);
-		expect(active[0].heightMetric).toBe(1); // floors 10 and 11
-		expect(active[0].flags & 1).toBe(0); // local-mode (not express)
-		expect(active[0].carrierId).toBe(-1); // no carrierId
+		expect(active[0].entryFloor).toBe(10);
+		expect(active[0].heightMetric).toBe(2); // floors 10 and 11 inclusive
+		expect(active[0].flags & 1).toBe(1); // escalator-mode flag
 	});
 
 	it("preserves car position when carrier range extends", () => {
@@ -1277,23 +1379,31 @@ describe("rebuild_carrier_list", () => {
 });
 
 describe("rebuild_specialLinks", () => {
-	it("registers one active segment per carrier", () => {
+	it("registers one active raw segment per stairs/escalator span", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		placeElevatorShaft(world, ledger, 0, 10, 20);
+		for (let floor = 10; floor <= 20; floor++) {
+			world.cells[`0,${GRID_HEIGHT - 1 - floor}`] = "floor";
+			world.overlays[`0,${GRID_HEIGHT - 1 - floor}`] = "stairs";
+		}
+		run_global_rebuilds(world, ledger);
 		const active = world.specialLinks.filter((s) => s.active);
 		expect(active).toHaveLength(1);
-		expect(active[0].startFloor).toBe(10);
-		expect(active[0].heightMetric).toBe(10);
+		expect(active[0].entryFloor).toBe(10);
+		expect(active[0].heightMetric).toBe(11);
 		expect(active[0].flags & 1).toBe(0); // local = not express
 	});
 });
 
 describe("rebuild_walkability_flags", () => {
-	it("sets bit 0 for floors covered by a local elevator", () => {
+	it("sets bit 0 for floors covered by a stairs span", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		placeElevatorShaft(world, ledger, 0, 10, 15);
+		for (let floor = 10; floor <= 15; floor++) {
+			world.cells[`0,${GRID_HEIGHT - 1 - floor}`] = "floor";
+			world.overlays[`0,${GRID_HEIGHT - 1 - floor}`] = "stairs";
+		}
+		run_global_rebuilds(world, ledger);
 		for (let f = 10; f <= 15; f++) {
 			expect(world.floorWalkabilityFlags[f] & 1).toBe(1);
 		}
@@ -1339,7 +1449,11 @@ describe("select_best_route_candidate", () => {
 	it("finds local route via special link with cost |Δ|*8", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		placeElevatorShaft(world, ledger, 0, 10, 20);
+		for (let floor = 10; floor <= 20; floor++) {
+			world.cells[`0,${GRID_HEIGHT - 1 - floor}`] = "floor";
+			world.overlays[`0,${GRID_HEIGHT - 1 - floor}`] = "stairs";
+		}
+		run_global_rebuilds(world, ledger);
 		const route = select_best_route_candidate(world, 10, 15);
 		expect(route).not.toBeNull();
 		expect(route?.cost).toBe(5 * 8); // |15-10| * 8 = 40
@@ -1348,9 +1462,13 @@ describe("select_best_route_candidate", () => {
 	it("only uses special-link segment shortcuts from the segment entry floor", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		placeElevatorShaft(world, ledger, 0, 10, 20);
+		for (let floor = 10; floor <= 20; floor++) {
+			world.cells[`0,${GRID_HEIGHT - 1 - floor}`] = "floor";
+			world.overlays[`0,${GRID_HEIGHT - 1 - floor}`] = "stairs";
+		}
+		run_global_rebuilds(world, ledger);
 		const route = select_best_route_candidate(world, 12, 15);
-		expect(route?.cost).toBe(0x280 + 3 * 8);
+		expect(route).toBeNull();
 	});
 
 	it("returns null if no carrier covers the span", () => {
@@ -1364,10 +1482,74 @@ describe("select_best_route_candidate", () => {
 	it("prefers lower-cost local route over transfer route", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		// Single shaft covering full span → local route exists
+		// Standard local elevator: first ten floors above bottom are queueable.
 		placeElevatorShaft(world, ledger, 0, 10, 25);
-		const direct = select_best_route_candidate(world, 10, 25);
-		expect(direct?.cost).toBe(0x280 + 15 * 8); // carrier-direct fallback
+		const direct = select_best_route_candidate(world, 10, 19);
+		expect(direct?.cost).toBe(0x280 + 9 * 8);
+	});
+
+	it("does not score a standard elevator trip to floors outside its served range", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		placeElevatorShaft(world, ledger, 0, 10, 25);
+
+		// Floor 20 is within the served range (10–25) and is now reachable
+		expect(select_best_route_candidate(world, 10, 20)?.kind).toBe("carrier");
+		// Floor 26 is above the top served floor — no route
+		expect(select_best_route_candidate(world, 10, 26)).toBeNull();
+	});
+
+	it("chooses a local leg to an in-span transfer floor for viable derived records", () => {
+		const world = makeWorld();
+		world.specialLinks[0] = {
+			active: true,
+			flags: 3 << 1,
+			heightMetric: 3,
+			entryFloor: 10,
+			reservedByte: 0,
+			descendingLoadCounter: 0,
+			ascendingLoadCounter: 0,
+		};
+		world.specialLinkRecords[0] = {
+			active: true,
+			lowerFloor: 10,
+			upperFloor: 14,
+			reachabilityMasksByFloor: new Array(GRID_HEIGHT).fill(0),
+		};
+		world.specialLinkRecords[0].reachabilityMasksByFloor[12] = 1;
+		world.specialLinkRecords[0].reachabilityMasksByFloor[20] = 1 << 0;
+
+		const route = select_best_route_candidate(world, 10, 20);
+		expect(route?.kind).toBe("segment");
+		expect(route?.id).toBe(0);
+		expect(route?.cost).toBe(2 * 8);
+	});
+
+	it("chooses the edge-adjacent transfer floor for derived record routing", () => {
+		const world = makeWorld();
+		world.specialLinks[0] = {
+			active: true,
+			flags: 5 << 1,
+			heightMetric: 5,
+			entryFloor: 10,
+			reservedByte: 0,
+			descendingLoadCounter: 0,
+			ascendingLoadCounter: 0,
+		};
+		world.specialLinkRecords[0] = {
+			active: true,
+			lowerFloor: 10,
+			upperFloor: 14,
+			reachabilityMasksByFloor: new Array(GRID_HEIGHT).fill(0),
+		};
+		world.specialLinkRecords[0].reachabilityMasksByFloor[11] = 1;
+		world.specialLinkRecords[0].reachabilityMasksByFloor[14] = 2;
+		world.specialLinkRecords[0].reachabilityMasksByFloor[20] = 1 << 0;
+
+		const route = select_best_route_candidate(world, 10, 20);
+		expect(route?.kind).toBe("segment");
+		expect(route?.id).toBe(0);
+		expect(route?.cost).toBe(4 * 8);
 	});
 
 	it("does not expose transfer reachability without an explicit concourse floor", () => {
@@ -1384,7 +1566,7 @@ describe("select_best_route_candidate", () => {
 		const world = makeWorld();
 		world.placedObjects[`0,${GROUND_Y}`] = {
 			leftTileIndex: 0,
-			rightTileIndex: 3,
+			rightTileIndex: 4,
 			objectTypeCode: 24,
 			stayPhase: 0,
 			auxValueOrTimer: 0,
@@ -1399,20 +1581,82 @@ describe("select_best_route_candidate", () => {
 		world.carriers.push(make_carrier(1, 4, 1, 0, 4));
 		rebuild_transfer_group_cache(world);
 
+		expect(world.transferGroupEntries[0]?.active).toBe(true);
+		expect(world.transferGroupEntries[0]?.taggedFloor).toBe(10);
+		expect(world.transferGroupEntries[0]?.carrierMask).toBe(
+			(1 << 0) | (1 << 1),
+		);
 		expect(world.transferGroupCache[10]).toBe((1 << 0) | (1 << 1));
 		expect(world.transferGroupCache[9]).toBe(0);
 		expect(world.transferGroupCache[12]).toBe(0);
+	});
+
+	it("preserves distinct tagged transfer entries on the same floor", () => {
+		const world = makeWorld();
+		world.placedObjects[`0,${GROUND_Y}`] = {
+			leftTileIndex: 0,
+			rightTileIndex: 3,
+			objectTypeCode: 24,
+			stayPhase: 0,
+			auxValueOrTimer: 0,
+			linkedRecordIndex: -1,
+			needsRefreshFlag: 1,
+			pairingActiveFlag: 1,
+			pairingStatus: -1,
+			variantIndex: 4,
+			activationTickCount: 0,
+		};
+		world.placedObjects[`20,${GROUND_Y}`] = {
+			leftTileIndex: 20,
+			rightTileIndex: 23,
+			objectTypeCode: 24,
+			stayPhase: 0,
+			auxValueOrTimer: 0,
+			linkedRecordIndex: -1,
+			needsRefreshFlag: 1,
+			pairingActiveFlag: 1,
+			pairingStatus: -1,
+			variantIndex: 4,
+			activationTickCount: 0,
+		};
+		world.carriers.push(make_carrier(0, 0, 1, 10, 20));
+		world.carriers.push(make_carrier(1, 20, 1, 0, 10));
+		rebuild_transfer_group_cache(world);
+
+		const activeEntries = world.transferGroupEntries.filter(
+			(entry) => entry.active,
+		);
+		expect(activeEntries).toHaveLength(2);
+		expect(activeEntries[0]?.taggedFloor).toBe(10);
+		expect(activeEntries[1]?.taggedFloor).toBe(10);
+		expect(world.transferGroupCache[10]).toBe((1 << 0) | (1 << 1));
 	});
 
 	it("allows transfer routing through a shared concourse mask", () => {
 		const world = makeWorld();
 		world.carriers.push(make_carrier(0, 0, 1, 10, 20));
 		world.carriers.push(make_carrier(1, 4, 1, 0, 4));
+		world.transferGroupEntries[0] = {
+			active: true,
+			taggedFloor: 10,
+			carrierMask: (1 << 0) | (1 << 1),
+		};
 		world.transferGroupCache[10] = (1 << 0) | (1 << 1);
 
 		const route = select_best_route_candidate(world, 12, 2);
-		expect(route?.carrierId).toBe(0);
+		expect(route?.kind).toBe("carrier");
+		expect(route?.id).toBe(0);
 		expect(route?.cost).toBe(3000 + 10 * 8);
+	});
+
+	it("does not score transfer routes from derived floor cache without a tagged entry", () => {
+		const world = makeWorld();
+		world.carriers.push(make_carrier(0, 0, 1, 10, 20));
+		world.carriers.push(make_carrier(1, 4, 1, 0, 4));
+		world.transferGroupCache[10] = (1 << 0) | (1 << 1);
+
+		const route = select_best_route_candidate(world, 12, 2);
+		expect(route).toBeNull();
 	});
 });
 
@@ -1442,15 +1686,7 @@ describe("car state machine", () => {
 		placeElevatorShaft(world, ledger, 0, 10, 20);
 		const carrier = world.carriers[0];
 		const car = carrier.cars[0];
-		carrier.pendingRoutes.push({
-			entityId: "r1",
-			sourceFloor: 15,
-			destinationFloor: 10,
-			boarded: false,
-			directionFlag: 1,
-			assignedCarIndex: -1,
-		});
-		car.waitingCount[5] = 1;
+		enqueue_carrier_route(carrier, "r1", 15, 10, 1);
 		// Tick enough for the car to service the request at least once.
 		let reachedTarget = false;
 		for (let i = 0; i < 200; i++) {
@@ -1479,15 +1715,7 @@ describe("car state machine", () => {
 		placeElevatorShaft(world, ledger, 0, 10, 20);
 		const carrier = world.carriers[0];
 		const car = carrier.cars[0];
-		carrier.pendingRoutes.push({
-			entityId: "r1",
-			sourceFloor: 15,
-			destinationFloor: 10,
-			boarded: false,
-			directionFlag: 1,
-			assignedCarIndex: -1,
-		});
-		car.waitingCount[5] = 1; // floor 15
+		enqueue_carrier_route(carrier, "r1", 15, 10, 1);
 		// Run until car arrives and opens doors
 		let doors_opened = false;
 		for (let i = 0; i < 200; i++) {
@@ -1519,7 +1747,8 @@ describe("car state machine", () => {
 		world.carriers.push(make_carrier(1, 4, 2, 10, 20));
 
 		const route = select_best_route_candidate(world, 10, 18, false);
-		expect(route?.carrierId).toBe(1);
+		expect(route?.kind).toBe("carrier");
+		expect(route?.id).toBe(1);
 	});
 
 	it("forces departure when schedule marks the car out of service", () => {
@@ -1551,26 +1780,10 @@ describe("car state machine", () => {
 		const upperCar = carrier.cars[1];
 		if (!lowerCar || !upperCar) throw new Error("expected two cars");
 
-		carrier.pendingRoutes.push({
-			entityId: "low",
-			sourceFloor: 11,
-			destinationFloor: 20,
-			boarded: false,
-			directionFlag: 0,
-			assignedCarIndex: -1,
-		});
-		carrier.pendingRoutes.push({
-			entityId: "high",
-			sourceFloor: 29,
-			destinationFloor: 12,
-			boarded: false,
-			directionFlag: 1,
-			assignedCarIndex: -1,
-		});
+		enqueue_carrier_route(carrier, "low", 11, 20, 0);
+		enqueue_carrier_route(carrier, "high", 29, 12, 1);
 
 		tick_all_carriers(world, createTimeState());
-		expect(lowerCar.pendingAssignmentCount).toBeGreaterThan(0);
-		expect(upperCar.pendingAssignmentCount).toBeGreaterThan(0);
 		expect(
 			carrier.pendingRoutes.find((route) => route.entityId === "low")
 				?.assignedCarIndex,
@@ -1601,6 +1814,51 @@ describe("car state machine", () => {
 		tick_all_carriers(world, createTimeState());
 		const destinationSlot = floor_to_slot(carrier, 18);
 		expect(car.destinationCountByFloor[destinationSlot]).toBeGreaterThan(0);
+	});
+
+	it("reconciles entity arrival only from explicit completed carrier routes", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		const hotelY = GRID_HEIGHT - 1 - 15;
+		for (let x = 0; x < GRID_WIDTH; x++) {
+			world.cells[`${x},${hotelY + 1}`] = "floor";
+		}
+		handle_place_tile(0, hotelY, "hotelSingle", world, ledger);
+		rebuild_runtime_entities(world);
+		world.carriers.push(make_carrier(0, 0, 1, 10, 20, 1));
+		const carrier = world.carriers[0];
+		const entity = world.entities[0];
+		const hotel = world.placedObjects[`0,${hotelY}`];
+		if (!carrier || !entity || !hotel)
+			throw new Error("expected hotel runtime state");
+		entity.stateCode = 0x05;
+		entity.routeMode = 2;
+		entity.routeSourceFloor = 15;
+		entity.routeCarrierOrSegment = 0x58;
+		entity.selectedFloor = 15;
+		entity.originFloor = 15;
+		entity.encodedRouteTarget = 10;
+
+		carrier.pendingRoutes.push({
+			entityId: "15:0:3:0",
+			sourceFloor: 15,
+			destinationFloor: 10,
+			boarded: true,
+			directionFlag: 1,
+			assignedCarIndex: 0,
+		});
+		reconcile_entity_transport(world, ledger, createTimeState());
+		expect(world.entities[0]?.selectedFloor).toBe(15);
+
+		carrier.pendingRoutes = [];
+		carrier.completedRouteIds.push("15:0:3:0");
+		const cashBefore = ledger.cashBalance;
+		reconcile_entity_transport(world, ledger, createTimeState());
+		expect(world.entities[0]?.selectedFloor).toBe(10);
+		expect(world.entities[0]?.stateCode).toBe(0x24);
+		expect(world.entities[0]?.routeCarrierOrSegment).toBe(0xff);
+		expect(hotel.stayPhase).toBe(0x28);
+		expect(ledger.cashBalance).toBeGreaterThan(cashBefore);
 	});
 });
 
@@ -1682,7 +1940,7 @@ describe("Phase 4 runtime entities", () => {
 		expect(world.placedObjects[`0,${GROUND_Y - 1}`].stayPhase).toBe(1);
 	});
 
-	it("sells condos and checks out hotel rooms through the entity refresh stride", () => {
+	it("sells condos through the entity refresh stride", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		setupOccupiedFloor(world, ledger);
@@ -1710,33 +1968,18 @@ describe("Phase 4 runtime entities", () => {
 				dayCounter: 3,
 				starCount: 4,
 			});
-			reconcile_entity_transport(world);
+			reconcile_entity_transport(world, ledger, {
+				...createTimeState(),
+				dayTick: tick,
+				daypartIndex: 1,
+				dayCounter: 3,
+				starCount: 4,
+			});
 		}
 		expect(ledger.cashBalance).toBeGreaterThan(condoBefore);
 		expect(world.placedObjects[`24,${GROUND_Y - 1}`].stayPhase).toBeLessThan(
 			0x18,
 		);
-
-		const hotelBefore = ledger.cashBalance;
-		for (let tick = 64; tick < 640; tick++) {
-			advance_entity_refresh_stride(world, ledger, {
-				...createTimeState(),
-				dayTick: tick,
-				daypartIndex: 4,
-				dayCounter: 3,
-				starCount: 4,
-			});
-			populate_carrier_requests(world);
-			tick_all_carriers(world, {
-				...createTimeState(),
-				dayTick: tick,
-				daypartIndex: 4,
-				dayCounter: 3,
-				starCount: 4,
-			});
-			reconcile_entity_transport(world);
-		}
-		expect(ledger.cashBalance).toBeGreaterThan(hotelBefore);
 	});
 
 	it("projects entity wire state with stress bands", () => {
@@ -1763,6 +2006,46 @@ describe("Phase 4 runtime entities", () => {
 		expect(state[0]?.floorAnchor).toBe(GRID_HEIGHT - 1 - (GROUND_Y - 1));
 	});
 
+	it("treats same-floor venue visits as immediate arrivals", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		setupOccupiedFloor(world, ledger);
+
+		expect(
+			handle_place_tile(0, GROUND_Y - 1, "office", world, ledger).accepted,
+		).toBe(true);
+		expect(
+			handle_place_tile(12, GROUND_Y - 1, "restaurant", world, ledger).accepted,
+		).toBe(true);
+		rebuild_runtime_entities(world);
+
+		const officeEntity = world.entities.find(
+			(entity) => entity.familyCode === 7,
+		);
+		const venueObject = world.placedObjects[`12,${GROUND_Y - 1}`];
+		if (!officeEntity || !venueObject) {
+			throw new Error("expected same-floor office + venue state");
+		}
+		const venue = world.sidecars[venueObject.linkedRecordIndex] as
+			| { kind: "commercial_venue"; todayVisitCount: number }
+			| undefined;
+		if (!venue || venue.kind !== "commercial_venue") {
+			throw new Error("expected commercial venue sidecar");
+		}
+
+		advance_entity_refresh_stride(world, ledger, {
+			...createTimeState(),
+			dayCounter: 3,
+			daypartIndex: 1,
+			starCount: 4,
+		});
+
+		expect(officeEntity.stateCode).toBe(0x01);
+		expect(officeEntity.routeMode).toBe(0);
+		expect(officeEntity.encodedRouteTarget).toBe(-1);
+		expect(venue.todayVisitCount).toBe(1);
+	});
+
 	it("seeds carrier waiters from active entities so elevator cars move", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
@@ -1776,11 +2059,97 @@ describe("Phase 4 runtime entities", () => {
 		if (!entity) throw new Error("expected hotel entity");
 		entity.stateCode = 0x05;
 
-		populate_carrier_requests(world);
+		populate_carrier_requests(world, { ...createTimeState(), dayTick: 123 });
 		const carrier = world.carriers[0];
 		if (!carrier) throw new Error("expected carrier");
 		const requestSlot = floor_to_slot(carrier, entity.floorAnchor);
 		expect(requestSlot).toBeGreaterThanOrEqual(0);
 		expect(carrier.secondaryRouteStatusByFloor[requestSlot]).toBeGreaterThan(0);
+		expect(entity.routeSourceFloor).toBe(entity.floorAnchor);
+		expect(entity.routeCarrierOrSegment).toBeGreaterThanOrEqual(0x58);
+		expect(entity.queueTick).toBe(123);
+	});
+
+	it("dispatches segment routes without waiting for the next entity stride", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		world.specialLinks[0] = {
+			active: true,
+			flags: 5 << 1,
+			heightMetric: 5,
+			entryFloor: 10,
+			reservedByte: 0,
+			descendingLoadCounter: 0,
+			ascendingLoadCounter: 0,
+		};
+		for (let floor = 10; floor <= 14; floor++) {
+			world.floorWalkabilityFlags[floor] = 1;
+		}
+		world.entities.push({
+			floorAnchor: 10,
+			subtypeIndex: 0,
+			baseOffset: 0,
+			familyCode: 7,
+			stateCode: 0x22,
+			routeMode: 0,
+			routeSourceFloor: 0xff,
+			routeCarrierOrSegment: 0xff,
+			selectedFloor: 10,
+			originFloor: 10,
+			encodedRouteTarget: 14,
+			auxState: 0,
+			queueTick: 0,
+			accumulatedDelay: 0,
+			auxCounter: 0,
+			word0a: 0,
+			word0c: 0,
+			word0e: 0,
+			byte09: 0,
+		});
+
+		populate_carrier_requests(world, { ...createTimeState(), dayTick: 321 });
+		reconcile_entity_transport(world, ledger, {
+			...createTimeState(),
+			dayTick: 321,
+		});
+		const entity = world.entities[0];
+		if (!entity) throw new Error("expected entity");
+		expect(entity.selectedFloor).toBe(10);
+		expect(entity.routeMode).toBe(0);
+		expect(entity.routeCarrierOrSegment).toBe(0xff);
+		expect(entity.stateCode).toBe(0x01);
+		expect(entity.encodedRouteTarget).toBe(-1);
+		expect(entity.queueTick).toBe(321);
+	});
+
+	it("does not finalize segment routes for entities outside transport transit states", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		world.entities.push({
+			floorAnchor: 10,
+			subtypeIndex: 0,
+			baseOffset: 0,
+			familyCode: 7,
+			stateCode: 0x01,
+			routeMode: 1,
+			routeSourceFloor: 14,
+			routeCarrierOrSegment: 0,
+			selectedFloor: 10,
+			originFloor: 10,
+			encodedRouteTarget: 14,
+			auxState: 0,
+			queueTick: 0,
+			accumulatedDelay: 0,
+			auxCounter: 0,
+			word0a: 0,
+			word0c: 0,
+			word0e: 0,
+			byte09: 0,
+		});
+
+		reconcile_entity_transport(world, ledger, createTimeState());
+		expect(world.entities[0]?.selectedFloor).toBe(10);
+		expect(world.entities[0]?.routeMode).toBe(1);
+		expect(world.entities[0]?.routeSourceFloor).toBe(14);
 	});
 });

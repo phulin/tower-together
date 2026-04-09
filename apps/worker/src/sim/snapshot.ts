@@ -6,7 +6,9 @@ import {
 	createGateFlags,
 	GRID_HEIGHT,
 	GRID_WIDTH,
+	MAX_SPECIAL_LINK_RECORDS,
 	MAX_SPECIAL_LINKS,
+	MAX_TRANSFER_GROUPS,
 	type WorldState,
 } from "./world";
 
@@ -20,9 +22,28 @@ function createEmptySpecialLinks(): WorldState["specialLinks"] {
 	return Array.from({ length: MAX_SPECIAL_LINKS }, () => ({
 		active: false,
 		flags: 0,
-		startFloor: 0,
 		heightMetric: 0,
-		carrierId: -1,
+		entryFloor: 0,
+		reservedByte: 0,
+		descendingLoadCounter: 0,
+		ascendingLoadCounter: 0,
+	}));
+}
+
+function createEmptySpecialLinkRecords(): WorldState["specialLinkRecords"] {
+	return Array.from({ length: MAX_SPECIAL_LINK_RECORDS }, () => ({
+		active: false,
+		lowerFloor: 0,
+		upperFloor: 0,
+		reachabilityMasksByFloor: new Array(GRID_HEIGHT).fill(0),
+	}));
+}
+
+function createEmptyTransferGroupEntries(): WorldState["transferGroupEntries"] {
+	return Array.from({ length: MAX_TRANSFER_GROUPS }, () => ({
+		active: false,
+		taggedFloor: -1,
+		carrierMask: 0,
 	}));
 }
 
@@ -48,7 +69,9 @@ export function createInitialSnapshot(
 			entities: [],
 			carriers: [],
 			specialLinks: createEmptySpecialLinks(),
+			specialLinkRecords: createEmptySpecialLinkRecords(),
 			floorWalkabilityFlags: new Array(GRID_HEIGHT).fill(0),
+			transferGroupEntries: createEmptyTransferGroupEntries(),
 			transferGroupCache: new Array(GRID_HEIGHT).fill(0),
 		},
 		ledger: createLedgerState(startingCash),
@@ -119,7 +142,9 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 			entities: [],
 			carriers: [],
 			specialLinks: [],
+			specialLinkRecords: [],
 			floorWalkabilityFlags: [],
+			transferGroupEntries: [],
 			transferGroupCache: [],
 		};
 	}
@@ -151,8 +176,14 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	if (snapshot.world.specialLinks.length === 0) {
 		snapshot.world.specialLinks = createEmptySpecialLinks();
 	}
+	if (snapshot.world.specialLinkRecords.length === 0) {
+		snapshot.world.specialLinkRecords = createEmptySpecialLinkRecords();
+	}
 	if (snapshot.world.floorWalkabilityFlags.length !== GRID_HEIGHT) {
 		snapshot.world.floorWalkabilityFlags = new Array(GRID_HEIGHT).fill(0);
+	}
+	if (snapshot.world.transferGroupEntries.length === 0) {
+		snapshot.world.transferGroupEntries = createEmptyTransferGroupEntries();
 	}
 	if (snapshot.world.transferGroupCache.length !== GRID_HEIGHT) {
 		snapshot.world.transferGroupCache = new Array(GRID_HEIGHT).fill(0);

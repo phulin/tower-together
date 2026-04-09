@@ -42,9 +42,9 @@ Some player-facing event semantics are still incomplete. Those are listed at the
 
 The goal is a simulation that plays the same way as the original — same rules, same economy, same occupancy dynamics, same event triggers — driven by an alternate UI. It is **not** a goal to reproduce the original's exact internal state tick-for-tick. The following divergences are explicitly acceptable:
 
-**RNG.** The original uses a seeded C runtime PRNG. The reimplementation may use any PRNG with equivalent statistical properties. Individual probabilistic outcomes (which hotel room a guest picks, which venue a condo tenant visits, whether a news event fires on a given tick) will differ, but the long-run distribution of outcomes should match.
+**RNG.** The original uses a seeded C runtime PRNG. A gameplay-equivalent reimplementation may substitute another statistically similar PRNG, but exact event-for-event parity requires recovering the original generator and seed/update flow. See "Missing Details" for the remaining parity caveat.
 
-**Entity processing order within a tick.** The original processes 1/16 of the entity table per tick in a fixed stride. The reimplementation may process entities in any order that covers all entities once per 16-tick window, as long as checkpoint-driven work fires at the correct tick.
+**Entity processing order within a tick.** The original processes 1/16 of the entity table per tick in a fixed stride. A gameplay-equivalent reimplementation may process entities in any order that covers all entities once per 16-tick window, but exact replay parity requires matching the original stride and per-tick family visitation order. See "Missing Details" for the remaining parity caveat.
 
 **Notification and popup timing.** The original fires morning/afternoon/evening notification popups at specific tick values. The reimplementation should emit equivalent notifications at equivalent simulation moments but need not match the exact Windows message-dispatch sequence.
 
@@ -417,7 +417,7 @@ Execute in order:
 3. If `day_counter % 3 == 0`: call `apply_periodic_operating_expenses()` — sweeps all floors, carriers, and special links:
    - Types 0x18, 0x19, 0x1a (parking): `add_parking_operating_expense(floor, subtype)`.
    - All other valid placed-object types: `add_infrastructure_expense_by_type(type_code)`.
-   - For each active carrier: local elevator (mode 0) → ¥200/unit, express elevator (mode 1) → ¥100/unit, escalator (mode 2) → ¥100/unit; scaled by car-unit count.
+   - For each active carrier: express elevator (mode 0) → ¥400/unit, standard elevator (mode 1) → ¥200/unit, service elevator (mode 2) → ¥100/unit; scaled by car-unit count.
    - For each active special link: stairwell links → ¥50/unit; lobby-connector links → separate rate; each scaled by `(unit_count >> 1) + 1`.
 
 4. Call `rebuild_all_entity_tile_spans()` (same as step 1 of 0x09c4).
@@ -501,11 +501,7 @@ The "New Tower" menu-button handler is `FUN_1130_0005`. Its order of operations:
 2. `new_game_initializer()` at `0x10d807f6` — resets simulation clock, cash, ledgers, gate flags, placed-object arrays.
 3. `FUN_10d8_0a4c()` + popup notification — post-init UI refresh.
 
-The caller does **not** explicitly write `g_star_count`, seed the RNG, or set a day-of-week value. Starting state is fully deterministic: `$2,000,000` cash, `day_tick = 0x9e5`, `day_counter = 0`, no placed objects.
-
-### Not Yet Resolved
-
-- **`g_star_count` initial value** is still not traced to a concrete write site. Neither `new_game_initializer` nor its caller `FUN_1130_0005` writes `[0xbc40]`, yet the runtime value is `1`. The most likely source is static BSS initialization at program load (the NE loader zeroes BSS; `0xbc40` would then start at 0 — but the star-advancement code expects 1, so a hidden write exists). A headless implementation should hard-code `star_count = 1` at new-game start; locating the exact original write site is a low-priority sub-blocker.
+The caller does **not** separately seed the RNG or set a day-of-week value. Starting state is fully deterministic: `$2,000,000` cash, `day_tick = 0x9e5`, `day_counter = 0`, no placed objects. `new_game_initializer` itself explicitly writes `g_star_count = 1`.
 
 ## Simulation State
 
@@ -622,6 +618,30 @@ This command queue model is an implementation choice for the headless rewrite. I
 
 Route resolution is a shared service used by multiple subsystems. All of the core algorithms are now recovered.
 
+### Routing Overview
+
+Routing is a **one-leg-at-a-time cheapest-next-move system**, not a full-path planner.
+
+When a runtime entity wants to travel from `source_floor` to `target_floor`, the routing layer:
+
+1. Reads the object's route preference (`route_mode`) to choose between **local/stair-oriented** and **express/escalator-oriented** scoring.
+2. Scores the cheapest valid **single next leg** from the current floor.
+3. Commits that one leg:
+   - a **stair/escalator leg** (one placed connector), or
+   - an **elevator leg** (queue onto one carrier for one delivery floor).
+4. Returns control to the family state machine when that leg completes.
+5. If the entity has not yet reached its ultimate destination, the family handler calls routing again from the new floor.
+
+This is how multi-leg trips emerge. The router never stores a whole itinerary and never chains two connectors or two elevators in one call. "Stairs A -> walk -> stairs B" happens as two consecutive route resolutions, not as one planned path.
+
+The routing layer is built from three connectivity sources:
+
+- **Placed stairs/escalators**: the 64 raw 10-byte connector records. These are the real vertical links in the tower.
+- **Derived lobby / sky-lobby transfer zones**: up to 7 synthesized records centered around floor `10` and floors `24, 39, 54, 69, 84, 99`. These are caches rebuilt from walkability, not placed objects.
+- **Elevator carriers**: the 24 carrier records, scored either as direct rides or as rides to transfer floors.
+
+The derived lobby / sky-lobby transfer zones exist only to help the router reason about transfers around the lobby and sky-lobby bands. They do not add extra placed links and do not replace the raw stair/escalator connector table.
+
 ### Route Request Flow
 
 Entry point: `resolve_entity_route_between_floors(emit_failure_feedback, emit_distance_feedback, object_ref, source_floor, target_floor, record_blocked_pair)`.
@@ -633,70 +653,98 @@ Entry point: `resolve_entity_route_between_floors(emit_failure_feedback, emit_di
 5. If result < 0 (no route): optionally record blocked pair and add route-failure delay (300 ticks); return -1.
 6. If result >= 0x40 (carrier route, carrier index = result - 0x40):
    - Read the carrier's floor slot status byte (direction-dependent).
-   - If status == 0x28 (at-capacity/departing): write `entity[+7] = source_floor`, `entity[+8] = 0xff`; optionally add waiting-state delay; return 0 (waiting state — entity parked until next dispatch).
-   - Otherwise: call `enqueue_request_into_route_queue(object_ref, carrier_index, source_floor, direction_flag)`. Write entity state byte: `entity[+8] = carrier_index + 0x40` (going up) or `carrier_index + 0x40 + 2` (going down, checking direction offset). Optionally add long-distance delay (see delays table). Stamp `entity[+0xa] = g_day_tick`. Return 2 (queued).
-7. If result < 0x40 (special-link segment, index = result):
-   - Mark the segment as used.
+   - If status == `0x28` (40 queued requests already waiting at that floor/direction): write `entity[+7] = source_floor`, `entity[+8] = 0xff`; optionally add waiting-state delay; return 0 (waiting state — entity parked until next dispatch).
+   - Otherwise: call `enqueue_request_into_route_queue(object_ref, carrier_index, source_floor, direction_flag)`. Write entity state byte: `entity[+8] = carrier_index + 0x40` for upward queueing or `carrier_index + 0x58` for downward queueing. Optionally add long-distance delay (see delays table). Stamp `entity[+0xa] = g_day_tick`. Return 2 (queued).
+7. If result < 0x40 (stair/escalator connector, index = result):
+   - Mark the connector as used and increment its in-flight directional load counter.
    - Compute hop count: `local_a = (segment_flags >> 1) + 1`.
    - Write `entity[+7] = source_floor + local_a` (going up) or `source_floor - local_a` (going down).
    - Write `entity[+8] = segment_index`.
-   - Optionally add per-stop delay and long-distance penalty.
+   - Add a **single one-shot travel delay** of `per_stop_delay * span`, using the stair delay global for standard connectors and the escalator delay global for express/escalator connectors; optionally add long-distance penalty.
    - Return 1 (direct route accepted).
+
+Important behavior:
+
+- One call to `resolve_entity_route_between_floors` commits **exactly one leg**.
+- A stair/escalator leg is not simulated as a per-floor walk loop on the entity. The entity simply sleeps until its one-shot travel delay expires.
+- A queued elevator leg is **passive** while waiting. The entity does not continuously re-plan; it remains in its family's in-transit state band until the queue assignment is consumed or a higher-level timeout path redispatches it.
 
 ### Route Candidate Selection
 
-`select_best_route_candidate` returns the lowest-cost candidate index (−1 = none, 0..0x3f = special-link segment, 0x40..0x57 = carrier index + 0x40).
+`select_best_route_candidate` returns the lowest-cost candidate index (−1 = none, 0..0x3f = stair/escalator connector, 0x40..0x57 = carrier index + 0x40).
 
 Priority order depends on `prefer_local_mode`:
 
 **Local mode (`prefer_local_mode != 0`):**
 1. If `abs(height_delta) == 1` OR `is_floor_span_walkable_for_local_route(source, target)`:
-   - Score all 64 special-link segments (`score_local_route_segment`). Track minimum.
-   - If minimum cost < 0x280: return that segment immediately.
-2. If no good local found: score all 8 special-link records (`score_special_link_route`).
-   - If a special link is viable (cost == 0): also score local routes to the adjacent entry floor. If a local segment to that adjacent floor costs < 0x280: return that as the local leg.
+   - Score all 64 placed stair/escalator connectors (`score_local_route_segment`). Track minimum.
+   - If minimum cost < 0x280: return that connector immediately.
+2. If no good local found: score all 8 derived lobby / sky-lobby transfer-zone records (`score_special_link_route`).
+   - If a transfer zone is viable (cost == 0): also score local stair routes to the adjacent entry floor. If a local connector to that adjacent floor costs < 0x280: return that as the local leg.
 3. Fall through to 24 carrier transfer routes.
 
 **Express mode (`prefer_local_mode == 0`):**
 1. If `abs(height_delta) == 1` OR `is_floor_span_walkable_for_express_route(source, target)`:
-   - Score all 64 special-link segments (`score_express_route_segment`). Track minimum.
-   - If minimum found (any cost < 0x7fff): return that segment immediately.
+   - Score all 64 placed stair/escalator connectors in express/escalator mode (`score_express_route_segment`). Track minimum.
+   - If minimum found (any cost < 0x7fff): return that connector immediately.
 2. Fall through to 24 carrier transfer routes.
 
 **Carrier transfer (both modes, as fallback):**
 - Score all 24 carriers (`score_carrier_transfer_route`). Only carriers whose `carrier_mode != 2` match local mode; `carrier_mode == 2` matches express mode.
 - Return the carrier with lowest cost (0x7fff = impossible).
 
+In plain terms:
+
+- Local/stair mode first tries to stay on direct stair links, then tries lobby / sky-lobby transfer zones, then uses elevators.
+- Express/escalator mode first tries express-capable stair/escalator links, then uses the express-mode elevator fallback.
+- The chosen result is always the **cheapest valid next leg**, not an end-to-end path.
+
 ### Route Costs
 
 Exact formulas recovered from decompile:
 
-**64 special-link segments** (stride 10 bytes each):
-- Local: if `segment_flags & 1 == 0` (standard link): cost = `abs(height_delta) * 8`. If `flags & 1 == 1`: cost = `abs(height_delta) * 8 + 0x280`.
-- Express: requires `flags & 1 == 1` (express flag set); cost = `abs(height_delta) * 8 + 0x280`.
-- Segment fields: `[0]` active byte, `[1]` flags byte (bit 0 = express; bits 7:1 = half-span), `[2..3]` start_floor (int), `[4..5]` height_metric (int).
-- Entry floor check: going up → source_floor must equal `segment[+2]`; going down → source_floor must equal `segment[+2] + (flags >> 1)`.
+**64 stair/escalator connectors** (stride 10 bytes each):
+- Local: if `segment_flags & 1 == 0` (stair / standard connector): cost = `abs(height_delta) * 8`. If `flags & 1 == 1` (escalator / express connector): cost = `abs(height_delta) * 8 + 0x280`.
+- Express: requires `flags & 1 == 1` (escalator / express flag set); cost = `abs(height_delta) * 8 + 0x280`.
+- Connector fields: `[0]` active byte, `[1]` flags byte (bit 0 = express/escalator mode; bits 7:1 = vertical span), `[2..3]` `height_metric`, `[4]` `entry_floor`, `[5]` reserved byte written as 0, `[6..7]` descending load counter, `[8..9]` ascending load counter.
+- Endpoint rule: going up → source_floor must equal `segment.entry_floor`; going down → source_floor must equal `segment.entry_floor + (segment.flags >> 1) - 1`.
 
-**8 special-link records** (`special_link_record_table`, stride 0x1e4):
-- Cost = 0 if: link is active AND source_floor is within link span AND (target_floor is within span OR target is reachable via transfer-group cache).
+**8 derived lobby / sky-lobby transfer-zone records** (`special_link_record_table`, stride 0x1e4):
+- These are derived transfer spans, not placed objects. `rebuild_special_link_route_records` synthesizes at most 7 live records: one around floor `10`, then one each around floors `24, 39, 54, 69, 84, 99`, scanning up to 6 floors outward with the local-walkability gap rule.
+- Cost = 0 if: record is active AND source_floor is within its derived span AND (target_floor is within span OR target_floor is reachable through the record's per-floor transfer mask cache).
+- `scan_special_link_span_bound(center, dir)` implements the gap-bound rule literally:
+  - upward (`dir != 0`): start at `center`, stop and return `floor` on the first `g_floor_walkability_flags[floor] == 0`; after the first floor whose local-walk bit (`bit 0`) is clear, stop and return `floor` as soon as `floor >= center + 3`; otherwise cap at `center + 6`
+  - downward (`dir == 0`): start at `center - 1`, stop and return `floor + 1` on the first zero walkability byte; after the first floor whose local-walk bit is clear, stop and return `floor + 1` as soon as `floor < center - 3`; otherwise cap at `center - 6`
+- `reachability_masks_by_floor[120]` is a mixed-format cache:
+  - `0` = unreachable
+  - `1..16` = `transfer_group_index + 1` for a transfer-group floor inside this record's own span
+  - other nonzero values are bitmasks using the transfer-group namespace: bits `0..23` = carriers, bits `24..31` = peer derived special-link records
+- Rebuild rule for one derived record:
+  - collect every transfer-group entry whose `membership_mask` contains this record's bit (`24 + record_index`)
+  - OR those masks into a temporary aggregate and clear this record's own bit from it
+  - for each floor:
+    - if the floor lies inside the record span and a transfer-group entry exists exactly on that floor with this record bit set, store `transfer_group_index + 1`; this is exclusive of the projected-mask format for that cell
+    - otherwise project the aggregate onto the floor by setting carrier bits only for carriers whose bits are already present in the aggregate and that serve the floor, and peer-record bits only for peer records whose bits are already present in the aggregate and whose spans contain the floor
 
 **24 carrier records** (`carrier_record_table[0..0x17]`):
 - Direct coverage: carrier serves both source and target floor → cost = `abs(height_delta) * 8 + 0x280` (elevator) or `1000 + abs(height_delta) * 8` when floor slot status == 0x28.
 - Transfer coverage: carrier serves source, and target is reachable via transfer-group cache → cost = `abs(height_delta) * 8 + 3000` or `6000 + abs(height_delta) * 8` when status == 0x28.
-- Cost for escalators (carrier_mode == 2): always `abs(height_delta) * 8`.
+- There is no carrier-side "escalator mode" in this scorer. Escalators are stair/escalator connectors, not carriers. The carrier scorer instead splits between the `carrier_mode == 0` branch and the `carrier_mode != 0` branch, with mode `2` additionally being the only branch selected for express-route fallback.
 
-The 0x28 floor-slot status means the carrier car is at capacity or actively departing from that direction; adds 720 penalty (direct) or 3000 penalty (transfer) relative to the normal base cost.
+The `0x28` floor-slot byte is the literal 40-entry queue-full sentinel for that floor/direction ring buffer. Routing treats it as an overloaded "do not enqueue now" condition and adds 360 penalty (direct) or 3000 penalty (transfer) relative to the normal base cost.
 
 **Carrier record field layout** (each `carrier_record_table[i]` pointer points to a `CarrierRouteRecordHeader`):
 
 Header fields:
-- `carrier_mode` (byte): **0 = Express Elevator, 1 = Standard Elevator, 2 = Service Elevator** (resolved from placement dispatcher `FUN_1200_082c`; see "Object Type-Code → Gameplay Identity Table" for the full mapping). The route scorer treats modes 0 and 1 as "local-mode" carriers (`carrier_mode != 2`) and mode 2 as the "express-mode" long-hop carrier (`carrier_mode == 2`). Escalators are **not** carriers — they are special-link segments.
+- `carrier_mode` (byte): **0 = Express Elevator, 1 = Standard Elevator, 2 = Service Elevator** (resolved from placement dispatcher `FUN_1200_082c`; see "Object Type-Code → Gameplay Identity Table" for the full mapping). The route scorer treats modes 0 and 1 as "local-mode" carriers (`carrier_mode != 2`) and mode 2 as the "express-mode" long-hop carrier (`carrier_mode == 2`). Escalators are **not** carriers — they are stair/escalator connectors.
 - `top_served_floor` (signed byte): highest floor served
 - `bottom_served_floor` (signed byte): lowest floor served
-- `floor_queue_span_count` (word): number of served floor slots
-- `served_floor_flags[schedule_index]` (byte array): per-schedule active-service flag; 14 entries covering 7 dayparts × 2 calendar-phase states. Index = `calendar_phase_flag * 7 + daypart` (0–13). Value 0 = out of service for that slot.
-- `primary_route_status_by_floor[floor]` (byte array): upward-direction request/occupancy flag per floor
-- `secondary_route_status_by_floor[floor]` (byte array): downward-direction request/occupancy flag per floor
+- `assignment_capacity` (byte at `+0x02`): per-car assignment / departure threshold. `place_carrier_shaft` initializes this to `0x15` for Standard and Service elevators and `0x2a` for Express elevators. Queue drain and departure logic both compare `assigned_count` against this byte.
+- `service_dwell_multiplier_by_daypart[14]` (byte array at `+0x20`): 14 entries covering 7 dayparts × 2 calendar-phase states. `advance_carrier_car_state` reloads the car-local `schedule_flag` from this table whenever the car reaches a terminal floor.
+- `service_schedule_flags[14]` (byte array at `+0x2e`): per-daypart enable/disable flags. `should_car_depart` checks this table and departs immediately when the current slot is disabled (`== 0`).
+- `served_floor_flags[0x78]` (byte array at `+0x42`): per-floor served-bit table. `FUN_10a8_0085` toggles one byte in this array, and routing / scoring uses it to test whether a carrier serves a floor.
+- `primary_route_status_by_floor[floor]` (byte array): upward floor-assignment table. Value `0` = no car assigned; `1..8` = assigned car index + 1.
+- `secondary_route_status_by_floor[floor]` (byte array): downward floor-assignment table. Value `0` = no car assigned; `1..8` = assigned car index + 1.
 
 Per-car data (up to 8 cars). Active car flag is stored in the carrier record; a zero value means the car slot is unused.
 
@@ -710,17 +758,17 @@ Car fields (logical names):
 - `prev_floor` (signed byte): last floor visited; copied from `current_floor` when `speed_counter` hits 0
 - `departure_flag` (byte): 1 = car in boarding/departure sequence
 - `departure_timestamp` (word): `g_day_tick` snapshot taken at boarding start
-- `schedule_flag` (byte): loaded from `served_floor_flags[calendar_phase_flag*7 + daypart]` when car arrives at its top or bottom served floor; controls dwell and departure eligibility
-- `waiting_count[floor]` (byte array): waiting passenger count at each served floor slot
+- `schedule_flag` (byte): loaded from `service_dwell_multiplier_by_daypart[calendar_phase_flag*7 + daypart]` when the car arrives at its top or bottom served floor; controls the dwell timeout used by `should_car_depart`
+- `destination_request_counts[floor]` (byte array): per-destination active-slot counts for this car
 
 **Floor-to-slot index mapping**:
 
-For standard local elevators (`carrier_mode == 0`):
+For express sky-lobby carriers (`carrier_mode == 0`):
 - Floors 1–10 → slots 0–9 (`floor - 1`)
 - Sky lobby floors where `(floor - 10) % 15 == 14` (i.e., floors 24, 39, 54, 69, …) → slot `(floor - 10) / 15 + 10`
 - All other floors → -1 (not a valid slot for this carrier)
 
-For express elevators / escalators (`carrier_mode != 0`):
+For linear-span carriers (`carrier_mode != 0`):
 - If `floor <= top_served_floor` → slot `floor - bottom_served_floor`
 - Otherwise → -1
 
@@ -731,7 +779,7 @@ All delay values are confirmed from the startup tuning resource (type `0xff05`, 
 | Global (DS offset) | Value | Used when |
 |---|---|---|
 | `0xe5ee` | `300` | Loaded but **not referenced** by any code path — vestigial. |
-| `0xe5f0` | `5` | **Waiting-state delay**: carrier floor-slot status == `0x28` (at-capacity/departing). Entity parks in waiting state. |
+| `0xe5f0` | `5` | **Waiting-state delay**: source floor/direction queue count has reached `0x28` (40 queued requests). Entity parks in waiting state. |
 | `0xe5f2` | `0` | **Re-queue-failure delay**: `assign_request_to_runtime_route` fails to find a valid transfer floor. Also used by the queue-drain path when ejecting an entity from an at-capacity queue. |
 | `0xe5f4` | `300` | **Route-failure delay**: `select_best_route_candidate` returns < 0 (no route exists). |
 | `0xe5f6` | `0` | **Venue-unavailable delay**: target commercial venue slot is invalid, already demolished, or its path-seed entry has no dependency. |
@@ -749,16 +797,18 @@ Long-distance penalty (applied when `abs(segment_height_metric - entity_height_m
 
 **Express route** (`is_floor_span_walkable_for_express_route`): reads same flag array, bit 1 (value 2). Reject span >= 7. Fails immediately if any floor has `flag & 2 == 0` (zero gap tolerance for express).
 
-**Rebuild trigger**: `g_floor_walkability_flags` is rebuilt by sweeping all 64 special-link segment entries. Each entry sets bit 0 (local) or bit 1 (express) on every floor in its span. The sweep zeros all 0x3c floor entries first, then OR-sets bits per segment. The rebuild fires on every carrier object placement or demolition — it is event-driven, not daily.
+**Rebuild trigger**: `g_floor_walkability_flags` is rebuilt by sweeping all 64 stair/escalator connector entries. Each entry sets bit 0 (local) or bit 1 (express) on every floor in its span. The sweep zeros all 0x3c floor entries first, then OR-sets bits per segment. The rebuild fires on every carrier object placement or demolition — it is event-driven, not daily.
 
 ### Transfer-Group Cache
 
 Maintained in `transfer_group_cache`, up to 16 entries × 6 bytes:
-- bytes `[0..3]`: `carrier_mask` — bitmask of which carriers serve this transfer floor
+- bytes `[0..3]`: `membership_mask` — bitmask of transfer participants. Bits `0..23` are carrier indices; bits `24..31` are derived lobby / sky-lobby transfer-zone record indices.
 - byte `[4]`: `tagged_floor` — the floor index of this transfer point
 - byte `[5]`: (padding/reserved)
 
-The cache is rebuilt by `rebuild_transfer_group_cache`. It scans all placed objects for type-0x18 objects (transit concourse), checks which carriers serve the concourse floor (with mode-based tolerance: elevator/local = ±6, express = ±4), and groups consecutive same-floor concourse objects with overlapping carrier masks into a single entry. The 8 special-link records then get each transfer entry OR'd into their `carrier_mask` if the entry floor falls within the link span.
+The cache is rebuilt by `rebuild_transfer_group_cache`. It scans all placed objects for type-`0x18` transit concourse segments, computes a `membership_mask` from all intersecting carriers, and emits one candidate entry per qualifying concourse object. Candidates merge only when they are on the same floor and their masks overlap; the earlier entry ORs in the later mask. Afterward, each entry whose `tagged_floor` lies inside a derived lobby / sky-lobby transfer-zone span gets bit `24 + special_link_index` OR'd into its `membership_mask`.
+
+The derived lobby / sky-lobby transfer-zone records themselves do **not** preserve a standalone carrier mask. Their `reachability_masks_by_floor` arrays are rebuilt later by testing these transfer-group `membership_mask`s floor by floor.
 
 **Rebuild triggers**: `rebuild_transfer_group_cache` is called from `rebuild_route_reachability_tables` (daily, at checkpoint `0x000`) **and** directly on structural changes: elevator served-floor toggle, elevator demolition, escalator demolition, and elevator shaft top/bottom floor extension. A newly placed or demolished elevator affects routing immediately, not only at the next day boundary.
 
@@ -767,7 +817,7 @@ The cache is rebuilt by `rebuild_transfer_group_cache`. It scans all placed obje
 `process_unit_travel_queue(carrier_index, car_index)` runs for one carrier car:
 
 1. Check if the car's floor queue is active (status flag & 1).
-2. Compute `remaining_slots = carrier.floor_queue_span_count - assigned_count`.
+2. Compute `remaining_slots = carrier.assignment_capacity - assigned_count`.
 3. Look up the queue depth for the current direction. If empty and no pending destination: flip direction.
 4. Pop up to `remaining_slots` requests in the primary direction; call `assign_request_to_runtime_route` for each.
 5. If the car's alternate-direction flag is set and remaining slots allow: also pop requests in the reverse direction.
@@ -776,6 +826,32 @@ The cache is rebuilt by `rebuild_transfer_group_cache`. It scans all placed obje
    - Calls `choose_transfer_floor_from_carrier_reachability` to resolve the actual boarding floor (transfer point if direct not served).
    - Calls `store_request_in_active_route_slot` and increments destination counters.
    - On failure (no transfer floor): adds delay and calls `force_dispatch_entity_state_by_family`.
+
+**Floor-slot queue layout** (`TowerRouteQueueRecord`, stride `0x144`):
+- `+0x00`: upward queue count
+- `+0x01`: upward queue head index
+- `+0x02`: downward queue count
+- `+0x03`: downward queue head index
+- `+0x04..+0x0a3`: `up_queue_request_refs[40]`
+- `+0x0a4..+0x143`: `down_queue_request_refs[40]`
+
+**Queue behavior**:
+- enqueue writes to `(head + count) % 40`, then increments count
+- pop reads from `head`, then advances `head = (head + 1) % 40` and decrements count
+- the queue-full sentinel is not a distinct route-state byte: `0x28` is the literal count `40`
+
+**Per-car active-slot layout** (`TowerUnitRouteRecord`, stride `0x15a`):
+- `+0x03`: active slot count used by slot-removal / dispatch paths
+- `+0x0c`: number of destination floors with nonzero slot counts
+- `+0x10..+0x0b7`: `active_request_refs[42]`
+- `+0x0b8..+0x0e1`: `slot_destination_floors[42]`
+- `+0x0e2..+0x159`: `destination_request_counts[120]`
+
+**Active-slot behavior**:
+- free slot sentinel = `slot_destination_floors[i] == 0xff`
+- insertion scans from slot 0 upward and uses the first free slot
+- unload and removal paths scan only `0 .. assignment_capacity - 1`
+- physical storage is always 42 slots, but standard/service cars use only the first 21 logical slots because `assignment_capacity = 0x15`
 
 ### Arrival Dispatch
 
@@ -812,7 +888,7 @@ Per tick, `advance_carrier_car_state(carrier_index, car_index)` advances one car
 **Branch 3 — both zero (car idle)**, split on whether car is at its target floor:
 
 *At target floor AND (passengers waiting at this floor OR assigned_count < capacity)*:
-1. If at top or bottom served floor: reload `schedule_flag` from `served_floor_flags[calendar_phase_flag*7 + daypart]`.
+1. If at top or bottom served floor: reload `schedule_flag` from `service_dwell_multiplier_by_daypart[calendar_phase_flag*7 + daypart]`.
 2. Call `clear_floor_requests_on_arrival(carrier, car, floor)` — clear floor request assignments and update pending counts.
 3. Set `speed_counter = 5` (initiate departure sequence).
 4. If `departure_flag == 0`: save `g_day_tick` → `departure_timestamp`.
@@ -832,8 +908,8 @@ Per tick, `advance_carrier_car_state(carrier_index, car_index)` advances one car
 
 **Motion profile** (`compute_car_motion_mode(carrier, car)`):
 - `dist_to_target = |current_floor - target_floor|`; `dist_from_prev = |current_floor - prev_floor|`
-- Standard local elevator (`carrier_mode == 0`): if either < 2 → return 0 (stop/dwell); if both > 4 → return 3 (fast jump, ±3 floors/step); else → return 2 (normal, ±1 floor/step).
-- Express/escalator (`carrier_mode != 0`): if either < 2 → return 0; if either < 4 → return 1 (slow, door_wait_counter = 2); else → return 2 (normal).
+- Express sky-lobby carrier (`carrier_mode == 0`): if either < 2 → return 0 (stop/dwell); if both > 4 → return 3 (fast jump, ±3 floors/step); else → return 2 (normal, ±1 floor/step).
+- Linear-span carriers (`carrier_mode != 0`): if either < 2 → return 0; if either < 4 → return 1 (slow, door_wait_counter = 2); else → return 2 (normal).
 
 **Door dwell times** (set by `advance_car_position_one_step` when motion mode = 0 or 1):
 - Mode 0 (arrived at stop) → door_wait_counter = 5
@@ -846,10 +922,19 @@ Per tick, `advance_carrier_car_state(carrier_index, car_index)` advances one car
 **Car assignment** (`assign_car_to_floor_request(carrier, floor, direction)`):
 - If `primary/secondary_route_status_by_floor[floor] != 0`, floor already assigned — skip.
 - Otherwise: call `find_best_available_car_for_floor` to score candidates; on success, store `car_index + 1` in the direction-appropriate array, increment that car's pending_assignment_count, and call `recompute_car_target_and_direction`.
+- Candidate classes inside `find_best_available_car_for_floor`:
+  - idle-home candidate: active car, no pending assignments, no active destination load, doors closed, current floor == home floor
+  - same-direction forward candidate: already moving in the requested direction and the request lies ahead
+  - reversal / wrap candidate: usable fallback behind the request or otherwise requiring retarget beyond the current sweep
+- Immediate early-accept rule: if a car is already at the requested floor with doors closed and either its schedule byte is nonzero or its current direction matches the request, choose that car immediately.
+- Final tie-break uses carrier-header byte `+0x12` as a threshold on `moving_cost - idle_home_cost`:
+  - if the moving candidate exists and `moving_cost - idle_home_cost < header[+0x12]`, choose the moving candidate
+  - if `moving_cost - idle_home_cost >= header[+0x12]`, choose the idle-home candidate
+  - equality breaks toward the idle-home candidate
 
 **Departure decision** (`should_car_depart(carrier, car)`):
 Returns 1 (depart now) if any of:
-- `assigned_count == floor_queue_span_count` (car at capacity)
+- `assigned_count == assignment_capacity` (car at capacity)
 - `service_schedule_flags[calendar_phase_flag*7 + daypart] == 0` (out of service per schedule; parallel 14-entry array in the carrier record, distinct from `served_floor_flags`)
 - `abs(g_day_tick - departure_timestamp) > schedule_flag * 30` (dwell time exceeded)
 
@@ -868,7 +953,7 @@ Called by `recompute_car_target_and_direction` when `select_next_target_floor` r
 - `departure_flag` → 0
 - `departure_timestamp` → 0
 - `pending_assignment_count` → 0
-- `schedule_flag` → `served_floor_flags[current_daypart]`
+- `schedule_flag` → `service_dwell_multiplier_by_daypart[current_daypart]`
 - `active_flag` → 0 (**deactivates the car**)
 - All destination-queue slots → `0xff` (sentinel)
 - All floor-request slots → 0
@@ -1927,22 +2012,21 @@ Checked every 9th day (`day_counter % 9 == 3`) when `star_count == 3`. If an off
 - If average meets threshold: `0xc197 = 1`, fires pass notification `0xbba`.
 - Evaluation result is cleared on demolition or rebuild of the evaluated office.
 
-### Family `0x18`: Parking
+### Family `0x18`: Lobby
 
-Parking is passive infrastructure.
+Lobby is passive transfer infrastructure.
 
 Rules:
 
 - allocate subtype slot
 - do not create active runtime entity behavior
 - never dispatch in tick-stride handlers
-- only apply expense every third day during the expense sweep
-- contribute to route/transfer-group cache via parking reachability
+- contribute to route/transfer-group cache via carrier reachability
 
-### Families `0x0b` And `0x2c`: Demand Anchors And Covered Emitters
+### Families `0x0b` And `0x2c`: Parking Space And Parking Ramp
 
-- `0x2c` (type code `','` = 0x2c) is a **vertical anchor** — elevator/escalator shaft object that provides transport access to a floor.
-- `0x0b` (type code `'\v'` = 0x0b) is a **lateral covered-emitter** — a commercial facility that needs transport access to be in demand.
+- `0x0b` (type code `'\v'` = 0x0b) is the **parking-space** family. The selected-object string table names type `0x0b` as `Parking Space`, and the drag helper `FUN_1200_24fe` repeatedly stamps 1-tile segments of this family across one floor.
+- `0x2c` (type code `','` = 0x2c) is the **parking-ramp** family. `FUN_11a0_0bba` accepts floor `param_2` only when that floor already contains a type-`0x2c` object, which is exactly the dependency expected for parking-space placement. The parking-ramp helper is the vertical drag path with the fixed-column / same-column continuation checks.
 
 #### ServiceRequestEntry Table
 
@@ -1975,11 +2059,11 @@ Operations:
 - `recompute_demand_history_summary_totals`: fills a 10-dword weighted-distribution table with multiples of `count` (positions 0 and 3: `count*2`; others: `count`); sums all into a grand total. Used as a cumulative distribution for venue-type selection.
 - `pick_random_demand_log_entry`: returns `log[abs(rng()) % count]`, or 0xffff if empty. Consumer: `assign_hotel_room` calls this to find an available hotel room slot.
 
-#### Coverage Propagation (`rebuild_vertical_anchor_coverage_and_demand_history`)
+#### Coverage Propagation (`rebuild_parking_ramp_coverage_and_demand_history`)
 
 Called to rebuild coverage state and then the demand log. Scans floors **9 down to 0**, one floor at a time:
 
-1. For each floor, scan all placed objects for vertical anchors (type code `','`).
+1. For each floor, scan all placed objects for parking-ramp segments (type code `','`).
 2. When an anchor is found at subtype index `i` with x-coordinate `x`:
    - Clear anchor stack-state byte (`placed_object[i][+0xb] = 0`).
    - Cross-check the floor **below** for another anchor at the same x. If found:
@@ -1988,21 +2072,21 @@ Called to rebuild coverage state and then the demand log. Scans floors **9 down 
    - Mark anchor dirty (`+0x13 = 1`).
    - Run the coverage propagation sub-sweep from anchor position.
    - If this anchor has no downward connection (standalone), coverage does not carry to the floor below.
-3. If no anchor is found on a floor, run the sub-sweep with no anchor — all lobby tiles on this floor are marked uncovered (in demand).
+3. If no anchor is found on a floor, run the sub-sweep with no anchor — all parking-space tiles on this floor are marked uncovered (in demand).
 4. After all floors, call `rebuild_demand_history_table()`.
 
 #### Coverage Propagation Sub-Sweep
 
-Called with either an anchor position (anchor present) or a sentinel (no anchor). Walks **left** then **right** across the floor. For each adjacent lobby tile (type 0x0b):
+Called with either an anchor position (anchor present) or a sentinel (no anchor). Walks **left** then **right** across the floor. For each adjacent parking-space tile (type `0x0b`):
 
-- **Anchor present**: mark covered (`+0xb = 1`) — elevator/escalator shaft is nearby, lobby demand suppressed. Mark dirty.
-- **No anchor**: mark uncovered (`+0xb = 0`) — no transport access, lobby demand active. Mark dirty.
+- **Anchor present**: mark covered (`+0xb = 1`) — parking-ramp access is nearby, parking-space demand suppressed. Mark dirty.
+- **No anchor**: mark uncovered (`+0xb = 0`) — no ramp access, parking-space demand active. Mark dirty.
 
-Propagation stops when a gap of more than 3 empty tiles or any non-lobby, non-empty tile is encountered.
+Propagation stops when a gap of more than 3 empty tiles or any non-parking-space, non-empty tile is encountered.
 
-**Result**: lobby tiles adjacent to an elevator or escalator shaft (within 3-tile gaps) have `+0xb = 1` (covered, suppressed). Lobby tiles with no transport access have `+0xb = 0` (uncovered, in demand). `rebuild_demand_history_table` collects all uncovered active emitters into the demand log.
+**Result**: parking-space tiles adjacent to a parking ramp (within 3-tile gaps) have `+0xb = 1` (covered, suppressed). Parking-space tiles with no ramp access have `+0xb = 0` (uncovered, in demand). `rebuild_demand_history_table` collects all uncovered active emitters into the demand log.
 
-**Player-facing identities confirmed**: type `0x0b` (lobby tile) is placed as part of the lobby object — it registers a `ServiceRequestEntry` and generates transit demand when not covered by a vertical anchor. Type `0x2c` (elevator/escalator shaft segment) is the vertical anchor — its presence suppresses adjacent lobby-tile demand by setting their `+0xb` coverage flag.
+**Player-facing identities confirmed**: type `0x0b` is the parking-space tile family and type `0x2c` is the parking-ramp segment family. The demand-coverage helper suppresses adjacent type-`0x0b` demand when a type-`0x2c` segment is present on the same floor.
 
 ## Facility Readiness And Support Search
 
@@ -2110,7 +2194,7 @@ Resource type `0xff0b`, ID `1000`, 512 bytes, at file offset `0x272e00`. Loaded 
 
 Cost lookup: `compute_placed_object_cost` at `0x1180_03d5`. Floor base: `compute_floor_construction_base_cost` at `0x1180_05fd`, using `YEN_1000[0] = 5` per tile.
 
-Non-zero entries (labels marked † are inferred from menu-string price matching and should be confirmed against the placement dispatcher):
+Non-zero entries:
 
 | type | value | $ | label |
 |---:|---:|---:|---|
@@ -2123,25 +2207,35 @@ Non-zero entries (labels marked † are inferred from menu-string price matching
 | 0x07 | 400 | $40,000 | Office |
 | 0x09 | 800 | $80,000 | Condo |
 | 0x0a | 1000 | $100,000 | Retail Shop |
-| 0x0b | 30 | $3,000 | Lobby tile (per-tile) † |
+| 0x0b | 30 | $3,000 | Parking Space (per-tile) |
 | 0x0c | 1000 | $100,000 | Fast Food |
-| 0x0d | 5000 | $500,000 | Medical Center / Sky Lobby † |
-| 0x0e | 1000 | $100,000 | Security office / SECOM Center † |
-| 0x0f | 500 | $50,000 | Housekeeping † |
-| 0x11 | 1000 | $100,000 | (unresolved) † |
-| 0x12 | 5000 | $500,000 | Movie Theater † |
-| 0x14 | 5000 | $500,000 | Recycling Center † |
+| 0x0d | 5000 | $500,000 | Medical Center |
+| 0x0e | 1000 | $100,000 | Security |
+| 0x0f | 500 | $50,000 | Housekeeping |
+| 0x11 | 1000 | $100,000 | SECOM |
+| 0x12 | 5000 | $500,000 | Movie Theater |
+| 0x14 | 5000 | $500,000 | Recycling Center |
 | 0x16 | 50 | $5,000 | Stairs |
-| 0x18 | 50 | $5,000 | Parking (per-tile, but see note) |
+| 0x18 | 50 | $5,000 | Lobby (per-tile, but see note) |
 | 0x1b | 200 | $20,000 | Escalator |
 | 0x1d | 1000 | $100,000 | Party Hall (single-link entertainment) |
-| 0x1f | 10000 | $1,000,000 | Metro Station † |
-| 0x24 | 30000 | $3,000,000 | Cathedral † |
+| 0x1f | 10000 | $1,000,000 | Metro Station |
+| 0x24 | 30000 | $3,000,000 | Cathedral |
 | 0x2a | 4000 | $400,000 | Express Elevator (shaft) |
 | 0x2b | 1000 | $100,000 | Service Elevator (shaft) |
-| 0x2c | 500 | $50,000 | Parking Ramp (vertical anchor) |
+| 0x2c | 500 | $50,000 | Parking Ramp |
 
-**Parking placement clarified**: family `0x18` is the **drag-laid parking lot**, placed via `FUN_1200_27ce` → `place_mergeable_span_object_on_floor` (`FUN_1200_293e`) (the same generic span-placer used by floor tile `0x00`, lobby `0x0b`, and vertical anchor `0x2c`). It writes the placed-object record with type `0x0a = 0x18` and the dragged left/right tile bounds. The total placement cost is computed by `compute_total_placement_cost(type, floor, left, right)`, which for span types multiplies by tile-width; the per-tile cost slot in YEN #1000 is empty for parking, so the effective cost is the flat `YEN_1000[0x18] = $5000` entrance value plus any per-tile floor allotments. The manual's "Parking - $3000" label most likely refers to the **stairs/parking entrance** family `0x16` (placed via `FUN_1200_149c`), which is a different object code than `0x18`. This resolves the earlier discrepancy.
+**Build-menu string audit**: raw executable strings confirm the player-facing build labels and prices for the entire non-zero cost table, including `Single Hotel Room - $20000`, `Twin Hotel Room - $50000`, `Hotel Suite - $100000`, `Restaurant - $200000`, `Office - $40000`, `Condo - $80000`, `Retail Shop - $100000`, `Parking - $3000`, `Fast Food - $100000`, `Medical Center - $500000`, `Security - $100000`, `Housekeeping  - $50000`, `SECOM Center - $100000`, `Movie Theater - $500000`, `Recycling Center  - $500000`, `Stairs  - $5000`, `Lobby - $5000`, `Escalator - $20000`, `Party Hall - $100000`, `Metro Station - $1000000`, `Cathedral - $3000000`, `Parking Ramp - $50000`, `Standard Elevator - $200000/Shaft $80000/Car`, `Express Elevator - $400000/Shaft $150000/Car`, and `Service Elevator - $100000/Shaft $50000/Car`.
+
+**Object-name string audit**: the selected-object string table confirms at least these base labels directly: `0x0b = Parking Space`, `0x0d = Medical Center`, `0x0e = Security`, `0x0f = Housekeeping`, `0x11 = SECOM`, `0x12 = Movie Theater`, `0x14 = Recycling Center`, `0x18 = Lobby`, `0x1b = Escalator`, `0x1d = Party Hall`, `0x1f = Metro Station`, `0x24 = Cathedral`, `0x2c = Parking Ramp`. The build-menu string `Parking - $3000` corresponds to placed-object type `0x0b`, whose selected-object label is `Parking Space`. No string evidence supports the older `Sky Lobby` alias for `0x0d`.
+
+**Lobby / parking placement clarified**: the selected-object string table names type `0x18` as `Lobby` and type `0x0b` as `Parking Space`. That matches the placement code:
+
+- family `0x18` is the **drag-laid lobby span**, placed via `dispatch_drag_span_placement` (`FUN_1200_27ce`) → `place_mergeable_span_object_on_floor` (`FUN_1200_293e`), and gated to floors satisfying `is_lobby_or_express_floor`
+- family `0x0b` is the **parking-space** drag placer, routed through `drag_place_parking_space_span` (`FUN_1200_24fe`) after `floor_has_parking_ramp_segment` (`FUN_11a0_0bba`)
+- family `0x2c` is the **parking-ramp** vertical drag placer
+
+So the older `0x18 = parking lot` / `0x0b = lobby` interpretation was backwards.
 
 **Carrier-mode ↔ operating-expense and tool mapping — RESOLVED**
 
@@ -2213,10 +2307,10 @@ The trade-off: higher rent earns more per event but risks tenant departure (refu
 Operating expenses are charged periodically by `apply_periodic_operating_expenses`, which sweeps all floors, carriers, and special-link records:
 - Most placed objects: infrastructure expense per type from the expense table, scaled by 1
 - Parking (types 0x18/0x19/0x1a): star-rating-tiered rate × usage
-- Carriers: local elevator ¥200/unit, express elevator ¥100/unit, escalator ¥100/unit (× car-unit count)
+- Carriers: standard elevator ¥200/unit, express elevator ¥400/unit, service elevator ¥100/unit (× car-unit count)
 - Special links: stairwell ¥50/unit, lobby-connector separate rate (× scaled unit count)
 
-Known expense values (¥10,000 per period): security office=200, housekeeping=100, restaurant=500, fast food=50, retail=1000, local elevator=200, express elevator=100, escalator=100.
+Known expense values (¥10,000 per period): security office=200, housekeeping=100, restaurant=500, fast food=50, retail=1000, standard elevator=200, express elevator=400, service elevator=100.
 
 Do not treat ledger effects as informational only. Several open/close transitions change object bytes that feed later simulation behavior.
 
@@ -2228,8 +2322,8 @@ Persist and restore:
 
 - **Placed objects**: the full `PlacedObjectRecord` list (one per object), including `+0x06`/`+0x08` left/right tile, `+0x0a` family code, `+0x0b` `stay_phase`, `+0x0c` flags, `+0x12..+0x17` per-object subtype fields, and the per-family sidecar pointers.
 - **Runtime entity records**: the full `g_runtime_entity_table` (16 bytes per entry, `+0x00..+0x0f` documented in "Runtime Entity Record — Consolidated Layout"). One entry per sub-tile of every multi-tile placed object plus the 8-slot allocation for each evaluation object. All bytes including `byte_0x9` (sample count) and `word_0xe` (accumulated elapsed) must round-trip to preserve the demand-pipeline state.
-- **Carrier records**: the 24-entry `carrier_record_table[0..0x17]`, including per-shaft `carrier_mode`, `bottom_served_floor`, `top_served_floor`, `served_floor_flags[14]` (per-floor served bits) and `service_schedule_flags[14]` (per-daypart × calendar-phase schedule), `pending_assignment_count`, per-car position, direction, dwell timer, departure timestamp, and per-car assigned-passenger queue.
-- **Demand history queue**: the `DemandHistoryLog` ring (entries from `rebuild_vertical_anchor_coverage_and_demand_history`).
+- **Carrier records**: the 24-entry `carrier_record_table[0..0x17]`, including per-shaft `carrier_mode`, `bottom_served_floor`, `top_served_floor`, the 14-byte daypart tables at `+0x20` and `+0x2e`, the per-floor served-bit table at `+0x42`, `pending_assignment_count`, per-car position, direction, dwell timer, departure timestamp, and per-car assigned-passenger queue.
+- **Demand history queue**: the `DemandHistoryLog` ring (entries from `rebuild_parking_ramp_coverage_and_demand_history`).
 - **Path-seed bucket table**: the 10-entry source list and the derived bucket table.
 - **Active-request list**: the per-family request entries (cleared end-of-day for the 7-family whitelist; preserved across save for in-flight days).
 - **Entertainment link records**: the 12-byte link entries (forward/reverse phase counters, age counter, family selector, link tile spans).
@@ -2240,7 +2334,7 @@ Persist and restore:
 - **Ledger state**: `g_cash_balance`, `g_primary_family_ledger_total`, all per-family ledgers, the running income/expense buckets, and `g_security_ledger_scale` (DS:0xbc68).
 - **Calendar and day tick state**: `g_day_tick`, `g_day_counter`, `g_calendar_phase_flag`, `daypart_index`, `g_star_count`, `facility_progress_override`, `fire_suppressor_subtype`, `g_metro_station_floor_index (0xbc5c)`, `g_eval_entity_index (0xbc60)`, the star-gate flag word at `0xc198..0xc19b`, and the `security_office_placed`/`office_placed` byte flags at `0xc19e/0xc19f`.
 
-On load, after restoring the above, rebuild the derived bucket tables (transfer-group cache, route reachability tables, walkability flags, vertical anchor coverage). These are pure functions of the persisted state and are never persisted directly.
+On load, after restoring the above, rebuild the derived bucket tables (transfer-group cache, route reachability tables, walkability flags, parking-ramp coverage). These are pure functions of the persisted state and are never persisted directly.
 
 `g_floor_object_tables` currently resolves to this stable floor-local blob layout:
 
@@ -2457,10 +2551,10 @@ The non-removable families are rejected before any work is done:
 | `0x07` (office) | `primary[7] -= 6` if `stay_phase < 0x10` | — | tile-span update |
 | `0x09` (condo) | `primary[9] -= 3` if `stay_phase < 0x18`; also `remove_cashflow_from_family_resource(9, variant_index)` | — | tile-span update |
 | `0x0a`, `0x0c`, `0x10` (commercial) | — | `CommercialVenueRecord[+1] = 0xff` | tile-span update |
-| `0x0b` (lobby emitter) | — | mark demand-history entry invalid | `rebuild_vertical_anchor_coverage_and_demand_history()` |
+| `0x0b` (parking-space emitter) | — | mark demand-history entry invalid | `rebuild_parking_ramp_coverage_and_demand_history()` |
 | `0x12/0x13/0x1d/0x1e/0x22/0x23` (entertainment & halves) | — | `free_entertainment_link_record(link_index, effect_code)` | `refresh_entertainment_link_tile_spans(link_index)` (replaces standard tile-span update) |
 | `0x14` (security), `0x15` (housekeeping) | — | `delete_paired_vertical_connector_object(floor, slot, effect_code)` (handles the paired floor) | tile-span update on both floors |
-| `0x2c` (vertical anchor) | — | — | `rebuild_vertical_anchor_coverage_and_demand_history()` |
+| `0x2c` (parking ramp) | — | — | `rebuild_parking_ramp_coverage_and_demand_history()` |
 | default | — | generic sidecar cleanup | tile-span update |
 
 **No cash refund is paid on demolition** for any family. Hotel and condo ledger decrements only subtract the future-earnings accumulator; they do not credit the balance.
@@ -2569,7 +2663,7 @@ The elevator editor is implemented by the `ELVDLOGMAIN` dialog proc at `0x10a006
 **Toggle served floor** (`FUN_10a8_0085(carrier_index, floor)`):
 1. Re-entrancy guard: sets a global flag at `0x80` while active.
 2. Reject if a car is currently parked at that floor (`FUN_10a8_102d` returns nonzero).
-3. For a floor becoming active: require `FUN_10a8_1296(carrier, floor)` mode eligibility — escalators always eligible; elevators must satisfy internal span/slot checks.
+3. For a floor becoming active: require `FUN_10a8_1296(carrier, floor)` mode eligibility. The special `carrier_mode == 0` branch only accepts above-grade floors that satisfy the express-floor gate (`FUN_10a8_12e0`); the nonzero modes use the simpler linear-span eligibility path.
 4. Population check: if any active route uses this floor, emit confirm-dialog prompt `0x3ed` (via `FUN_11e8_0f81`).
 5. Write **a single byte**: `served_floor_flags[floor] = 1 - (served_floor_flags[floor] != 0)` (boolean flip). This array is the per-floor served bit, **separate** from the 14-entry weekday/weekend × daypart schedule matrix; toggling a served floor does not touch the schedule matrix.
 6. Fire `rebuild_transfer_group_cache()` then `rebuild_route_reachability_tables()`.
@@ -2589,7 +2683,7 @@ The elevator editor is implemented by the `ELVDLOGMAIN` dialog proc at `0x10a006
 
 **Extend shaft top** (`FUN_10a8_0819(carrier, new_top, _)`):
 1. Hard cap: `new_top < 0x6e` (max floor 109). Rejects with error `FUN_1120_0b18(5)` ("too high") otherwise.
-2. For express/escalator (`carrier_mode != 0`): span delta from `bottom_served_floor` is clamped to ≤ `0x1d` (29 floors); on overflow, warn `0x23` and force `new_top = bottom + 0x1d`.
+2. For non-standard carrier modes (`carrier_mode != 0`, i.e. Express + Service): span delta from `bottom_served_floor` is clamped to ≤ `0x1d` (29 floors); on overflow, warn `0x23` and force `new_top = bottom + 0x1d`.
 3. For each newly included floor: `served_floor_flags[i] = FUN_10a8_1296(carrier, i)` (mode-eligible → active, otherwise 0). For removed floors: clear to 0.
 4. Update each car's `reachability_masks_by_floor[slot]` cap and per-floor primary status bookkeeping.
 5. Fire both rebuild paths.
@@ -2606,7 +2700,7 @@ The elevator editor is implemented by the `ELVDLOGMAIN` dialog proc at `0x10a006
 
 - **Cars per elevator**: 8 (iterated in `FUN_10a8_1397`, `FUN_10a8_14fa`).
 - **Max top served floor**: `0x6d` = 109.
-- **Max served-floor span for express / escalator**: `0x1d` = 29 floors.
+- **Max served-floor span for non-standard carriers (Express / Service)**: `0x1d` = 29 floors.
 - **Max served-floor span for standard (local) elevator**: not hard-limited by the extension function — local elevators rely on the standard floor-to-slot mapping in "Floor-to-slot index mapping", which itself caps service at floors 1–10 plus sky lobbies every 15 floors.
 
 ### Rebuilds Triggered
@@ -2621,7 +2715,7 @@ Walkability flag rebuild (`g_floor_walkability_flags`) is triggered separately o
 
 ### Local / Express Mode Switch — Confirmed Non-Existent
 
-There is **no in-game action that mutates `carrier_mode`**. Every assignment of `carrier_mode` in the recovered binary is at carrier-creation time. The player chooses local vs express vs escalator by selecting a different placement tool; once placed, the mode is fixed for the life of the shaft. The earlier "express/local behavior settings" item in this spec was speculative and should be removed from the player-command surface.
+There is **no in-game action that mutates `carrier_mode`**. Every assignment of `carrier_mode` in the recovered binary is at carrier-creation time. The player chooses Standard vs Express vs Service by selecting a different placement tool; once placed, the mode is fixed for the life of the shaft. The earlier "express/local behavior settings" item in this spec was speculative and should be removed from the player-command surface.
 
 ### Per-Daypart / Schedule Editor — Partially Resolved
 
@@ -2638,7 +2732,7 @@ The 14-entry `service_schedule_flags[calendar_phase*7 + daypart]` matrix (the we
 | 6 | `0x10c3` | `0x09e0` | custom, unidentified |
 | 7 | `0x09ea` | `0x0d65` | custom, unidentified |
 
-Entries 4 and 5 are the most likely schedule-edit writers (custom non-Windows message codes dispatched from the scrollbar/click path). The schedule matrix byte being mutated is `served_floor_flags[calendar_phase_flag * 7 + daypart]` in the carrier record; the reader side is the carrier state machine, which reloads `schedule_flag` from this matrix whenever a car arrives at its top or bottom served floor.
+Entries 4 and 5 are the most likely schedule-edit writers (custom non-Windows message codes dispatched from the scrollbar/click path). The current recovered binary shows two distinct 14-byte daypart tables in the carrier record: `+0x20` is reloaded into the car-local `schedule_flag` at terminal floors, while `+0x2e` is checked by `should_car_depart` as the enable/disable schedule gate. The exact UI writer target is still unresolved.
 
 **Remaining sub-blocker (Tier 3)**: pin down which of entries 4 / 5 is the schedule-edit mutator and recover the exact write form (boolean flip per slot, row toggle, or bitmask write). This does not block simulation correctness — as long as the 14-byte matrix is preserved through save/load and the carrier state machine consults it on every dwell decision, the headless engine plays correctly even without the edit-dialog UI.
 
@@ -2689,7 +2783,7 @@ Use this order unless later reverse engineering disproves it:
 
 ## Missing Details
 
-The following details are still missing. Items are grouped by whether they affect deterministic simulation correctness (Tiers 1–2) or only player-interaction completeness and cosmetics (Tiers 3–4). See "Permissible Divergences" — RNG outcomes and entity processing order within a tick do not need to match and are not listed here.
+The following details are still missing. Items are grouped by whether they affect deterministic simulation correctness (Tiers 1–2) or only player-interaction completeness and cosmetics (Tiers 3–4).
 
 ### Tier 1: Implementation Notes
 
@@ -2736,6 +2830,26 @@ Entities are initially allocated at object placement time via `recompute_object_
 
 The following items are needed for a clean-room reimplementation that plays identically to the original. They are under active investigation.
 
+#### Exact PRNG And Seeding Flow
+
+The spec currently captures **where** randomness is consumed, but not the exact CRT RNG implementation and boot-time / new-game seeding path. That is sufficient for a gameplay-equivalent simulator, but not for event-for-event parity testing. A perfect-fidelity reimplementation should recover:
+
+- the exact RNG algorithm used by the binary,
+- the initial seed source on program startup / new game,
+- any reseeding sites, if they exist.
+
+Until that is recovered, treat RNG as a compatibility layer: preserve the same call sites and probabilities, and isolate the generator behind a swappable interface.
+
+#### Exact 1/16 Entity Refresh Order
+
+The scheduler's entity pass is structurally recovered, but the spec intentionally permits any order that touches each entity once per 16-tick window. That is adequate for gameplay-equivalent behavior, but exact parity requires the original:
+
+- starting index / phase offset,
+- stride pattern through the runtime entity table,
+- per-family dispatch ordering when multiple entities share a tick slice.
+
+If replay-identical behavior is a hard requirement, recover and preserve that exact visitation order.
+
 #### Facility Readiness Nearby-Family Remap Table — RESOLVED
 
 Full details folded into "Facility Readiness And Support Search" section. Confirmed:
@@ -2774,13 +2888,14 @@ Confirmed per-type floor-range constraints (recovered from checkpoint sweeps and
 - **Metro station (`0x1f..0x21`)**: first placement sets `g_metro_station_floor_index` (`0xbc5c`) to the chosen floor. Subsequent placement below `bc5c − 1` is rejected. Required for 4→5 star advancement.
 - **Fire suppressor (`0x28`)**: setting `fire_suppressor_subtype` on placement disables the fire event entirely (checkpoint `0x0f0` gate `fire_suppressor_subtype < 0`).
 - **Transit concourse (`0x18`)**: placement triggers `rebuild_transfer_group_cache`; the rebuild requires at least one carrier within ±6 floors (local elevator) or ±4 floors (express) overlapping the concourse.
-- **Carrier shafts (`0x01`, `0x1b`, `0x2a`, `0x2b`)**: `top_served_floor ≤ 109`, span `≤ 29` for express/escalator mode, no hard top-span cap for standard local elevator but constrained by the 10-slot floor-to-slot mapping.
+- **Carrier shafts (`0x01`, `0x2a`, `0x2b`)**: `top_served_floor ≤ 109`, span `≤ 29` for non-standard carrier modes, no hard top-span cap for standard local elevator but constrained by the 10-slot floor-to-slot mapping.
+- **Escalator (`0x1b`)**: not a carrier shaft. It is placed through the 64-slot special-link array, and its landing validator only accepts a narrow set of commercial/public underlay families (`0x00`, `0x06`, `0x0a`, `0x0c`, `0x12`, `0x13`, `0x18`, `0x1d`, `0x1e`, `0x1f`).
 - **Hotels / offices / condos**: above-grade only (their runtime entities index floor `>= 10`).
 
 Confirmed per-type placement rebuild set:
 - Carrier shafts: walkability, transfer-group cache, route-reachability (all immediate, event-driven).
 - Commercial venues (`0x06`, `0x0a`, `0x0c`): facility ledger rebuild at next `0x0f0`; demand-history rebuild at next `0x000`.
-- Lobby (`0x0b`) / vertical anchor (`0x2c`): `rebuild_vertical_anchor_coverage_and_demand_history`.
+- Parking space (`0x0b`) / parking ramp (`0x2c`): `rebuild_parking_ramp_coverage_and_demand_history`.
 - Entertainment (`0x12`, `0x1d`): entertainment-link allocation + `refresh_entertainment_link_tile_spans`.
 
 Placement error codes seen so far (emitted via `FUN_1120_0b18`):
@@ -2789,7 +2904,7 @@ Placement error codes seen so far (emitted via `FUN_1120_0b18`):
 - `0x15` — parking placement rejection.
 - `0x21` — generic placement rejection.
 - `5` ("too high") — `new_top >= 0x6e` on elevator shaft extension.
-- `0x23` — elevator span overflow (>29 floors) on express/escalator.
+- `0x23` — carrier span overflow (>29 floors) on the nonzero `carrier_mode` branch.
 
 **Construction-tool dispatcher** — resolved at `FUN_1200_082c` (segment `1200`, offset `0x082c`). Signature: `dispatch_construction_tool(hwnd, msg, wParam, lParam)`. A Windows window-message handler reading the active build family from global `*(int*)DS:0x802c` and computing `family = (*0x802c - 1000) >> 6` (the menu button writes `1000 + (family << 6)` into `0x802c`).
 
@@ -2810,34 +2925,66 @@ Dispatch order:
 | `0x06`/`0x0a`/`0x0c` | Restaurant / shop / fast food | `FUN_1200_1847` | **cap `*0xbc6c < 0x200` (200 commercial venues)**, else error `0x1e` |
 | `0x07` | Office | `FUN_1200_1847(..., counter=*0x813e)` | rotation `*0x813e % 6` |
 | `0x09` | Condo | `FUN_1200_1847(..., counter=*0x8140)` | rotation `*0x8140 % 3` |
-| `0x0b` | Lobby (drag) | `FUN_1200_24fe` after `FUN_11a0_0bba(x)` validator | `FUN_11a0_0bba == 0` → error `0x22` |
-| `0x0d` | Medical / sky lobby | `FUN_1200_1847(..., counter=*0x8146)` | **cap `*0xbc72 < 10`**, else error `0x1e`; rotation `*0x8146 % 3` |
+| `0x0b` | Parking Space (drag) | `drag_place_parking_space_span` (`FUN_1200_24fe`) after `floor_has_parking_ramp_segment(x)` (`FUN_11a0_0bba`) | `FUN_11a0_0bba == 0` → error `0x22` |
+| `0x0d` | Medical Center | `FUN_1200_1847(..., counter=*0x8146)` | **cap `*0xbc72 < 10`**, else error `0x1e`; rotation `*0x8146 % 3` |
 | `0x0e` | Security office | `FUN_1200_1847` | **cap `*0xbc6e < 10`**, else error `0x1e` |
-| `0x12`/`0x1d` | Cinema (paired) / Party Hall (single-link) | `FUN_1200_1fef` | **cap `g_active_entertainment_link_count < 0x10` (16)**, else error `0x1e` |
-| `0x14` | Security | `FUN_1200_1fef`; bumps `g_security_ledger_scale` on success | — |
+| `0x12`/`0x1d` | Movie Theater (paired) / Party Hall (single-link) | `FUN_1200_1fef` | **cap `g_active_entertainment_link_count < 0x10` (16)**, else error `0x1e` |
+| `0x14` | Recycling Center | `FUN_1200_1fef`; bumps recovered global `g_security_ledger_scale` on success (name likely stale) | — |
 | `0x16` | Stairs | `FUN_1200_149c(..., flag=1)` | parking-helper emits `0x15` (shared with parking placement) |
-| `0x18` | Parking lot (drag) | `FUN_1200_27ce(..., uVar4=0x18, ...)` → `FUN_1200_293e` (generic span placer) | drag-laid parking row; corrected from prior "Express Elevator drag" misreading |
-| `0x1b` | Escalator | `FUN_1200_149c(..., flag=0)` | — |
+| `0x18` | Lobby (drag) | `dispatch_drag_span_placement(..., uVar4=0x18, ...)` (`FUN_1200_27ce`) → `place_mergeable_span_object_on_floor` (`FUN_1200_293e`) | drag-laid lobby span on lobby / express floors |
+| `0x1b` | Escalator | `FUN_1200_149c(..., flag=0)` | landing floors must overlap an allowed commercial/public family; overlap rejection emits shared special-link errors |
 | `0x1f` | Metro station | `pre_day_4(...)` → `FUN_1200_2159(...)`; stores floor in `g_metro_station_floor_index` | **singleton: `g_metro_station_floor_index >= 0` → error `0x11`** |
 | `0x24` | Cathedral / evaluation | `pre_day_4` → `FUN_1200_2347`; stores floor in `g_eval_entity_index` | **singleton: `g_eval_entity_index >= 0` → error `0x13`** |
 | `0x2a` | Carrier sub `0x2a` | `place_carrier_shaft(..., mode=0, sub=0x2a)` | — |
 | `0x2b` | Carrier sub `0x15` mode 2 | `place_carrier_shaft(..., mode=2, sub=0x15)` | — |
-| `0x2c` | Vertical anchor / sky (drag) | `FUN_1200_2693(...)`; stores `y` in `*0xbc62` | **must be column `x == 9`**; wrong column → error `0x1f`; floor mismatch when anchor already set → error `0x20` |
+| `0x2c` | Parking Ramp (drag) | `drag_place_parking_ramp_column` (`FUN_1200_2693`); stores `y` in `*0xbc62` | **must be column `x == 9`**; wrong column → error `0x1f`; floor mismatch when anchor already set → error `0x20` |
 | default | any unrecognized 0..0x32 | `FUN_1200_1847(..., counter=0)` | generic |
 
 **Error-code → dispatch-level emission sites:**
 - `0x11` — Metro station already placed.
 - `0x13` — Evaluation entity already placed.
 - `0x1e` — Per-kind quota exhausted (commercial venues / sky lobby / metro / entertainment links).
-- `0x1f` — Vertical anchor column mismatch (must be `x == 9`).
-- `0x20` — Vertical anchor floor mismatch (already placed elsewhere).
-- `0x22` — Lobby validation failed (`FUN_11a0_0bba` rejected tile).
+- `0x1f` — Parking-ramp column mismatch (must be `x == 9`).
+- `0x20` — Parking-ramp floor mismatch (already placed elsewhere).
+- `0x22` — Parking-space placement failed (`FUN_11a0_0bba` rejected floor).
 
 Error codes `0x05`/`0x07`/`0x08`/`0x15`/`0x21`/`0x23` are emitted **inside** per-type helpers (`place_carrier_shaft`, `FUN_1200_149c`, `FUN_1200_27ce`, `FUN_1200_24fe`, `FUN_1200_2693`, `charge_floor_range_construction_cost`), not by the dispatcher itself.
 
-**Remaining sub-blocker (narrowed, Tier 3)**: floor-range constraints and structural adjacency rules (e.g. condo must sit on a rentable floor class, hotel rooms must not straddle incompatible tiles) live inside the per-family helpers `FUN_1200_1847`, `FUN_1200_1fef`, `FUN_1200_149c`, `FUN_1200_2159`, `FUN_1200_2347`, `FUN_1200_24fe`, `FUN_1200_2693`, and `FUN_1200_27ce`. These are a known finite set and each emits a recovered error code. A conservative headless implementation can enforce the quota/singleton rules above (which cover most player-visible failures) plus the floor-range constraints already documented in "Placement Rules Per Type Code", and fall back to "structurally infeasible" for anything else; this matches the original for every documented case. The `DS:0x0f22` / `DS:0x0f3a` near-pointer tables (5 and 6 entries) encode custom per-family error-popup handlers and are cosmetic.
+**Shared placement validators behind the family helpers**:
 
-**Not the dispatcher**: `FUN_1060_0000` is the **elevator-editor click router** (modes: 0 = demolish car/shaft, 1 = drag-scroll, 2 = place-new-car-inside-existing-shaft), and its adjacency check (`FUN_10b0_0aae`) enforces the min-gap rules between adjacent carriers: **6 tiles** from an existing standard elevator (`carrier_mode == 0`) and **4 tiles** from an existing express or escalator, with an additional `+2` right-side clearance and a left-side `tile_x < left_edge - 2` constraint. Intervening blockers consume 1 or 2 tiles each (`FUN_10b0_1a31`). The per-slot blocker counts come from `carrier[1].served_floor_flags[slot*0x144 - 0x42]` (left) and `-0x40` (right). Floor-from-y: `floor = 119 - y/36`. Click gated by `*0xbc7a & 9 == 0` (not paused/locked); otherwise just beep `0x1b5a`.
+- `validate_floor_support_span_for_placement` (`FUN_1200_2f55`) is the shared horizontal-span/support validator used by both `place_object_on_floor` and `place_mergeable_span_object_on_floor`, and optionally by `validate_multifloor_segment_placement` for the anchor segment of multi-floor landmarks. It is not family-specific:
+  - rejects out-of-bounds horizontal spans with error `0x14`
+  - for floors `> 10`, requires an existing floor-support span record and requires the requested `[left,right]` span to stay within that record's cached bounds; missing support emits `0x03`, out-of-range emits `0x06`
+  - treats floor `10` as the free lobby boundary
+  - for floors `< 10`, requires the floor above to exist (`0x04` if absent), requires the request to stay within the basement entrance footprint (`0x02` if not), and if the current basement floor is still empty requires the new span to overlap the occupied range on the floor above (`0x04` otherwise)
+- `validate_floor_class_for_placement` (`FUN_1200_304b`) is the shared floor-class gate. The broad "per-family helper hides the floor-range rules" model is therefore too pessimistic. Recovered cases:
+  - families `0x03/0x04/0x05/0x07/0x09` use stub `0x30ec`: floors must be `> 10`, else error `0x0a`
+  - families `0x0b/0x14/0x2c` use stub `0x30f8`: floors must be `< 10`, else error `0x0b`
+  - family `0x1f` uses stub `0x3101`: top floor must be `2..9`, the floor must already have a floor-class descriptor at `DS:0xbe66`, and a special single-floor `type 0x00` record on floor `2` is cleared out as part of the acceptance path; failures emit `0x14` or `0x0f`
+  - families `0x12/0x1d` use stub `0x315c`: floors `< 10` are always accepted; otherwise floors up through `DAT_1288_bc5a + 10` are rejected with `0x0c`
+  - family `0x18` uses stub `0x316f`: floor must satisfy `is_lobby_or_express_floor`, else error `0x0d`
+  - family `0x24` uses stub `0x3180`: floor must equal `0x71`, else error `0x10`
+  - families `0x01/0x18/0x2a/0x2b` are the only ones exempted from the dispatcher-wide "floor `10` rejects with `0x0c`" precheck
+  - non-evaluation families are rejected above floor `0x6d` with error `0x05`
+  - once `g_metro_station_floor_index` is set, generic families cannot be placed below `metro_floor - 1` (error `0x0e`), while families `0x12/0x14/0x1d` are held to the stricter `floor >= metro_floor` gate
+- `validate_multifloor_segment_placement` (`FUN_1200_330f`) is the shared empty-slot validator for the 2-floor (`FUN_1200_1fef`), 3-floor metro (`place_metro_station_stack`), and 5-floor cathedral (`FUN_1200_2347`) helpers. It reruns `validate_floor_support_span_for_placement` only for the designated anchor segment, then accepts only empty segments or exact insertion points between empty segments.
+- `place_stairs_or_escalator_link` (`FUN_1200_149c`) is a **special-link** placer, not a carrier/shaft placer. It:
+  - adjusts the requested top floor through the `DAT_1288_bc5a` gate,
+  - validates the destination and source landings with `validate_special_link_top_floor_footprint` / `validate_special_link_bottom_floor_footprint`,
+  - allocates one of 64 special-link slots at `DS:0xc5e4`,
+  - marks reachability bits in `SpecialLinkRouteRecord_ARRAY_1288_c864[7]`,
+  - rebuilds transfer routing, and charges the build cost.
+  Both landing-footprint validators use the same 10-entry family allowlist and accept only floors whose overlapping placed object is one of: `0x00`, `0x06`, `0x0a`, `0x0c`, `0x12`, `0x13`, `0x18`, `0x1d`, `0x1e`, `0x1f`. In player-facing terms, escalators are therefore overlays on commercial/public footprints, not standalone shafts.
+
+**Remaining sub-blocker (reduced, Tier 3)**: the unresolved placement legality no longer lives broadly across every family helper. The remaining unknowns are much narrower:
+
+- the special-link feasibility checks inside `place_stairs_or_escalator_link` (`FUN_1200_149c`) (`validate_special_link_top_floor_footprint`, `validate_special_link_bottom_floor_footprint`, `validate_narrow_special_link_geometry`, `validate_wide_special_link_geometry`) for stairs / escalator placements
+- the exact semantic meaning of the `DAT_1288_bc5a + 10` floor gate shared by `FUN_1200_149c` and the `0x12/0x1d` floor-class stub
+- drag-state/UI-layer acceptance details in `drag_place_parking_space_span` (`FUN_1200_24fe`), `drag_place_parking_ramp_column` (`FUN_1200_2693`), and `dispatch_drag_span_placement` (`FUN_1200_27ce`)
+
+A conservative headless implementation can now mirror the original much more closely by implementing the three shared validators above plus the quota/singleton rules already recovered. The `DS:0x0f22` / `DS:0x0f3a` near-pointer tables (5 and 6 entries) remain confirmed as cosmetic family-specific popup routing, not core legality checks.
+
+**Not the dispatcher**: `FUN_1060_0000` is the **elevator-editor click router** (modes: 0 = demolish car/shaft, 1 = drag-scroll, 2 = place-new-car-inside-existing-shaft), and its adjacency check (`FUN_10b0_0aae`) enforces the min-gap rules between adjacent carriers: **6 tiles** from an existing standard elevator and **4 tiles** from an existing non-standard carrier (Express or Service), with an additional `+2` right-side clearance and a left-side `tile_x < left_edge - 2` constraint. Intervening blockers consume 1 or 2 tiles each (`FUN_10b0_1a31`). The per-slot blocker counts come from `carrier[1].served_floor_flags[slot*0x144 - 0x42]` (left) and `-0x40` (right). Floor-from-y: `floor = 119 - y/36`. Click gated by `*0xbc7a & 9 == 0` (not paused/locked); otherwise just beep `0x1b5a`.
 
 
 #### Construction Cost Table (YEN #1000) — RESOLVED
@@ -2850,11 +2997,9 @@ Function at `0x1148041d`. Reads `g_primary_family_ledger_total` and returns tier
 
 **Correction folded into spec**: earlier revisions treated `g_activity_score` and `g_primary_family_ledger_total` as separate counters. They are the same global. The per-family contribution table under "Star-Rating Evaluation Entities" has been rewritten accordingly.
 
-#### New Game Initial State — RESOLVED (caveat: `g_star_count` initial write site)
+#### New Game Initial State — RESOLVED
 
-`new_game_initializer` at `0x10d8_07f6`. Full initialization documented in "New Game Initialization" section. Starting cash is $2,000,000 (`g_cash_balance = 20000` in $100 units), `g_day_tick = 2533`, `g_day_counter = 0`, no pre-placed objects, metro-station floor index = −1, all star gate flags cleared except the `0xc198..0xc19b` 4-byte word which is initialized to `0xffffffff`.
-
-**Remaining sub-blocker**: `g_star_count` initial value and the caller of `new_game_initializer` (presumably the menu "New Tower" handler). Expected `g_star_count = 1` based on gameplay. Low priority.
+`new_game_initializer` at `0x10d8_07f6`. Full initialization documented in "New Game Initialization" section. Starting cash is $2,000,000 (`g_cash_balance = 20000` in $100 units), `g_day_tick = 2533`, `g_day_counter = 0`, no pre-placed objects, metro-station floor index = −1, all star gate flags cleared except the `0xc198..0xc19b` 4-byte word which is initialized to `0xffffffff`. The function itself explicitly writes `g_star_count = 1`, and the "New Tower" caller is `FUN_1130_0005`.
 
 #### Object Type-Code → Gameplay Identity Table — PARTIALLY RESOLVED
 
@@ -2873,6 +3018,8 @@ These numbers are **runtime entity slot counts**, not geometric tile widths. The
 
 **Tile geometry**: tiles in the SimTower world are a 1:4 (width:height) aspect ratio — each tile is much taller than it is wide. Object footprints are measured in narrow tile units. The per-type tile-width table is initialized once at startup by `FUN_1200_0000` (segment 1200, offset 0), which dispatches each of the 49 type codes (0x00..0x30) through a 49-entry jump table at `1200:0254`. Each handler writes a tile-width word into `DS:0x7ca4 + (type * 12)`. At click time, `FUN_1200_0fad` (the menu-button writer) reads the per-type RECT and copies it to `DS:0x802e..0x8035`, where `*0x8032` becomes the active pixel width that the dispatcher reads as `tile_width = *0x8032 / 8` (the pixel width is the tile width × 8 because each tile is 8 pixels wide).
 
+**World width / horizontal tile cap**: the shared placement validator `validate_floor_support_span_for_placement` (`0x12002f55`) rejects placements when `right_tile > (*(word *)0x79c8 >> 3)`, so `DS:0x79c8` is the world-width value in pixels and the placement tile cap is `0x79c8 / 8`. Startup initializes the full world bounds at `DS:0x79c4..0x79ca` with `SetRect(&world_bounds_rect, 0, 0, 0x0bb8, 0x10e0)` in `FUN_1130_0287`, so the actual playfield size is **3000 x 4320 pixels**. With 8-pixel tiles, that means the horizontal construction cap is **375 tiles wide**. UI code at `FUN_1130_082e`, `MAINWNDPROC`, and `trigger_periodic_maintenance_event` uses those same bounds when centering the viewport and setting scrollbar ranges. Vertically, `4320 / 36 = 120` floors, which matches the floor-height quantization used elsewhere in the binary.
+
 **Authoritative per-type tile widths recovered from `FUN_1200_0000`** (49 entries, type codes 0x00..0x30):
 
 | Type | Width (tiles) | Source | Identity (from spec / cost table) |
@@ -2887,21 +3034,21 @@ These numbers are **runtime entity slot counts**, not geometric tile widths. The
 | `0x07` | 9 | explicit | Office |
 | `0x08` | 2 | explicit | (unidentified — possibly menu placeholder) |
 | `0x09` | 16 | resource icon | Condo |
-| `0x0a` | 12 | explicit | Fast food |
-| `0x0b` | 1 | resource icon | Lobby |
-| `0x0c` | 16 | explicit | Retail / shop |
-| `0x0d` | 26 | explicit | Sky lobby / medical |
-| `0x0e` | resource | resource icon | Metro station |
-| `0x0f` | resource | resource icon | (connector / stairwell entrance) |
+| `0x0a` | 12 | explicit | Retail Shop |
+| `0x0b` | 1 | resource icon | Parking Space |
+| `0x0c` | 16 | explicit | Fast Food |
+| `0x0d` | 26 | explicit | Medical Center |
+| `0x0e` | resource | resource icon | Security |
+| `0x0f` | resource | resource icon | Housekeeping |
 | `0x10` | resource | resource icon | (unidentified) |
-| `0x11` | 2 | explicit | (unidentified) |
-| `0x12` | 24 | explicit | Cinema (paired entertainment) |
-| `0x13` | 24 | inherits 0x12 | Cinema variant |
-| `0x14` | resource | resource icon | Security guard |
+| `0x11` | 2 | explicit | SECOM |
+| `0x12` | 24 | explicit | Movie Theater |
+| `0x13` | 24 | inherits 0x12 | Movie Theater variant |
+| `0x14` | resource | resource icon | Recycling Center |
 | `0x15` | inherits 0x14 | inherit prev | Housekeeping cart |
 | `0x16` | 8 | explicit | Stairs |
 | `0x17` | 8 | explicit | (stairs variant) |
-| `0x18` | 4 | explicit | Parking lot |
+| `0x18` | 4 | explicit | Lobby |
 | `0x19` | 0 (no width set) | skipped | Parking sub-tile (not directly placed) |
 | `0x1a` | 0 (no width set) | skipped | Parking sub-tile (not directly placed) |
 | `0x1b` | 8 | explicit | Escalator |
@@ -2921,7 +3068,7 @@ These numbers are **runtime entity slot counts**, not geometric tile widths. The
 | `0x29` | resource | resource icon | (unidentified) |
 | `0x2a` | 6 | explicit | Express elevator shaft |
 | `0x2b` | 4 | explicit | Service elevator shaft |
-| `0x2c` | 1 | resource icon | Vertical anchor (column-9 only) |
+| `0x2c` | 1 | resource icon | Parking Ramp (column-9 only) |
 | `0x2d` | resource | resource icon | (paired connector) |
 | `0x2e` | resource | resource icon | (paired connector) |
 | `0x2f` | resource | resource icon | (paired connector) |
@@ -2933,11 +3080,11 @@ These numbers are **runtime entity slot counts**, not geometric tile widths. The
 - **resource icon** — handler at offset `0x0105` (default): calls `FUN_1038:0000(1000 + (type<<6))` which loads the menu-button bitmap resource, reads the bitmap RECT's `right` field, and shifts right by 3 to get tile width. This means the width for these types is encoded in the per-type menu icon resource width, not in code. Verified externally: `0x03` = 4 tiles (32-pixel icon), `0x09` = 16 tiles (128-pixel icon), `0x0b` = 1 tile (8-pixel icon), `0x2c` = 1 tile (column-marker icon).
 - **skipped (no width)** — type codes `0x19`, `0x1a` go through handler `0x0159` which does **not** write a tile width (the BSS slot stays at 0). These codes are internal sub-tile variants for parking and are never placed directly by the menu, so a zero width is correct.
 
-**Heights**: there is no per-type height table. Every above-grade non-carrier object is exactly **1 floor tall**. Carriers (`0x01` standard, `0x2a` express, `0x2b` service elevator; `0x16` stairs; `0x1b` escalator) have variable height set at placement: top floor ≤ 109 (`new_top < 0x6e`); span ≤ 29 floors for express/escalator; standard local elevator constrained by the 10-slot served-floor mapping. Vertical anchor `0x2c` is single-tile, single-floor, locked to column 9.
+**Heights**: there is no per-type height table. Every above-grade non-carrier object is exactly **1 floor tall**. Carrier shafts (`0x01` standard, `0x2a` express, `0x2b` service elevator) have variable height set at placement: top floor ≤ 109 (`new_top < 0x6e`); span ≤ 29 floors for the non-standard carrier modes; standard local elevator is instead constrained by the 10-slot served-floor mapping. Special links (`0x16` stairs, `0x1b` escalator) also span multiple floors, but they are stored in the 64-entry special-link array rather than the carrier table. Parking-ramp segments (`0x2c`) are single-tile, single-floor, and the drag placer locks them to column 9.
 
 **Why this is no longer a sim-correctness or implementation blocker**: every consumer of width inside the simulation (support search, demolition sweep, drawing, support-radius pairing) reads the per-object `+0x06`/`+0x08` left/right tile fields directly. The placer stamps these at placement time from `*0x8032`. A clean-room implementation can hard-code the table above as a 49-entry constants array (with the 6 resource-loaded entries either extracted from the NE bitmap resources at IDs `1000 + (type << 6)` or supplied as known-good values from in-game observation: 0x03=4, 0x09=16, 0x0b=1, 0x2c=1; the remaining unidentified codes 0x02/0x04/0x05/0x0e/0x0f/0x10/0x14/0x29/0x2d/0x2e/0x2f need either resource extraction or are not player-placeable).
-- Placement geometry rules per type code (floor range, adjacency, basement-only vs above-grade) live inside the per-family helpers `FUN_1200_1847` (priced families 3/4/5/7/9 + capped families 6/0xa/0xc/0xd/0xe), `FUN_1200_1fef` (entertainment + security), `FUN_1200_149c` (escalator + stairs), `FUN_1200_2159` (metro station), `FUN_1200_2347` (cathedral/eval), `FUN_1200_24fe` (lobby), `FUN_1200_2693` (vertical anchor — column-9 constraint already documented), `FUN_1200_27ce/293e` (floor + parking drag), and `place_carrier_shaft` (mode-1/0/2 carriers). Each helper emits a recovered error code on rejection. A conservative headless implementation can enforce the documented per-type quotas, singleton gates, and floor-range constraints; the remaining intra-helper structural rules are Tier 3 (player-interaction completeness, not sim-correctness).
-- Parking variant disambiguation (`0x18/0x19/0x1a`): all three are swept identically by `add_parking_operating_expense` so there is no mechanical distinction — the variants differ only by visual depth. The drag-placed parking lot writes type `0x18` directly (confirmed via `FUN_1200_27ce`). Codes `0x19/0x1a` are most likely sub-tile variants written by the parking entrance helper `FUN_1200_149c` when the player drops the entrance-style parking object. The mechanical effect is identical regardless of variant.
+- Placement geometry rules per type code (floor range, adjacency, basement-only vs above-grade) live inside the per-family helpers `FUN_1200_1847` (priced families 3/4/5/7/9 + capped families 6/0xa/0xc/0xd/0xe), `place_two_floor_linked_object_stack` (`FUN_1200_1fef`) (entertainment + security), `place_stairs_or_escalator_link` (`FUN_1200_149c`), `place_metro_station_stack` (`FUN_1200_2159`), `place_cathedral_stack` (`FUN_1200_2347`), `drag_place_parking_space_span` (`FUN_1200_24fe`), `drag_place_parking_ramp_column` (`FUN_1200_2693`) (column-9 constraint documented above), `dispatch_drag_span_placement` / `place_mergeable_span_object_on_floor` (`FUN_1200_27ce` / `FUN_1200_293e`) (floor + lobby drag), and `place_carrier_shaft` (mode-1/0/2 carriers). Each helper emits a recovered error code on rejection. A conservative headless implementation can enforce the documented per-type quotas, singleton gates, and floor-range constraints; the remaining intra-helper structural rules are Tier 3 (player-interaction completeness, not sim-correctness).
+- Parking variant disambiguation (`0x0b/0x19/0x1a/0x2c`): parking-space mechanics are distinct from lobby placement. Type `0x0b` is the 1-tile parking-space placer; `0x2c` is the vertical parking-ramp family; and `0x19/0x1a` are still swept identically by `add_parking_operating_expense`, so the remaining distinction between those parking variants is visual depth rather than mechanics.
 - Metro station variant disambiguation (`0x1f/0x20/0x21`): the selected-object string resource names base type `0x1f` as `Metro Station`, and `FUN_1108_2582` normalizes `0x20/0x21` back to that base type before loading the label. All three are swept identically by the metro-station display toggle and all three gate the 4→5 star advancement. The placement helper `FUN_1200_2159` writes all three on a single placement, so a clean-room reimplementation can treat them as one logical metro station stack spanning three floors.
 - `0x22/0x23` are not player-facing placement codes — they are the forward/reverse halves of a paired entertainment link, assigned internally by the placement dispatcher when a family-`0x12` object is built. `0x24..0x28` are the evaluation entities (floors 109–119, 8 slots each).
 - **`carrier_mode` semantic labels — RESOLVED.** Confirmed via `FUN_1200_082c`:
@@ -2955,26 +3102,32 @@ Resolved. See "Star-Rating Evaluation Entities" for the full per-family table (i
 Fully documented in "Player Command: Change Elevator Configuration". Confirmed:
 - Editor dialog proc `ELVDLOGMAIN` at `0x10a00628`; action handlers in segment `10a8`.
 - Served-floor toggle is a single boolean byte flip; **does not** touch the 14-entry `service_schedule_flags` matrix.
-- Shaft top/bottom extension charges construction cost, clamps span to 29 floors for express/escalator, and caps top at floor 109.
+- Shaft top/bottom extension charges construction cost, clamps span to 29 floors for Express/Service carriers, and caps top at floor 109.
 - Max 8 cars per elevator.
 - **There is no in-game local/express mode switch** — `carrier_mode` is fixed at placement time.
 - Every edit fires `rebuild_transfer_group_cache` + `rebuild_route_reachability_tables` + queue drain at affected floors.
 
 **Remaining sub-blocker**: the per-daypart schedule-edit handler inside the `ELVDLOGMAIN` message table (writes to `service_schedule_flags[14]`) is not yet recovered. See "Per-Daypart / Schedule Editor — Partially Resolved" in the elevator command section. This is Tier 3 (player-interaction) and does not block simulation correctness as long as the schedule matrix is preserved through save/load.
 
-#### Carrier Per-Car Passenger Capacity — Field Naming Clarification
+#### Carrier Assignment Capacity Byte — RESOLVED
 
-The carrier-record `floor_queue_span_count` field at header offset `+0x06` is referenced both as a served-floor slot count *and* as the per-car departure cap (`should_car_depart` returns 1 when `assigned_count == floor_queue_span_count`). Investigation of `place_carrier_shaft` did not surface a separate per-mode passenger constant matching the manual's stated capacities (Standard 17, Express 36, Service 17), and the route-delay tuning region (`DS:0xe5ee..0xe64c`) does not contain `0x11` / `0x24` literals. There are two consistent readings:
+`should_car_depart` and `process_unit_travel_queue` both read **carrier-header byte `+0x02`**, not `+0x06`. The recovered behavior is:
 
-1. **Single-field semantics**: the byte stores both meanings; for a standard local elevator the served-floor slot count `10` is also the per-car cap `10`. The manual's 17/36/17 numbers are then either flavor text or describe a different per-car visual cap that does not gate departure. A clean-room implementation that preserves whatever value the original placer writes will play correctly because the same field gates both consumers.
-2. **Two-field semantics**: there is a per-mode constant elsewhere in the carrier header (likely the byte at `+0x07` or one of the `pending_assignment_count` siblings) that holds 17/36/17 and is checked separately from the slot-count field. Recovery of `place_carrier_shaft` per-mode immediates would settle this.
+- `place_carrier_shaft` writes header byte `+0x02` from its final placement argument.
+- The construction dispatcher passes:
+  - Standard Elevator (`family 0x01`, `carrier_mode = 1`) → `0x15`
+  - Express Elevator (`family 0x2a`, `carrier_mode = 0`) → `0x2a`
+  - Service Elevator (`family 0x2b`, `carrier_mode = 2`) → `0x15`
+- `process_unit_travel_queue` computes `remaining_slots = header[+0x02] - assigned_count`.
+- `should_car_depart` departs immediately when `assigned_count == header[+0x02]`.
 
-A clean-room implementation should:
-- Preserve the carrier-record byte at `+0x06` exactly as the placer writes it.
-- Use the same field for both the served-slot count and the departure cap (matching the recovered code).
-- Optionally expose a per-mode passenger constant `(17, 36, 17)` as a *display-only* tunable so player-visible "people in car" sprites match the manual without changing simulation behavior.
+So the mechanically correct clean-room rule is:
 
-This is recorded as a Tier 2 sub-blocker but does not prevent a faithful headless implementation: as long as `should_car_depart` reads the same byte the placer writes, the departure cadence is identical to the original.
+- treat header byte `+0x02` as the carrier's **assignment/departure capacity**,
+- initialize it to **21** for Standard and Service elevators, and **42** for Express elevators,
+- do **not** infer a second hidden passenger-cap field from the manual's 17/36/17 text.
+
+The manual's stated passenger counts are therefore best treated as player-facing display guidance, not simulation-critical limits.
 
 #### Per-Trip Stair / Escalator Hop Limits — Manual Vs Binary
 
@@ -3039,7 +3192,7 @@ Manual-stated hard caps and where they appear (or don't) in the recovered code:
 | 24 elevator shafts max | 24-entry `carrier_record_table[0..0x17]` | Confirmed |
 | 8 cars per elevator | per-car loops iterate 0..7; `FUN_10a8_1397` etc. | Confirmed |
 | Standard elevator span ≤ 30 floors | `top_served_floor ≤ 109`; standard local mapping caps at floors 1–10 + sky lobbies | Confirmed (effective limit) |
-| Express/escalator span ≤ 29 | clamped in `FUN_10a8_0819` extension code | Confirmed |
+| Nonzero-carrier-mode span ≤ 29 | clamped in `FUN_10a8_0819` extension code | Confirmed |
 | Top floor ≤ 109 | `new_top < 0x6e` hard cap | Confirmed |
 | Standard car capacity 17 | not found as separate constant | See "Carrier Per-Car Passenger Capacity" above |
 | Express car capacity 36 | not found | See above |
@@ -3121,7 +3274,7 @@ These gaps prevent full player command support but do not block autonomous simul
 
 #### Build / Demolish Rebuild Dependencies
 
-**Partially recovered.** For carrier objects (elevator, escalator) both placement and demolition trigger: walkability flag rebuild (event-driven, not daily), transfer-group cache rebuild, and route reachability table rebuild. For commercial venue objects (type 6, 10, 12), demolition marks the `CommercialVenueRecord` slot invalid at byte `[1]` = `0xff`.
+**Partially recovered.** For carrier objects (the three elevator shaft families) both placement and demolition trigger: walkability flag rebuild (event-driven, not daily), transfer-group cache rebuild, and route reachability table rebuild. Escalators do this through the special-link rebuild path, not the carrier table. For commercial venue objects (type 6, 10, 12), demolition marks the `CommercialVenueRecord` slot invalid at byte `[1]` = `0xff`.
 
 **Initial `stay_phase` at placement** (`recompute_object_runtime_links_by_type`):
 - Hotels (type 3/4/5): `pre_day_4()` true → `0x18`; false → `0x20` (both in the "empty" band)
@@ -3168,13 +3321,16 @@ These do not affect simulation correctness or player-command semantics.
 
 - **Fully specified and implementable now**: time model, money model (cash/ledgers/expense sweep), condo family 9 (complete state machine + scoring + sale/refund + A/B/C rating, including state 0x01 calendar-phase stagger special path), hotel rooms families 3/4/5 (complete state machine + stay_phase lifecycle + multi-tile checkout), hotel guests family 0x21 (complete state machine with all states 0x01/0x22/0x27/0x41/0x62 + venue selection + slot acquisition/release + minimum stay wait + return routing), commercial venues 6/0xc/10 (CommercialVenueRecord full layout + slot protocol + capacity recompute + progress slot logic + venue allocation initialization), parking (family `0x18`), route resolution (full selection algorithm + scoring + walkability + transfer-group cache + queue drain + arrival dispatch + out-of-range car reset + all delay values), payout and expense tables, object placement/demolish framework, operational scoring pipeline, demand counter pipeline, entertainment link phase machine + entity state machine + all income rates, demand history log + service request pipeline, fire event (full bidirectional spread + object deletion + interval prompt + extinguish), bomb/terrorist event (full setup + blast + security hit-check + resolution), metro/security/treasure event triggers and flow (including the metro display toggle + metro placement gate for 4→5 star advancement), star advancement gate (all per-star conditions for 1→2 through 4→5, including security/office/office-service/security/metro gates), prompt blocking semantics, family 0x0f vacancy claimant (full state machine + claim-completion writes), path-seed bucket table (full source table + bucket layout), security/housekeeping state machine (all three daily checkpoints + full tier logic), full scheduler checkpoint bodies including 0x04b0 step 4 (eval midday return dispatch) and 0x0a06 (final security check), retail derived_state_code (confirmed always 0), star-rating evaluation failure path (fail = no upgrade, no carry-over).
 - **Additional fully specified in the most recent review pass**: facility readiness and support search (full per-tile metric, variant modifier, support-family remap table, `+60` support bonus, per-star pairing-status thresholds, warning-state rules); rent-change command (variant_index at `object+0x04`, condo `stay_phase < 0x18` guard, `recompute_object_operational_status` follow-up); demolition teardown (per-family ledger-mutation and sidecar-freeing table via `delete_placed_object_and_release_sidecars`, non-removable family list, no cash refund); fire/helicopter rescue prompt scheduling (resource IDs, pause-via-modal-notification, `rescue_cost` at DS `0xe64c`); random news events (confirmed cosmetic-only, no simulation side effects); carrier `carrier_mode` corrected (2 = Service, not escalator; escalators are special-link segments); YEN #1001/#1002 unit scale confirmed at $100/unit; new-game caller `FUN_1130_0005` identified with no hidden RNG/day-of-week seeding.
-- **Additional fully specified in this review pass**: construction-tool dispatcher identified at `FUN_1200_082c` (not `FUN_1060_0000`, which is the elevator-editor click router); per-family handler routing, quota caps (commercial venues ≤ 200, sky lobby ≤ 10, security offices ≤ 10, entertainment links ≤ 16), singleton gates (metro station, cathedral/eval entity), vertical-anchor column constraint (`x == 9`), and dispatch-level error-code emission sites (`0x11`, `0x13`, `0x1e`, `0x1f`, `0x20`, `0x22`) enumerated; elevator-editor adjacency rules recovered (6-tile min gap to standard elevator, 4-tile min gap to express/escalator, `+2` right-side clearance, `tile_x < left_edge - 2` left-side, blocker-walk costs 1 or 2 tiles); **carrier_mode player-facing labels resolved** (mode 0 = Express Elevator, 1 = Standard Elevator, 2 = Service Elevator); **PlacedObjectRecord layout** confirmed at offsets `+0x06`/`+0x08`/`+0x0a`/`+0x0b`/`+0x0c`/`+0x12..+0x17` from `FUN_1200_1847` and `FUN_1200_293e` placer initialisation; **default `variant_index`** at placement (1 for priced families 3/4/5/7/9/10, 4 sentinel for everything else) confirmed at the `switch(param_2)` block in `FUN_1200_1847`; **drag families corrected**: family `0x00` is the floor-tile drag placer (not Standard Elevator) and family `0x18` is the parking-lot drag placer (not Express Elevator); the four drag-laid families are `0x00`, `0x0b`, `0x18`, `0x2c`, all routed through `FUN_1200_293e` (or its lobby/anchor variants). **Tile widths are per-tool constants, not a per-type table**: each menu-button writer sets `*0x8032` (active object pixel width) at the same time it writes `*0x802c = 1000 + (family << 6)`; placer code reads `right = left + (*0x8032 / 8)` from the click position. Sim-correctness consumers (support search, demolition, drawing) all read width from the placed-object's own `+0x06`/`+0x08` fields, so the per-tool width table is needed only by the menu-bar UI — a Tier 3/4 player-interaction concern, not a sim blocker.
+- **Additional fully specified in this review pass**: construction-tool dispatcher identified at `FUN_1200_082c` (not `FUN_1060_0000`, which is the elevator-editor click router); per-family handler routing, quota caps (commercial venues ≤ 200, sky lobby ≤ 10, security offices ≤ 10, entertainment links ≤ 16), singleton gates (metro station, cathedral/eval entity), vertical-anchor column constraint (`x == 9`), and dispatch-level error-code emission sites (`0x11`, `0x13`, `0x1e`, `0x1f`, `0x20`, `0x22`) enumerated; elevator-editor adjacency rules recovered (6-tile min gap to standard elevator, 4-tile min gap to non-standard carriers, `+2` right-side clearance, `tile_x < left_edge - 2` left-side, blocker-walk costs 1 or 2 tiles); **carrier_mode player-facing labels resolved** (mode 0 = Express Elevator, 1 = Standard Elevator, 2 = Service Elevator); **PlacedObjectRecord layout** confirmed at offsets `+0x06`/`+0x08`/`+0x0a`/`+0x0b`/`+0x0c`/`+0x12..+0x17` from `FUN_1200_1847` and `FUN_1200_293e` placer initialisation; **default `variant_index`** at placement (1 for priced families 3/4/5/7/9/10, 4 sentinel for everything else) confirmed at the `switch(param_2)` block in `FUN_1200_1847`; **drag families corrected**: family `0x00` is the floor-tile drag placer (not Standard Elevator) and family `0x18` is the parking-lot drag placer (not Express Elevator); the four drag-laid families are `0x00`, `0x0b`, `0x18`, `0x2c`, all routed through `FUN_1200_293e` (or its lobby/anchor variants). **Tile widths are per-tool constants, not a per-type table**: each menu-button writer sets `*0x8032` (active object pixel width) at the same time it writes `*0x802c = 1000 + (family << 6)`; placer code reads `right = left + (*0x8032 / 8)` from the click position. Sim-correctness consumers (support search, demolition, drawing) all read width from the placed-object's own `+0x06`/`+0x08` fields, so the per-tool width table is needed only by the menu-bar UI — a Tier 3/4 player-interaction concern, not a sim blocker.
 - **Partially specified (player interaction)**: elevator editor controls (per-daypart schedule-edit handler candidate narrowed to message-table entries 4/5 at `0x10a0:12c9`); per-family placer helpers (`FUN_1200_1847` / `1fef` / `149c` / `2159` / `2347` / `24fe` / `2693` / `27ce`) — dispatcher and quota gates recovered but intra-helper floor-range and adjacency rules not fully enumerated; rent-change dialog UI (proc location unknown, mutation target known).
 - **Cosmetic only (Tier 4)**: player-facing tier labels, calendar phase and progress-override player meanings, type 0x28 identity, ledger report presentation, news-event text strings (confirmed cosmetic).
-- **Additional clarifications in this review pass**: runtime entity record consolidated layout (offsets `+0x00..+0x0f` documented in one table); manual-vs-binary hard-cap cross-check (24 shafts, 8 cars/elevator, 30/29-floor span, 109 top, 39-cap commercial venues all confirmed; carrier passenger constants 17/36/17 not found as separate tunables and deferred to a Tier-2 sub-blocker on `floor_queue_span_count` field semantics); per-trip stair/escalator hop limits (no per-entity counter — manual's 4/7 numbers descriptive aggregates of per-segment span check + cost cutoff); operational-score / manual-stress reconciliation (same quantity, different units, shared 80/150/200 thresholds); family-5 suite entity count (3 sub-tile entities, manual's "2 guests" is UI-only cosmetic); movie-theater management mapped to `family_selector` mutation on the entertainment link record.
+- **Additional clarifications in this review pass**: runtime entity record consolidated layout (offsets `+0x00..+0x0f` documented in one table); manual-vs-binary hard-cap cross-check (24 shafts, 8 cars/elevator, 30/29-floor span, 109 top, 39-cap commercial venues all confirmed; carrier assignment/departure capacity now pinned to header byte `+0x02` with values 21/42/21 from the placement dispatcher); per-trip stair/escalator hop limits (no per-entity counter — manual's 4/7 numbers descriptive aggregates of per-segment span check + cost cutoff); operational-score / manual-stress reconciliation (same quantity, different units, shared 80/150/200 thresholds); family-5 suite entity count (3 sub-tile entities, manual's "2 guests" is UI-only cosmetic); movie-theater management mapped to `family_selector` mutation on the entertainment link record.
 
 ### Sim-Correctness Sub-Blockers Recap
 
-For a clean-room reimplementation that plays identically to the original, the only remaining sim-correctness concern is whether `floor_queue_span_count` at carrier-record offset `+0x06` is single-purpose (departure cap == served-floor count) or whether a separate per-mode passenger-cap byte exists in the carrier header. Both readings produce identical departure cadences as long as the placer's writes to that byte are preserved on save/load; the difference is only visible if a player-facing UI wants to show "X / 17" passengers in a car. Recommended approach: implement single-field semantics, surface `(17, 36, 17)` as a display constant table, and revisit only if behavioral parity testing finds a divergence.
+All previously identified mechanic-level Tier 1 / Tier 2 blockers are now resolved. The remaining gaps are parity-layer concerns rather than rule recovery gaps:
 
-All other Tier-1 / Tier-2 items are resolved or have a documented behaviorally-safe fallback. The remaining Tier-3 player-interaction gaps (per-daypart schedule editor write form, intra-placer adjacency rules, rent-change dialog proc, movie-selection dialog proc) do not block headless simulation correctness.
+- exact CRT RNG algorithm and seed/update flow, if event-for-event parity is required rather than distributional equivalence;
+- exact 1/16 runtime-entity visitation order, if replay-identical scheduling is required rather than gameplay-equivalent behavior.
+
+The remaining Tier-3 player-interaction gaps (per-daypart schedule editor write form, intra-placer adjacency rules, rent-change dialog proc, movie-selection dialog proc) do not block headless simulation correctness.

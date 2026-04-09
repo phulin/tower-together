@@ -86,6 +86,28 @@ export function do_expense_sweep(ledger: LedgerState, world: WorldState): void {
 			ledger.tertiaryLedger[code] += amount;
 		}
 	}
+
+	for (const carrier of world.carriers) {
+		const activeCarCount = carrier.cars.filter((car) => car.active).length;
+		if (activeCarCount === 0) continue;
+		const expenseKey =
+			carrier.carrierMode === 0
+				? "elevatorExpress"
+				: carrier.carrierMode === 2
+					? "elevatorService"
+					: "elevatorLocal";
+		const rate = YEN_1002[expenseKey];
+		if (!rate) continue;
+		const amount = rate * YEN_UNIT * activeCarCount;
+		ledger.cashBalance = Math.max(0, ledger.cashBalance - amount);
+		const code =
+			carrier.carrierMode === 0
+				? 0x2a
+				: carrier.carrierMode === 2
+					? 0x2b
+					: 0x01;
+		ledger.tertiaryLedger[code] += amount;
+	}
 }
 
 // ─── Facility ledger rebuild ──────────────────────────────────────────────────

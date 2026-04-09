@@ -41,7 +41,26 @@ export interface CarrierCar {
 	/** Waiting entity count indexed by floor slot. */
 	waitingCount: number[];
 	destinationCountByFloor: number[];
+	nonemptyDestinationCount: number;
+	activeRouteSlots: CarrierRouteSlot[];
 	pendingRouteIds: string[];
+}
+
+export interface CarrierRouteSlot {
+	routeId: string;
+	sourceFloor: number;
+	destinationFloor: number;
+	boarded: boolean;
+	active: boolean;
+}
+
+export interface CarrierFloorQueue {
+	upCount: number;
+	upHeadIndex: number;
+	downCount: number;
+	downHeadIndex: number;
+	upQueueRouteIds: string[];
+	downQueueRouteIds: string[];
 }
 
 export interface CarrierPendingRoute {
@@ -72,7 +91,19 @@ export interface CarrierRecord {
 	primaryRouteStatusByFloor: number[];
 	secondaryRouteStatusByFloor: number[];
 	serviceScheduleFlags: number[];
+	/**
+	 * 14 entries: 7 dayparts × 2 calendar phases. Indexed identically to
+	 * `serviceScheduleFlags` but holds the dwell multiplier from
+	 * carrier_header[+0x20 + phase*7 + daypart]. The departure dwell timeout is
+	 * `dwellMultiplierFlags[idx] * 30` ticks. Distinct from the schedule-enable
+	 * byte at `serviceScheduleFlags` (+0x2e + phase*7 + daypart). Default = 1.
+	 */
+	dwellMultiplierFlags: number[];
+	waitingCarResponseThreshold: number;
+	assignmentCapacity: number;
+	floorQueues: CarrierFloorQueue[];
 	pendingRoutes: CarrierPendingRoute[];
+	completedRouteIds: string[];
 	cars: CarrierCar[];
 }
 
@@ -84,12 +115,17 @@ export interface EntityRecord {
 	baseOffset: number;
 	familyCode: number;
 	stateCode: number;
+	routeMode: number;
+	routeSourceFloor: number;
+	routeCarrierOrSegment: number;
 	selectedFloor: number;
 	originFloor: number;
 	encodedRouteTarget: number;
 	auxState: number;
 	queueTick: number;
 	accumulatedDelay: number;
+	/** Ticks remaining before the entity may retry routing (route-failure / wait-state delay). */
+	routeRetryDelay: number;
 	auxCounter: number;
 	word0a: number;
 	word0c: number;
@@ -100,15 +136,32 @@ export interface EntityRecord {
 // ─── Routing types ────────────────────────────────────────────────────────────
 
 export const MAX_SPECIAL_LINKS = 64;
+export const MAX_SPECIAL_LINK_RECORDS = 8;
+export const MAX_TRANSFER_GROUPS = 16;
 
 export interface SpecialLinkSegment {
 	active: boolean;
-	/** bit 0 = express flag; bits 7:1 = half-span. */
+	/** bit 0 = express/escalator flag; bits 7:1 = inclusive span length in floors. */
 	flags: number;
-	startFloor: number;
-	/** Floor span (top = startFloor + heightMetric). */
+	/** Raw binary field preserved as recovered `height_metric`. */
 	heightMetric: number;
-	carrierId: number;
+	entryFloor: number;
+	reservedByte: number;
+	descendingLoadCounter: number;
+	ascendingLoadCounter: number;
+}
+
+export interface SpecialLinkRecord {
+	active: boolean;
+	lowerFloor: number;
+	upperFloor: number;
+	reachabilityMasksByFloor: number[];
+}
+
+export interface TransferGroupEntry {
+	active: boolean;
+	taggedFloor: number;
+	carrierMask: number;
 }
 
 // ─── PlacedObjectRecord ───────────────────────────────────────────────────────
@@ -259,8 +312,12 @@ export interface WorldState {
 	carriers: CarrierRecord[];
 	/** Special-link segment table (max MAX_SPECIAL_LINKS entries). Rebuilt from carriers. */
 	specialLinks: SpecialLinkSegment[];
+	/** Special-link record table (max MAX_SPECIAL_LINK_RECORDS entries). */
+	specialLinkRecords: SpecialLinkRecord[];
 	/** Per-floor walkability bitmask (bit 0 = local, bit 1 = express). Size = GRID_HEIGHT. */
 	floorWalkabilityFlags: number[];
+	/** Tagged transfer-concourse entries (max MAX_TRANSFER_GROUPS entries). */
+	transferGroupEntries: TransferGroupEntry[];
 	/** Per-floor bitmask of carrier IDs that serve each floor. Size = GRID_HEIGHT. */
 	transferGroupCache: number[];
 }
