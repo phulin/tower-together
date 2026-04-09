@@ -15,6 +15,7 @@ import {
 	enqueue_carrier_route,
 	floor_to_slot,
 	make_carrier,
+	rebuild_carrier_list,
 	tick_all_carriers,
 } from "./carriers";
 import {
@@ -1322,6 +1323,45 @@ describe("rebuild_carrier_list", () => {
 		expect(world.carriers[0].carrierMode).toBe(1);
 	});
 
+	it("treats a 4-wide placed elevator shaft as one carrier keyed by its anchor column", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		for (let x = 0; x < 4; x++) {
+			world.cells[`${x},${GROUND_Y}`] = "floor";
+			world.cells[`${x},${GROUND_Y + 1}`] = "floor";
+		}
+
+		expect(
+			handle_place_tile(0, GROUND_Y, "elevator", world, ledger).accepted,
+		).toBe(true);
+		expect(
+			handle_place_tile(0, GROUND_Y - 1, "elevator", world, ledger).accepted,
+		).toBe(true);
+
+		expect(world.carriers).toHaveLength(1);
+		expect(world.carriers[0]?.column).toBe(0);
+		expect(world.carriers[0]?.bottomServedFloor).toBe(10);
+		expect(world.carriers[0]?.topServedFloor).toBe(11);
+	});
+
+	it("collapses extension overlay cells onto the anchor column when rebuilding carriers", () => {
+		const world = makeWorld();
+		world.overlays[`0,${GROUND_Y}`] = "elevator";
+		world.overlayToAnchor[`1,${GROUND_Y}`] = `0,${GROUND_Y}`;
+		world.overlayToAnchor[`2,${GROUND_Y}`] = `0,${GROUND_Y}`;
+		world.overlayToAnchor[`3,${GROUND_Y}`] = `0,${GROUND_Y}`;
+		world.overlays[`1,${GROUND_Y - 1}`] = "elevator";
+		world.overlayToAnchor[`2,${GROUND_Y - 1}`] = `1,${GROUND_Y - 1}`;
+		world.overlayToAnchor[`3,${GROUND_Y - 1}`] = `1,${GROUND_Y - 1}`;
+		world.overlayToAnchor[`4,${GROUND_Y - 1}`] = `1,${GROUND_Y - 1}`;
+
+		rebuild_carrier_list(world);
+
+		expect(world.carriers).toHaveLength(2);
+		expect(world.carriers[0]?.column).toBe(0);
+		expect(world.carriers[1]?.column).toBe(1);
+	});
+
 	it("rebuilds express and service elevator overlays with distinct modes", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
@@ -1684,6 +1724,9 @@ describe("car state machine", () => {
 		for (let i = 0; i < 100; i++) tick_all_carriers(world, createTimeState());
 		const car = world.carriers[0].cars[0];
 		expect(car.currentFloor).toBe(10);
+		expect(car.targetFloor).toBe(10);
+		expect(car.speedCounter).toBe(0);
+		expect(car.doorWaitCounter).toBe(0);
 	});
 
 	it("car moves to target floor when waitingCount is set", () => {
@@ -2032,6 +2075,10 @@ describe("Phase 4 runtime entities", () => {
 		if (!officeEntity || !venueObject) {
 			throw new Error("expected same-floor office + venue state");
 		}
+		officeEntity.stateCode = 0x01;
+		officeEntity.selectedFloor = officeEntity.floorAnchor;
+		officeEntity.encodedRouteTarget = -1;
+		officeEntity.routeMode = 0;
 		const venue = world.sidecars[venueObject.linkedRecordIndex] as
 			| { kind: "commercial_venue"; todayVisitCount: number }
 			| undefined;
@@ -2074,6 +2121,105 @@ describe("Phase 4 runtime entities", () => {
 		expect(entity.routeSourceFloor).toBe(entity.floorAnchor);
 		expect(entity.routeCarrierOrSegment).toBeGreaterThanOrEqual(0x58);
 		expect(entity.queueTick).toBe(123);
+	});
+
+	it("activates hotel checkout demand even at the default new-game star/daypart", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		setupOccupiedFloor(world, ledger);
+
+		handle_place_tile(0, GROUND_Y - 1, "hotelSingle", world, ledger);
+		placeElevatorShaft(world, ledger, 0, 10, 15);
+		rebuild_runtime_entities(world);
+
+		const entity = world.entities[0];
+		if (!entity) throw new Error("expected hotel entity");
+
+		const newGameTime = {
+			...createNewGameTimeState(),
+			dayTick: 2400,
+			daypartIndex: 6,
+		};
+		advance_entity_refresh_stride(world, ledger, newGameTime);
+		expect(entity.stateCode).toBe(0x01);
+
+		advance_entity_refresh_stride(world, ledger, newGameTime);
+		expect(entity.stateCode).toBe(0x05);
+
+		populate_carrier_requests(world, newGameTime);
+		const carrier = world.carriers[0];
+		if (!carrier) throw new Error("expected carrier");
+		const requestSlot = floor_to_slot(carrier, entity.floorAnchor);
+		expect(requestSlot).toBeGreaterThanOrEqual(0);
+		expect(carrier.secondaryRouteStatusByFloor[requestSlot]).toBeGreaterThan(0);
+	});
+
+	it("queues office commuters from the lobby to their office floor", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		setupOccupiedFloor(world, ledger);
+
+		handle_place_tile(0, GROUND_Y - 1, "office", world, ledger);
+		placeElevatorShaft(world, ledger, 0, 10, 15);
+		rebuild_runtime_entities(world);
+
+		const entity = world.entities.find(
+			(candidate) => candidate.familyCode === 7,
+		);
+		if (!entity) throw new Error("expected office entity");
+
+		const activeTime = {
+			...createTimeState(),
+			dayCounter: 3,
+			daypartIndex: 1,
+			dayTick: 0,
+			starCount: 4,
+		};
+		advance_entity_refresh_stride(world, ledger, activeTime);
+		expect(entity.stateCode).toBe(0x22);
+		expect(entity.selectedFloor).toBe(10);
+		expect(entity.encodedRouteTarget).toBe(entity.floorAnchor);
+
+		populate_carrier_requests(world, activeTime);
+		const carrier = world.carriers[0];
+		if (!carrier) throw new Error("expected carrier");
+		const requestSlot = floor_to_slot(carrier, 10);
+		expect(requestSlot).toBeGreaterThanOrEqual(0);
+		expect(carrier.primaryRouteStatusByFloor[requestSlot]).toBeGreaterThan(0);
+	});
+
+	it("queues newly sold condos from the lobby to their condo floor", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		setupOccupiedFloor(world, ledger);
+
+		handle_place_tile(0, GROUND_Y - 1, "condo", world, ledger);
+		placeElevatorShaft(world, ledger, 0, 10, 15);
+		rebuild_runtime_entities(world);
+
+		const entity = world.entities.find(
+			(candidate) => candidate.familyCode === 9,
+		);
+		if (!entity) throw new Error("expected condo entity");
+
+		const activeTime = {
+			...createTimeState(),
+			dayCounter: 3,
+			daypartIndex: 1,
+			dayTick: 0,
+			starCount: 4,
+		};
+		advance_entity_refresh_stride(world, ledger, activeTime);
+		expect(entity.stateCode).toBe(0x22);
+		expect(entity.selectedFloor).toBe(10);
+		expect(entity.encodedRouteTarget).toBe(entity.floorAnchor);
+
+		populate_carrier_requests(world, activeTime);
+		const carrier = world.carriers[0];
+		if (!carrier) throw new Error("expected carrier");
+		const requestSlot = floor_to_slot(carrier, 10);
+		expect(requestSlot).toBeGreaterThanOrEqual(0);
+		expect(carrier.primaryRouteStatusByFloor[requestSlot]).toBeGreaterThan(0);
 	});
 
 	it("dispatches segment routes without waiting for the next entity stride", () => {

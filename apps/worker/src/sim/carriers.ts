@@ -850,7 +850,7 @@ function step_carrier_car(
 		const currentSlot = floor_to_slot(carrier, car.currentFloor);
 		const waitingHere =
 			currentSlot >= 0 ? (car.waitingCount[currentSlot] ?? 0) > 0 : false;
-		if (waitingHere || car.assignedCount < get_car_capacity(carrier)) {
+		if (waitingHere) {
 			if (car.departureFlag === 0) car.departureTimestamp = time.dayTick;
 			car.speedCounter = DEPARTURE_SEQUENCE_TICKS;
 			car.departureFlag = 1;
@@ -889,16 +889,23 @@ export function tick_all_carriers(
 
 export function rebuild_carrier_list(world: WorldState): void {
 	const columns = new Map<number, { floors: Set<number>; mode: 0 | 1 | 2 }>();
+	const overlayKeys = new Set<string>([
+		...Object.keys(world.overlays),
+		...Object.keys(world.overlayToAnchor),
+	]);
 
-	for (const [key, type] of Object.entries(world.overlays)) {
+	for (const key of overlayKeys) {
+		const anchorKey = world.overlayToAnchor[key] ?? key;
+		const type = world.overlays[anchorKey];
 		let mode: 0 | 1 | 2;
 		if (type === "elevator") mode = 1;
 		else if (type === "elevatorExpress") mode = 0;
 		else if (type === "elevatorService") mode = 2;
 		else continue;
 
-		const [xStr, yStr] = key.split(",");
-		const x = Number(xStr);
+		const [anchorXStr] = anchorKey.split(",");
+		const [, yStr] = key.split(",");
+		const x = Number(anchorXStr);
 		const y = Number(yStr);
 		const floor = yToFloor(y);
 

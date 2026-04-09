@@ -351,14 +351,10 @@ function processHotelEntity(
 ): void {
 	const object = findObjectForEntity(world, entity);
 	if (!object) return;
-	if (time.starCount <= 2) {
-		entity.stateCode = 0x24;
-		return;
-	}
 
 	switch (entity.stateCode) {
 		case 0x24:
-			if (time.daypartIndex < 4) activateHotelStay(world, entity, time);
+			activateHotelStay(world, entity, time);
 			return;
 		case 0x01: {
 			if (time.daypartIndex >= 4) {
@@ -425,7 +421,6 @@ function processOfficeEntity(
 	}
 
 	if (entity.stateCode === 0x27) {
-		entity.stateCode = 0x01;
 		if (
 			entity.baseOffset === 0 &&
 			object.auxValueOrTimer !== time.dayCounter + 1
@@ -438,6 +433,13 @@ function processOfficeEntity(
 				object.objectTypeCode,
 			);
 		}
+		if (entity.floorAnchor !== 10) {
+			entity.encodedRouteTarget = entity.floorAnchor;
+			entity.selectedFloor = 10;
+			entity.stateCode = 0x22;
+			return;
+		}
+		entity.stateCode = 0x01;
 	}
 
 	if (entity.stateCode === 0x01) {
@@ -493,8 +495,15 @@ function processCondoEntity(
 					object.objectTypeCode,
 				);
 			}
-			for (const sibling of findSiblingEntities(world, entity))
-				sibling.stateCode = 0x01;
+			for (const sibling of findSiblingEntities(world, entity)) {
+				if (sibling.floorAnchor === 10) {
+					sibling.stateCode = 0x01;
+					continue;
+				}
+				sibling.encodedRouteTarget = sibling.floorAnchor;
+				sibling.selectedFloor = 10;
+				sibling.stateCode = 0x22;
+			}
 			object.needsRefreshFlag = 1;
 			lowerStress(entity, 10);
 		} else {
@@ -653,7 +662,7 @@ function getElevatorDemand(entity: EntityRecord): {
 } | null {
 	if (entity.stateCode === 0x04 || entity.stateCode === 0x05) {
 		return {
-			sourceFloor: entity.floorAnchor,
+			sourceFloor: entity.selectedFloor,
 			destinationFloor: 10,
 			directionFlag: 1,
 		};
@@ -661,9 +670,9 @@ function getElevatorDemand(entity: EntityRecord): {
 
 	if (entity.stateCode === 0x22 && entity.encodedRouteTarget >= 0) {
 		return {
-			sourceFloor: entity.floorAnchor,
+			sourceFloor: entity.selectedFloor,
 			destinationFloor: entity.encodedRouteTarget,
-			directionFlag: entity.encodedRouteTarget > entity.floorAnchor ? 0 : 1,
+			directionFlag: entity.encodedRouteTarget > entity.selectedFloor ? 0 : 1,
 		};
 	}
 

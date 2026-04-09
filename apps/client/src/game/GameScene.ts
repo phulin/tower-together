@@ -77,9 +77,9 @@ const ENTITY_STRESS_COLORS: Record<EntityStateData["stressLevel"], number> = {
 	high: 0xd81919,
 };
 const CAR_COLOR = 0xf6d463;
-
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
+
 const FAMILY_WIDTHS: Record<number, number> = {
 	3: TILE_WIDTHS.hotelSingle,
 	4: TILE_WIDTHS.hotelTwin,
@@ -758,7 +758,9 @@ export class GameScene extends Phaser.Scene {
 	private shouldRenderQueuedEntity(entity: EntityStateData): boolean {
 		return (
 			!entity.boardedOnCarrier &&
-			(ELEVATOR_QUEUE_STATES.has(entity.stateCode) || entity.routeMode === 2)
+			(entity.stateCode === 0x22 ||
+				ELEVATOR_QUEUE_STATES.has(entity.stateCode) ||
+				entity.routeMode === 2)
 		);
 	}
 
