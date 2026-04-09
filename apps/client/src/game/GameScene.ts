@@ -78,6 +78,8 @@ const ENTITY_STRESS_COLORS: Record<EntityStateData["stressLevel"], number> = {
 };
 const CAR_COLOR = 0xf6d463;
 
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 4;
 const FAMILY_WIDTHS: Record<number, number> = {
 	3: TILE_WIDTHS.hotelSingle,
 	4: TILE_WIDTHS.hotelTwin,
@@ -352,8 +354,12 @@ export class GameScene extends Phaser.Scene {
 	create(): void {
 		const totalWidth = GRID_WIDTH * TILE_WIDTH;
 
-		// Zoom so the grid fills the viewport horizontally, then center near ground floor
-		const initialZoom = this.scale.width / totalWidth;
+		// Fit wide towers when possible, but never start below Phaser's default 1x zoom.
+		const initialZoom = Phaser.Math.Clamp(
+			this.scale.width / totalWidth,
+			MIN_ZOOM,
+			MAX_ZOOM,
+		);
 		this.cameras.main.setZoom(initialZoom);
 		this.cameras.main.centerOn(
 			totalWidth / 2,
@@ -996,8 +1002,8 @@ export class GameScene extends Phaser.Scene {
 					// Pinch or shift-modified trackpad scroll -> zoom
 					const newZoom = Phaser.Math.Clamp(
 						cam.zoom * (deltaY > 0 ? 0.9 : 1.1),
-						0.25,
-						4,
+						MIN_ZOOM,
+						MAX_ZOOM,
 					);
 					cam.setZoom(newZoom);
 				} else {

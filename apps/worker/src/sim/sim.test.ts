@@ -741,8 +741,14 @@ describe("handle_place_tile", () => {
 	it("rejects multi-tile placement that would overflow the grid", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		// office is 9 wide — place at x=60 → extends past GRID_WIDTH=64
-		const r = handle_place_tile(60, GROUND_Y - 1, "office", world, ledger);
+		// office is 9 wide — place it at the last valid anchor + 1 so it spills past the edge
+		const r = handle_place_tile(
+			GRID_WIDTH - 8,
+			GROUND_Y - 1,
+			"office",
+			world,
+			ledger,
+		);
 		expect(r.accepted).toBe(false);
 	});
 
@@ -1094,8 +1100,8 @@ describe("world constants", () => {
 		expect(GRID_HEIGHT).toBe(120);
 	});
 
-	it("GRID_WIDTH = 64", () => {
-		expect(GRID_WIDTH).toBe(64);
+	it("GRID_WIDTH = 375", () => {
+		expect(GRID_WIDTH).toBe(375);
 	});
 
 	it("UNDERGROUND_FLOORS = 10 (floors 0–9 underground)", () => {

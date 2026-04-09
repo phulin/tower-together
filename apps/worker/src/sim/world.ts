@@ -1,5 +1,5 @@
 // Grid and floor model constants
-export const GRID_WIDTH = 64;
+export const GRID_WIDTH = 375;
 export const GRID_HEIGHT = 120; // floor indices 0–119; floor 10 = ground ("0"), floor 119 = top
 
 /** Convert grid Y coordinate to floor index (0=bottom underground, 119=top). */
