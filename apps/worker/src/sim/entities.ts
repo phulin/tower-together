@@ -14,10 +14,15 @@ import {
 export interface EntityStateRecord {
 	id: string;
 	floorAnchor: number;
+	selectedFloor: number;
 	subtypeIndex: number;
 	baseOffset: number;
 	familyCode: number;
 	stateCode: number;
+	routeMode: number;
+	carrierId: number | null;
+	assignedCarIndex: number;
+	boardedOnCarrier: boolean;
 	stressLevel: "low" | "medium" | "high";
 }
 
@@ -1135,14 +1140,36 @@ export function create_entity_state_records(
 		.map((entity) => {
 			const object = findObjectForEntity(world, entity);
 			if (!object) return null;
+			const carrierRoute = world.carriers.find((carrier) =>
+				carrier.pendingRoutes.some(
+					(route) => route.entityId === entityKey(entity),
+				),
+			);
+			const pendingRoute = carrierRoute?.pendingRoutes.find(
+				(route) => route.entityId === entityKey(entity),
+			);
+			const carrierId =
+				pendingRoute || entity.routeMode === ROUTE_MODE_CARRIER
+					? (carrierRoute?.carrierId ??
+						(entity.routeCarrierOrSegment >= 0x58
+							? entity.routeCarrierOrSegment - 0x58
+							: entity.routeCarrierOrSegment >= 0x40
+								? entity.routeCarrierOrSegment - 0x40
+								: null))
+					: null;
 
 			return {
 				id: entityKey(entity),
 				floorAnchor: entity.floorAnchor,
+				selectedFloor: entity.selectedFloor,
 				subtypeIndex: entity.subtypeIndex,
 				baseOffset: entity.baseOffset,
 				familyCode: entity.familyCode,
 				stateCode: entity.stateCode,
+				routeMode: entity.routeMode,
+				carrierId,
+				assignedCarIndex: pendingRoute?.assignedCarIndex ?? -1,
+				boardedOnCarrier: pendingRoute?.boarded ?? false,
 				stressLevel: entityStressLevel(entity, object),
 			} satisfies EntityStateRecord;
 		})

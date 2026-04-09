@@ -109,6 +109,7 @@ export class GameScene extends Phaser.Scene {
 	private floorLabelBg!: Phaser.GameObjects.Rectangle;
 	private floorLabels: Phaser.GameObjects.Text[] = [];
 	private tileLabels: Phaser.GameObjects.Text[] = [];
+	private carLabels: Phaser.GameObjects.Text[] = [];
 
 	// Stores every occupied cell: "x,y" -> tileType (including extension cells)
 	private grid: Map<string, string> = new Map();
@@ -593,6 +594,11 @@ export class GameScene extends Phaser.Scene {
 		this.tileLabels = [];
 	}
 
+	private clearCarLabels(): void {
+		for (const label of this.carLabels) label.destroy();
+		this.carLabels = [];
+	}
+
 	private drawTileLabels(): void {
 		for (const key of this.anchorSet) {
 			const tileType = this.grid.get(key);
@@ -628,25 +634,22 @@ export class GameScene extends Phaser.Scene {
 		const elevatorColumnsByFloor = this.collectElevatorColumnsByFloor();
 
 		for (const entity of this.entities) {
+			if (!this.shouldRenderQueuedEntity(entity)) continue;
 			const color = ENTITY_STRESS_COLORS[entity.stressLevel] ?? 0x111111;
 			const spanWidth = FAMILY_WIDTHS[entity.familyCode] ?? 1;
 			const population = FAMILY_POPULATION[entity.familyCode] ?? 1;
 			const slotFraction = (entity.baseOffset + 0.5) / population;
 			const defaultGridX = entity.subtypeIndex + slotFraction * spanWidth;
-			const gridY = GRID_HEIGHT - 1 - entity.floorAnchor + 0.5;
-			let gridX = defaultGridX;
-
-			if (this.isWaitingForElevator(entity)) {
-				const queueKey = `${entity.floorAnchor}:${this.pickElevatorColumn(entity, elevatorColumnsByFloor)}`;
-				const queueIndex = queueIndices.get(queueKey) ?? 0;
-				queueIndices.set(queueKey, queueIndex + 1);
-				gridX = this.computeElevatorQueueX(
-					entity,
-					elevatorColumnsByFloor,
-					queueIndex,
-					defaultGridX,
-				);
-			}
+			const gridY = GRID_HEIGHT - 1 - entity.selectedFloor + 0.5;
+			const queueKey = `${entity.selectedFloor}:${this.pickElevatorColumn(entity, elevatorColumnsByFloor)}`;
+			const queueIndex = queueIndices.get(queueKey) ?? 0;
+			queueIndices.set(queueKey, queueIndex + 1);
+			const gridX = this.computeElevatorQueueX(
+				entity,
+				elevatorColumnsByFloor,
+				queueIndex,
+				defaultGridX,
+			);
 			const width = Math.max(2, TILE_WIDTH - 1);
 			const height = Math.max(4, Math.floor(TILE_HEIGHT * 0.35));
 			const px = gridX * TILE_WIDTH - width / 2;
@@ -660,26 +663,76 @@ export class GameScene extends Phaser.Scene {
 	private drawCars(): void {
 		const g = this.carGraphics;
 		g.clear();
+		this.clearCarLabels();
+		const occupancyByCar = new Map<string, number>();
+		for (const entity of this.entities) {
+			if (
+				!entity.boardedOnCarrier ||
+				entity.carrierId === null ||
+				entity.assignedCarIndex < 0
+			) {
+				continue;
+			}
+			const key = `${entity.carrierId}:${entity.assignedCarIndex}`;
+			occupancyByCar.set(key, (occupancyByCar.get(key) ?? 0) + 1);
+		}
 
 		for (const car of this.carriers) {
-			const shaftWidthCells = TILE_WIDTHS.elevator ?? 4;
-			const slotCount = Math.max(1, car.carCount);
-			const shaftPixelWidth = shaftWidthCells * TILE_WIDTH;
-			const gutter = 1;
-			const usableWidth = shaftPixelWidth - gutter * (slotCount + 1);
-			const width = Math.max(3, Math.floor(usableWidth / slotCount));
-			const height = Math.max(8, Math.floor(TILE_HEIGHT * 0.55));
-			const x =
-				car.column * TILE_WIDTH + gutter + car.carIndex * (width + gutter);
-			const y =
-				this.carWorldY(car.currentFloor, car.targetFloor, car.speedCounter) -
-				height / 2;
+			const { x, y, width, height } = this.getCarBounds(car);
+			const occupancy =
+				occupancyByCar.get(`${car.carrierId}:${car.carIndex}`) ?? 0;
 
 			g.fillStyle(CAR_COLOR, 1);
 			g.fillRect(x, y, width, height);
 			g.lineStyle(1, 0x6b5a1b, 1);
 			g.strokeRect(x, y, width, height);
+			this.drawCarOccupancyLabel(x, y, width, height, occupancy);
 		}
+	}
+
+	private drawCarOccupancyLabel(
+		x: number,
+		y: number,
+		width: number,
+		height: number,
+		occupancy: number,
+	): void {
+		const label = this.add.text(
+			x + width / 2,
+			y + height / 2,
+			String(occupancy),
+			{
+				fontSize: "8px",
+				fontFamily: "Arial, sans-serif",
+				fontStyle: "bold",
+				color: "#3b2d00",
+				resolution: window.devicePixelRatio * 4,
+			},
+		);
+		label.setOrigin(0.5, 0.5);
+		label.setDepth(6);
+		this.carLabels.push(label);
+	}
+
+	private getCarBounds(car: CarrierCarStateData): {
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	} {
+		const shaftWidthCells = TILE_WIDTHS.elevator ?? 4;
+		const slotCount = Math.max(1, car.carCount);
+		const shaftPixelWidth = shaftWidthCells * TILE_WIDTH;
+		const gutter = 1;
+		const usableWidth = shaftPixelWidth - gutter * (slotCount + 1);
+		const width = Math.max(3, Math.floor(usableWidth / slotCount));
+		const height = Math.max(8, Math.floor(TILE_HEIGHT * 0.55));
+		const x =
+			car.column * TILE_WIDTH + gutter + car.carIndex * (width + gutter);
+		const y =
+			this.carWorldY(car.currentFloor, car.targetFloor, car.speedCounter) -
+			height / 2;
+		return { x, y, width, height };
 	}
 
 	private carWorldY(
@@ -696,10 +749,10 @@ export class GameScene extends Phaser.Scene {
 		return currentY + direction * progress * TILE_HEIGHT;
 	}
 
-	private isWaitingForElevator(entity: EntityStateData): boolean {
+	private shouldRenderQueuedEntity(entity: EntityStateData): boolean {
 		return (
-			ELEVATOR_QUEUE_STATES.has(entity.stateCode) ||
-			(entity.stateCode >= 0x40 && entity.stateCode < 0x60)
+			!entity.boardedOnCarrier &&
+			(ELEVATOR_QUEUE_STATES.has(entity.stateCode) || entity.routeMode === 2)
 		);
 	}
 
@@ -726,11 +779,14 @@ export class GameScene extends Phaser.Scene {
 		elevatorColumnsByFloor: Map<number, number[]>,
 	): number {
 		const columns = elevatorColumnsByFloor.get(entity.floorAnchor);
-		if (!columns || columns.length === 0) return entity.subtypeIndex;
+		const selectedColumns = elevatorColumnsByFloor.get(entity.selectedFloor);
+		const availableColumns = selectedColumns ?? columns;
+		if (!availableColumns || availableColumns.length === 0)
+			return entity.subtypeIndex;
 
-		let best = columns[0] ?? entity.subtypeIndex;
+		let best = availableColumns[0] ?? entity.subtypeIndex;
 		let bestDistance = Math.abs(best - entity.subtypeIndex);
-		for (const column of columns) {
+		for (const column of availableColumns) {
 			const distance = Math.abs(column - entity.subtypeIndex);
 			if (distance < bestDistance) {
 				best = column;
@@ -752,7 +808,7 @@ export class GameScene extends Phaser.Scene {
 		);
 		if (
 			elevatorColumn === entity.subtypeIndex &&
-			!elevatorColumnsByFloor.has(entity.floorAnchor)
+			!elevatorColumnsByFloor.has(entity.selectedFloor)
 		) {
 			return fallbackX;
 		}

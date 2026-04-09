@@ -75,10 +75,15 @@ export type CellData = {
 export type EntityStateData = {
 	id: string;
 	floorAnchor: number;
+	selectedFloor: number;
 	subtypeIndex: number;
 	baseOffset: number;
 	familyCode: number;
 	stateCode: number;
+	routeMode: number;
+	carrierId: number | null;
+	assignedCarIndex: number;
+	boardedOnCarrier: boolean;
 	stressLevel: "low" | "medium" | "high";
 };
 
