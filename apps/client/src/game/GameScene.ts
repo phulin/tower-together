@@ -935,8 +935,9 @@ export class GameScene extends Phaser.Scene {
 				deltaX: number,
 				deltaY: number,
 			) => {
-				if ((p.event as WheelEvent).ctrlKey) {
-					// Pinch-to-zoom
+				const wheelEvent = p.event as WheelEvent;
+				if (wheelEvent.ctrlKey || wheelEvent.shiftKey) {
+					// Pinch or shift-modified trackpad scroll -> zoom
 					const newZoom = Phaser.Math.Clamp(
 						cam.zoom * (deltaY > 0 ? 0.9 : 1.1),
 						0.25,
@@ -944,7 +945,7 @@ export class GameScene extends Phaser.Scene {
 					);
 					cam.setZoom(newZoom);
 				} else {
-					// Two-finger scroll → pan
+					// Two-finger scroll -> pan
 					cam.scrollX += deltaX / cam.zoom;
 					cam.scrollY += deltaY / cam.zoom;
 				}
