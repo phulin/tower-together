@@ -1,6 +1,7 @@
 import type { LedgerState } from "./ledger";
 import { createLedgerState } from "./ledger";
 import { LEGACY_VIP_TILE_TO_STANDARD } from "./resources";
+import { RingBuffer } from "./ring-buffer";
 import { createNewGameTimeState, type TimeState } from "./time";
 import {
 	createGateFlags,
@@ -206,6 +207,40 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 		if (record.objectTypeCode === 32) record.objectTypeCode = 4;
 		if (record.objectTypeCode === 33) record.objectTypeCode = 5;
 		if (vipAnchors.has(anchorKey)) record.vipFlag = true;
+	}
+
+	// Migrate carrier floorQueues from old flat format to RingBuffer instances
+	for (const carrier of snapshot.world.carriers) {
+		for (let i = 0; i < carrier.floorQueues.length; i++) {
+			const q = carrier.floorQueues[i] as Record<string, unknown>;
+			if (q && !(q.up instanceof RingBuffer)) {
+				// Old format: {upCount, upHeadIndex, downCount, downHeadIndex, upQueueRouteIds, downQueueRouteIds}
+				// New format: {up: RingBuffer, down: RingBuffer}
+				if ("upQueueRouteIds" in q) {
+					const upBuf = RingBuffer.from({
+						items: q.upQueueRouteIds as string[],
+						head: (q.upHeadIndex as number) ?? 0,
+						count: (q.upCount as number) ?? 0,
+					});
+					const downBuf = RingBuffer.from({
+						items: q.downQueueRouteIds as string[],
+						head: (q.downHeadIndex as number) ?? 0,
+						count: (q.downCount as number) ?? 0,
+					});
+					carrier.floorQueues[i] = { up: upBuf, down: downBuf };
+				} else if ("up" in q && "down" in q) {
+					// Already new shape but plain objects from JSON deserialization
+					carrier.floorQueues[i] = {
+						up: RingBuffer.from(
+							q.up as { items: string[]; head: number; count: number },
+						),
+						down: RingBuffer.from(
+							q.down as { items: string[]; head: number; count: number },
+						),
+					};
+				}
+			}
+		}
 	}
 
 	return snapshot;

@@ -1,3 +1,5 @@
+import type { RingBuffer } from "./ring-buffer";
+
 // Grid and floor model constants
 export const GRID_WIDTH = 375;
 export const GRID_HEIGHT = 120; // floor indices 0–119; floor 10 = ground ("0"), floor 119 = top
@@ -55,12 +57,8 @@ export interface CarrierRouteSlot {
 }
 
 export interface CarrierFloorQueue {
-	upCount: number;
-	upHeadIndex: number;
-	downCount: number;
-	downHeadIndex: number;
-	upQueueRouteIds: string[];
-	downQueueRouteIds: string[];
+	up: RingBuffer<string>;
+	down: RingBuffer<string>;
 }
 
 export interface CarrierPendingRoute {

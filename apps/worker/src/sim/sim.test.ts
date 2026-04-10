@@ -1748,6 +1748,105 @@ describe("car state machine", () => {
 		expect(reachedTarget).toBe(true);
 	});
 
+	it("car picks up and delivers entity through full populate+tick cycle", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		placeElevatorShaft(world, ledger, 10, 10, 14);
+		const carrier = world.carriers[0];
+		const car = carrier.cars[0];
+		// Multiple entities at floors 11-14 wanting to go down to floor 10
+		for (let f = 11; f <= 14; f++) {
+			world.entities.push({
+				floorAnchor: f,
+				subtypeIndex: 0,
+				baseOffset: 0,
+				familyCode: 7,
+				stateCode: 0x22,
+				routeMode: 0,
+				routeSourceFloor: 0xff,
+				routeCarrierOrSegment: 0xff,
+				selectedFloor: f,
+				originFloor: f,
+				encodedRouteTarget: 10,
+				auxState: 0,
+				queueTick: 0,
+				accumulatedDelay: 0,
+				routeRetryDelay: 0,
+				auxCounter: 0,
+				word0a: 0,
+				word0c: 0,
+				word0e: 0,
+				byte09: 0,
+			});
+		}
+		const time = createTimeState();
+		populate_carrier_requests(world, time);
+		expect(carrier.pendingRoutes.length).toBe(4);
+
+		// Tick until car boards at least one entity
+		let boarded = false;
+		for (let i = 0; i < 300; i++) {
+			tick_all_carriers(world, time);
+			if (car.assignedCount > 0) {
+				boarded = true;
+				break;
+			}
+			populate_carrier_requests(world, time);
+		}
+		expect(boarded).toBe(true);
+		// Car should not be stuck at home floor
+		expect(car.currentFloor).not.toBe(car.homeFloor);
+	});
+
+	it("car does not get stuck toggling when many entities queue", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		placeElevatorShaft(world, ledger, 10, 10, 14);
+		const carrier = world.carriers[0];
+		const car = carrier.cars[0];
+		// 30 entities at various floors wanting to go to different floors
+		for (let i = 0; i < 30; i++) {
+			const src = 10 + (i % 5);
+			const dst = src === 10 ? 14 : 10;
+			world.entities.push({
+				floorAnchor: src,
+				subtypeIndex: i,
+				baseOffset: 0,
+				familyCode: 7,
+				stateCode: 0x22,
+				routeMode: 0,
+				routeSourceFloor: 0xff,
+				routeCarrierOrSegment: 0xff,
+				selectedFloor: src,
+				originFloor: src,
+				encodedRouteTarget: dst,
+				auxState: 0,
+				queueTick: 0,
+				accumulatedDelay: 0,
+				routeRetryDelay: 0,
+				auxCounter: 0,
+				word0a: 0,
+				word0c: 0,
+				word0e: 0,
+				byte09: 0,
+			});
+		}
+		const time = createTimeState();
+		populate_carrier_requests(world, time);
+
+		// Tick: car should eventually move off home floor
+		let moved = false;
+		for (let i = 0; i < 300; i++) {
+			tick_all_carriers(world, time);
+			populate_carrier_requests(world, time);
+			if (car.currentFloor !== 10) {
+				moved = true;
+				break;
+			}
+		}
+		expect(moved).toBe(true);
+	});
+
 	it("out-of-range car is reset to bottom floor", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();

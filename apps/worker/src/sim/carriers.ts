@@ -1,3 +1,4 @@
+import { RingBuffer } from "./ring-buffer";
 import { resolve_transfer_floor } from "./routing";
 import type { TimeState } from "./time";
 import {
@@ -37,12 +38,8 @@ function speed_ticks(mode: 0 | 1 | 2): number {
 
 function create_floor_queue(): CarrierFloorQueue {
 	return {
-		upCount: 0,
-		upHeadIndex: 0,
-		downCount: 0,
-		downHeadIndex: 0,
-		upQueueRouteIds: new Array(QUEUE_CAPACITY).fill(""),
-		downQueueRouteIds: new Array(QUEUE_CAPACITY).fill(""),
+		up: new RingBuffer<string>(QUEUE_CAPACITY, ""),
+		down: new RingBuffer<string>(QUEUE_CAPACITY, ""),
 	};
 }
 
@@ -60,83 +57,11 @@ function get_queue_state(carrier: CarrierRecord, floor: number) {
 	return carrier.floorQueues[slot] ?? null;
 }
 
-function get_queue_count(
+function get_direction_queue(
 	queue: CarrierFloorQueue,
 	directionFlag: number,
-): number {
-	return directionFlag === 0 ? queue.upCount : queue.downCount;
-}
-
-function get_queue_head(
-	queue: CarrierFloorQueue,
-	directionFlag: number,
-): number {
-	return directionFlag === 0 ? queue.upHeadIndex : queue.downHeadIndex;
-}
-
-function get_queue_ids(
-	queue: CarrierFloorQueue,
-	directionFlag: number,
-): string[] {
-	return directionFlag === 0 ? queue.upQueueRouteIds : queue.downQueueRouteIds;
-}
-
-function enqueue_route_into_floor_queue(
-	carrier: CarrierRecord,
-	routeId: string,
-	sourceFloor: number,
-	directionFlag: number,
-): boolean {
-	const queue = get_queue_state(carrier, sourceFloor);
-	if (!queue) return false;
-	const count = get_queue_count(queue, directionFlag);
-	if (count >= QUEUE_CAPACITY) return false;
-	const ids = get_queue_ids(queue, directionFlag);
-	const head = get_queue_head(queue, directionFlag);
-	const writeIndex = (head + count) % QUEUE_CAPACITY;
-	ids[writeIndex] = routeId;
-	if (directionFlag === 0) queue.upCount += 1;
-	else queue.downCount += 1;
-	return true;
-}
-
-function pop_route_from_floor_queue(
-	carrier: CarrierRecord,
-	floor: number,
-	directionFlag: number,
-): string | null {
-	const queue = get_queue_state(carrier, floor);
-	if (!queue) return null;
-	const count = get_queue_count(queue, directionFlag);
-	if (count <= 0) return null;
-	const ids = get_queue_ids(queue, directionFlag);
-	const head = get_queue_head(queue, directionFlag);
-	const routeId = ids[head] ?? "";
-	ids[head] = "";
-	if (directionFlag === 0) {
-		queue.upHeadIndex = (queue.upHeadIndex + 1) % QUEUE_CAPACITY;
-		queue.upCount -= 1;
-	} else {
-		queue.downHeadIndex = (queue.downHeadIndex + 1) % QUEUE_CAPACITY;
-		queue.downCount -= 1;
-	}
-	return routeId || null;
-}
-
-function peek_queue_route_ids(
-	carrier: CarrierRecord,
-	floor: number,
-	directionFlag: number,
-): string[] {
-	const queue = get_queue_state(carrier, floor);
-	if (!queue) return [];
-	const ids = get_queue_ids(queue, directionFlag);
-	const count = get_queue_count(queue, directionFlag);
-	const head = get_queue_head(queue, directionFlag);
-	return Array.from(
-		{ length: count },
-		(_, index) => ids[(head + index) % QUEUE_CAPACITY] ?? "",
-	).filter(Boolean);
+): RingBuffer<string> {
+	return directionFlag === 0 ? queue.up : queue.down;
 }
 
 function active_slot_limit(carrier: CarrierRecord): number {
@@ -372,7 +297,7 @@ function sync_waiting_count(
 	for (let slot = 0; slot < carrier.floorQueues.length; slot++) {
 		const queue = carrier.floorQueues[slot];
 		if (!queue) continue;
-		car.waitingCount[slot] = queue.upCount + queue.downCount;
+		car.waitingCount[slot] = queue.up.size + queue.down.size;
 	}
 
 	const limit = active_slot_limit(carrier);
@@ -412,10 +337,10 @@ function sync_assignment_status(carrier: CarrierRecord): void {
 	for (let slot = 0; slot < carrier.primaryRouteStatusByFloor.length; slot++) {
 		const queue = carrier.floorQueues[slot];
 		if (!queue) continue;
-		if (queue.upCount >= QUEUE_CAPACITY) {
+		if (queue.up.isFull) {
 			carrier.primaryRouteStatusByFloor[slot] = 0x28;
 		}
-		if (queue.downCount >= QUEUE_CAPACITY) {
+		if (queue.down.isFull) {
 			carrier.secondaryRouteStatusByFloor[slot] = 0x28;
 		}
 	}
@@ -619,18 +544,25 @@ function assign_car_to_floor_request(
 		directionFlag === 0
 			? carrier.primaryRouteStatusByFloor
 			: carrier.secondaryRouteStatusByFloor;
-	if ((table[slot] ?? 0) !== 0) return;
 
-	const carIndex = find_best_available_car_for_floor(
-		carrier,
-		floor,
-		directionFlag,
-	);
-	if (carIndex < 0) return;
+	// If a car is already assigned, reuse it for any new unassigned routes.
+	// Only search for the best car when no assignment exists yet.
+	let carIndex: number;
+	const existing = table[slot] ?? 0;
+	if (existing > 0 && existing !== 0x28) {
+		carIndex = existing - 1;
+	} else if (existing === 0x28) {
+		return; // queue-full sentinel — skip
+	} else {
+		carIndex = find_best_available_car_for_floor(carrier, floor, directionFlag);
+		if (carIndex < 0) return;
+	}
+
 	for (const route of carrier.pendingRoutes) {
 		if (route.boarded) continue;
 		if (route.sourceFloor !== floor || route.directionFlag !== directionFlag)
 			continue;
+		if (route.assignedCarIndex >= 0) continue; // already assigned
 		route.assignedCarIndex = carIndex;
 	}
 	sync_assignment_status(carrier);
@@ -641,8 +573,8 @@ function assign_pending_floor_requests(carrier: CarrierRecord): void {
 		const floor = carrier.bottomServedFloor + slot;
 		const queue = carrier.floorQueues[slot];
 		if (!queue) continue;
-		if (queue.upCount > 0) assign_car_to_floor_request(carrier, floor, 0);
-		if (queue.downCount > 0) assign_car_to_floor_request(carrier, floor, 1);
+		if (!queue.up.isEmpty) assign_car_to_floor_request(carrier, floor, 0);
+		if (!queue.down.isEmpty) assign_car_to_floor_request(carrier, floor, 1);
 	}
 }
 
@@ -659,32 +591,13 @@ function process_unit_travel_queue(
 	);
 	if (remainingSlots === 0) return;
 
-	let primaryDirection = car.directionFlag;
-	let assignedRoutes = peek_queue_route_ids(
-		carrier,
-		car.currentFloor,
-		primaryDirection,
-	)
-		.map((routeId) => find_route(carrier, routeId))
-		.filter(
-			(route): route is NonNullable<typeof route> =>
-				route !== undefined &&
-				!route.boarded &&
-				route.assignedCarIndex === carIndex &&
-				!has_active_slot(car, route.entityId),
-		);
+	const floorQueue = get_queue_state(carrier, car.currentFloor);
 
-	if (
-		assignedRoutes.length === 0 &&
-		!pending_targets_in_direction(carrier, car, primaryDirection)
-	) {
-		primaryDirection = primaryDirection === 0 ? 1 : 0;
-		car.directionFlag = primaryDirection;
-		assignedRoutes = peek_queue_route_ids(
-			carrier,
-			car.currentFloor,
-			primaryDirection,
-		)
+	function drainDirection(directionFlag: number): void {
+		if (!floorQueue) return;
+		const buf = get_direction_queue(floorQueue, directionFlag);
+		const assignedRoutes = buf
+			.peekAll()
 			.map((routeId) => find_route(carrier, routeId))
 			.filter(
 				(route): route is NonNullable<typeof route> =>
@@ -693,56 +606,8 @@ function process_unit_travel_queue(
 					route.assignedCarIndex === carIndex &&
 					!has_active_slot(car, route.entityId),
 			);
-	}
-
-	for (const route of assignedRoutes.slice(0, remainingSlots)) {
-		pop_route_from_floor_queue(carrier, car.currentFloor, primaryDirection);
-		// Resolve transfer floor if carrier doesn't directly serve destination
-		const resolvedFloor = resolve_transfer_floor(
-			world,
-			carrier.carrierId,
-			car.currentFloor,
-			route.destinationFloor,
-		);
-		if (resolvedFloor < 0) {
-			// Transfer resolution failed — remove from pending and clear entity
-			// route state so it re-enters family dispatch with requeue-failure delay
-			carrier.pendingRoutes = carrier.pendingRoutes.filter(
-				(candidate) => candidate.entityId !== route.entityId,
-			);
-			clear_entity_route_by_id(world, route.entityId);
-			continue;
-		}
-		route.destinationFloor = resolvedFloor;
-		if (add_route_slot(carrier, car, route)) remainingSlots -= 1;
-	}
-
-	// Gate alternate-direction drain on expressDirectionFlags:
-	// 0 = normal (both), 1 = express-to-top (up only), 2 = express-to-bottom (down only)
-	const expressDir =
-		carrier.expressDirectionFlags[get_schedule_index(time)] ?? 0;
-	const allowAlternate =
-		expressDir === 0 ||
-		(expressDir === 1 && primaryDirection === 0) ||
-		(expressDir === 2 && primaryDirection === 1);
-
-	if (remainingSlots > 0 && allowAlternate) {
-		const alternateDirection = primaryDirection === 0 ? 1 : 0;
-		const alternateRoutes = peek_queue_route_ids(
-			carrier,
-			car.currentFloor,
-			alternateDirection,
-		)
-			.map((routeId) => find_route(carrier, routeId))
-			.filter(
-				(route): route is NonNullable<typeof route> =>
-					route !== undefined &&
-					!route.boarded &&
-					route.assignedCarIndex === carIndex &&
-					!has_active_slot(car, route.entityId),
-			);
-		for (const route of alternateRoutes.slice(0, remainingSlots)) {
-			pop_route_from_floor_queue(carrier, car.currentFloor, alternateDirection);
+		for (const route of assignedRoutes.slice(0, remainingSlots)) {
+			buf.pop();
 			const resolvedFloor = resolve_transfer_floor(
 				world,
 				carrier.carrierId,
@@ -759,6 +624,31 @@ function process_unit_travel_queue(
 			route.destinationFloor = resolvedFloor;
 			if (add_route_slot(carrier, car, route)) remainingSlots -= 1;
 		}
+	}
+
+	let primaryDirection = car.directionFlag;
+	drainDirection(primaryDirection);
+
+	if (
+		remainingSlots > 0 &&
+		!pending_targets_in_direction(carrier, car, primaryDirection)
+	) {
+		primaryDirection = primaryDirection === 0 ? 1 : 0;
+		car.directionFlag = primaryDirection;
+		drainDirection(primaryDirection);
+	}
+
+	// Gate alternate-direction drain on expressDirectionFlags:
+	// 0 = normal (both), 1 = express-to-top (up only), 2 = express-to-bottom (down only)
+	const expressDir =
+		carrier.expressDirectionFlags[get_schedule_index(time)] ?? 0;
+	const allowAlternate =
+		expressDir === 0 ||
+		(expressDir === 1 && primaryDirection === 0) ||
+		(expressDir === 2 && primaryDirection === 1);
+
+	if (remainingSlots > 0 && allowAlternate) {
+		drainDirection(primaryDirection === 0 ? 1 : 0);
 	}
 
 	sync_assignment_status(carrier);
@@ -1158,13 +1048,10 @@ export function enqueue_carrier_route(
 ): boolean {
 	if (carrier.pendingRoutes.some((route) => route.entityId === entityId))
 		return true;
+	const floorQueue = get_queue_state(carrier, sourceFloor);
 	if (
-		!enqueue_route_into_floor_queue(
-			carrier,
-			entityId,
-			sourceFloor,
-			directionFlag,
-		)
+		!floorQueue ||
+		!get_direction_queue(floorQueue, directionFlag).push(entityId)
 	) {
 		const slot = floor_to_slot(carrier, sourceFloor);
 		if (slot >= 0) {
