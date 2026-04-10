@@ -55,6 +55,7 @@ function checkpoint_entertainment_half1(_s: SimState): void {
 }
 
 function checkpoint_hotel_sale_reset(_s: SimState): void {
+	_s.world.gateFlags.family345SaleCount = 0;
 	dispatchEvalMiddayReturn(_s.world);
 	promoteAndActivateSingleReverse(_s.world);
 }

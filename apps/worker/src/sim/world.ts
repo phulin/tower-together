@@ -239,6 +239,10 @@ export interface GateFlags {
 	securityLedgerScale: number;
 	/** g_facility_progress_override — set every 8 days when star < 5. */
 	facilityProgressOverride: number;
+	/** Daily hotel checkout counter, reset at 0x04b0. */
+	family345SaleCount: number;
+	/** Display/news trigger latch used by hotel checkout milestones. */
+	newspaperTrigger: number;
 }
 
 export function createGateFlags(): GateFlags {
@@ -253,6 +257,8 @@ export function createGateFlags(): GateFlags {
 		evalEntityIndex: 0xffff, // −1: no evaluation in progress
 		securityLedgerScale: 0,
 		facilityProgressOverride: 0,
+		family345SaleCount: 0,
+		newspaperTrigger: 0,
 	};
 }
 
@@ -334,6 +340,13 @@ export interface EventState {
 	helicopterExtinguishPos: number;
 	/** LCG15 state for event randomness. */
 	lcgState: number;
+	/** Deterministic bomb-search helper floor bounds / cursor state. */
+	bombSearchLowerBound: number;
+	bombSearchUpperBound: number;
+	bombSearchCurrentFloor: number;
+	bombSearchScanTile: number;
+	/** Pending carrier-edit prompt target column, -1 when idle. */
+	pendingCarrierEditColumn: number;
 }
 
 export function createEventState(): EventState {
@@ -350,6 +363,11 @@ export function createEventState(): EventState {
 		rescueCountdown: 0,
 		helicopterExtinguishPos: 0,
 		lcgState: 1,
+		bombSearchLowerBound: -1,
+		bombSearchUpperBound: -1,
+		bombSearchCurrentFloor: -1,
+		bombSearchScanTile: -1,
+		pendingCarrierEditColumn: -1,
 	};
 }
 

@@ -49,6 +49,8 @@ const ELEVATOR_DEMAND_STATES = new Set([
 const ROUTE_MODE_NONE = 0;
 const ROUTE_MODE_SEGMENT = 1;
 const ROUTE_MODE_CARRIER = 2;
+const COMMERCIAL_VENUE_DWELL_TICKS = 60;
+const COMMERCIAL_DWELL_STATE = 0x62;
 
 function makeEntity(
 	floorAnchor: number,
@@ -364,11 +366,16 @@ function lowerStress(entity: EntityRecord, amount = 12): void {
 	entity.accumulatedDelay = Math.max(0, entity.accumulatedDelay - amount);
 }
 
-function complete_same_floor_trip(entity: EntityRecord): void {
+function beginCommercialVenueDwell(
+	entity: EntityRecord,
+	arrivalFloor: number,
+	returnState: number,
+): void {
 	entity.encodedRouteTarget = -1;
-	entity.selectedFloor = entity.floorAnchor;
+	entity.selectedFloor = arrivalFloor;
 	clear_entity_route(entity);
-	entity.stateCode = 0x01;
+	entity.auxState = returnState;
+	entity.stateCode = COMMERCIAL_DWELL_STATE;
 }
 
 function activateHotelStay(
@@ -418,6 +425,14 @@ function checkoutHotelStay(
 		object.rentLevel,
 		object.objectTypeCode,
 	);
+	world.gateFlags.family345SaleCount += 1;
+	const saleCount = world.gateFlags.family345SaleCount;
+	if (
+		(saleCount < 20 && saleCount % 2 === 0) ||
+		(saleCount >= 20 && saleCount % 8 === 0)
+	) {
+		world.gateFlags.newspaperTrigger = 1;
+	}
 	for (const sibling of siblings) sibling.stateCode = 0x24;
 	object.unitStatus = 0x28;
 	object.needsRefreshFlag = 1;
@@ -438,6 +453,9 @@ function processHotelEntity(
 			return;
 		case 0x01: {
 			if (time.daypartIndex >= 4) {
+				if (object.unitStatus === 0 || object.unitStatus === 8) {
+					object.unitStatus = 0x10;
+				}
 				entity.encodedRouteTarget = 10;
 				entity.selectedFloor = entity.floorAnchor;
 				entity.stateCode = 0x05;
@@ -456,7 +474,7 @@ function processHotelEntity(
 					object.activationTickCount + 1,
 				);
 				if (venue.floor === entity.floorAnchor) {
-					complete_same_floor_trip(entity);
+					beginCommercialVenueDwell(entity, venue.floor, 0x01);
 					lowerStress(entity, 16);
 					return;
 				}
@@ -478,7 +496,28 @@ function processHotelEntity(
 		case 0x05:
 		case 0x04:
 			if (entity.selectedFloor !== 10) return;
+			if (object.unitStatus === 0 || object.unitStatus === 8) {
+				object.unitStatus = 0x10;
+				object.needsRefreshFlag = 1;
+				return;
+			}
+			if (object.unitStatus === 0x10) {
+				object.unitStatus = object.objectTypeCode === 3 ? 1 : 2;
+				object.needsRefreshFlag = 1;
+				return;
+			}
+			if ((object.unitStatus & 0x07) > 1) {
+				object.unitStatus -= 1;
+				object.needsRefreshFlag = 1;
+				return;
+			}
 			checkoutHotelStay(world, ledger, entity, object);
+			return;
+		case COMMERCIAL_DWELL_STATE:
+			if (time.dayTick - entity.word0a < COMMERCIAL_VENUE_DWELL_TICKS) return;
+			entity.selectedFloor = entity.floorAnchor;
+			entity.stateCode = entity.auxState || 0x01;
+			entity.auxState = 0;
 			return;
 		default:
 			entity.stateCode = 0x24;
@@ -571,6 +610,14 @@ function processOfficeEntity(
 		return;
 	}
 
+	if (state === COMMERCIAL_DWELL_STATE) {
+		if (time.dayTick - entity.word0a < COMMERCIAL_VENUE_DWELL_TICKS) return;
+		entity.selectedFloor = entity.floorAnchor;
+		entity.stateCode = entity.auxState || 0x21;
+		entity.auxState = 0;
+		return;
+	}
+
 	// --- Venue selection (0x01) ---
 	if (state === 0x01) {
 		runOfficeServiceEvaluation(world, time, entity, object);
@@ -591,10 +638,8 @@ function processOfficeEntity(
 			reserveVenue(venue.record);
 			recordDemandSample(entity, time);
 			if (venue.floor === entity.floorAnchor) {
-				complete_same_floor_trip(entity);
+				beginCommercialVenueDwell(entity, venue.floor, 0x21);
 				lowerStress(entity, 12);
-				entity.stateCode = 0x21;
-				recomputeObjectOperationalStatus(world, time, entity, object);
 				return;
 			}
 			entity.encodedRouteTarget = venue.floor;
@@ -660,6 +705,12 @@ function processCondoEntity(
 	}
 
 	if (entity.stateCode === 0x27) entity.stateCode = 0x01;
+	if (entity.stateCode === COMMERCIAL_DWELL_STATE) {
+		if (time.dayTick - entity.word0a < COMMERCIAL_VENUE_DWELL_TICKS) return;
+		entity.selectedFloor = entity.floorAnchor;
+		entity.stateCode = entity.auxState || 0x01;
+		entity.auxState = 0;
+	}
 	if (entity.stateCode === 0x01) {
 		const venue = pickAvailableVenue(
 			world,
@@ -670,9 +721,8 @@ function processCondoEntity(
 			reserveVenue(venue.record);
 			recordDemandSample(entity, time);
 			if (venue.floor === entity.floorAnchor) {
-				complete_same_floor_trip(entity);
+				beginCommercialVenueDwell(entity, venue.floor, 0x01);
 				lowerStress(entity, 10);
-				recomputeObjectOperationalStatus(world, time, entity, object);
 				return;
 			}
 			entity.encodedRouteTarget = venue.floor;
@@ -1034,9 +1084,7 @@ function dispatch_entity_arrival(
 				entity.stateCode === 0x22 &&
 				entity.encodedRouteTarget === arrivalFloor
 			) {
-				entity.encodedRouteTarget = -1;
-				entity.selectedFloor = entity.floorAnchor;
-				entity.stateCode = 0x01;
+				beginCommercialVenueDwell(entity, arrivalFloor, 0x01);
 				return;
 			}
 			if (
@@ -1062,11 +1110,7 @@ function dispatch_entity_arrival(
 				entity.stateCode === 0x22 &&
 				entity.encodedRouteTarget === arrivalFloor
 			) {
-				entity.encodedRouteTarget = -1;
-				entity.selectedFloor = entity.floorAnchor;
-				entity.stateCode = 0x21;
-				if (object)
-					recomputeObjectOperationalStatus(world, time, entity, object);
+				beginCommercialVenueDwell(entity, arrivalFloor, 0x21);
 				return;
 			}
 			// Arrived at lobby from evening departure (0x05)
@@ -1081,11 +1125,7 @@ function dispatch_entity_arrival(
 				entity.stateCode === 0x22 &&
 				entity.encodedRouteTarget === arrivalFloor
 			) {
-				entity.encodedRouteTarget = -1;
-				entity.selectedFloor = entity.floorAnchor;
-				entity.stateCode = 0x01;
-				if (object)
-					recomputeObjectOperationalStatus(world, time, entity, object);
+				beginCommercialVenueDwell(entity, arrivalFloor, 0x01);
 			}
 			return;
 		default:

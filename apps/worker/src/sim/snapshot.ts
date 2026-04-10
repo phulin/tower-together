@@ -231,9 +231,16 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 		snapshot.world.transferGroupCache = new Array(GRID_HEIGHT).fill(0);
 	}
 	snapshot.world.eventState ??= createEventState();
+	snapshot.world.eventState.bombSearchLowerBound ??= -1;
+	snapshot.world.eventState.bombSearchUpperBound ??= -1;
+	snapshot.world.eventState.bombSearchCurrentFloor ??= -1;
+	snapshot.world.eventState.bombSearchScanTile ??= -1;
+	snapshot.world.eventState.pendingCarrierEditColumn ??= -1;
 	snapshot.ledger.populationLedger ??= new Array(256).fill(0);
 	snapshot.ledger.incomeLedger ??= new Array(256).fill(0);
 	snapshot.ledger.expenseLedger ??= new Array(256).fill(0);
+	snapshot.world.gateFlags.family345SaleCount ??= 0;
+	snapshot.world.gateFlags.newspaperTrigger ??= 0;
 
 	for (const sidecar of snapshot.world.sidecars) {
 		if (sidecar.kind !== "entertainment_link") continue;

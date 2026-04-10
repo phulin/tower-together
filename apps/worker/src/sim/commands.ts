@@ -620,7 +620,39 @@ export function handle_remove_elevator_car(
 	if (activeCars.length <= 1) {
 		return { accepted: false, reason: "Must keep at least 1 car" };
 	}
-	// Deactivate last active car
+	const hasActiveTraffic =
+		carrier.pendingRoutes.length > 0 ||
+		carrier.cars.some(
+			(car) =>
+				car.assignedCount > 0 ||
+				car.pendingAssignmentCount > 0 ||
+				car.activeRouteSlots.some((slot) => slot.active),
+		);
+	if (hasActiveTraffic) {
+		world.eventState.pendingCarrierEditColumn = x;
+		world.pendingPrompts.push({
+			promptId: `carrier_remove_${x}`,
+			promptKind: "carrier_edit_confirmation",
+			message:
+				"Removing this elevator car will disrupt active traffic. Continue?",
+		});
+		return { accepted: true, patch: [] };
+	}
+	return apply_remove_elevator_car(world, x);
+}
+
+export function apply_remove_elevator_car(
+	world: WorldState,
+	x: number,
+): CommandResult {
+	const carrier = world.carriers.find((c) => c.column === x);
+	if (!carrier) {
+		return { accepted: false, reason: "No elevator at this column" };
+	}
+	const activeCars = carrier.cars.filter((c) => c.active);
+	if (activeCars.length <= 1) {
+		return { accepted: false, reason: "Must keep at least 1 car" };
+	}
 	const lastCar = activeCars[activeCars.length - 1];
 	lastCar.active = false;
 	lastCar.assignedCount = 0;

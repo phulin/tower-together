@@ -21,6 +21,7 @@ import {
 import {
 	fill_row_gaps,
 	handle_place_tile,
+	handle_remove_elevator_car,
 	handle_remove_tile,
 	run_global_rebuilds,
 } from "./commands";
@@ -33,6 +34,7 @@ import {
 	resetCommercialVenueCycle,
 	update_security_housekeeping_state,
 } from "./entities";
+import { handlePromptResponse, tickBombEvent } from "./events";
 import {
 	add_cashflow_from_family_resource,
 	createLedgerState,
@@ -2196,10 +2198,19 @@ describe("Phase 4 runtime entities", () => {
 			starCount: 4,
 		});
 
-		expect(officeEntity.stateCode).toBe(0x21); // at office, ready for next action
+		expect(officeEntity.stateCode).toBe(0x62);
 		expect(officeEntity.routeMode).toBe(0);
 		expect(officeEntity.encodedRouteTarget).toBe(-1);
 		expect(venue.todayVisitCount).toBe(1);
+
+		advance_entity_refresh_stride(world, ledger, {
+			...createTimeState(),
+			dayTick: 64,
+			dayCounter: 3,
+			daypartIndex: 1,
+			starCount: 4,
+		});
+		expect(officeEntity.stateCode).toBe(0x21);
 	});
 
 	it("seeds carrier waiters from active entities so elevator cars move", () => {
@@ -2406,5 +2417,114 @@ describe("Phase 4 runtime entities", () => {
 		expect(world.entities[0]?.selectedFloor).toBe(10);
 		expect(world.entities[0]?.routeMode).toBe(1);
 		expect(world.entities[0]?.routeSourceFloor).toBe(14);
+	});
+
+	it("prompts before removing an elevator car with active traffic", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		const carrier = make_carrier(0, 0, 1, 10, 15, 2);
+		world.carriers.push(carrier);
+		if (!carrier) throw new Error("expected carrier");
+		carrier.pendingRoutes.push({
+			entityId: "test",
+			sourceFloor: 10,
+			destinationFloor: 15,
+			boarded: false,
+			directionFlag: 0,
+			assignedCarIndex: 0,
+		});
+
+		const result = handle_remove_elevator_car(0, world);
+		expect(result.accepted).toBe(true);
+		expect(world.pendingPrompts[0]?.promptKind).toBe(
+			"carrier_edit_confirmation",
+		);
+		expect(carrier.cars.filter((car) => car.active)).toHaveLength(2);
+
+		handlePromptResponse(
+			world,
+			ledger,
+			createTimeState(),
+			world.pendingPrompts[0]?.promptId ?? "",
+			true,
+		);
+		expect(carrier.cars.filter((car) => car.active)).toHaveLength(1);
+	});
+
+	it("advances bomb search automatically when security exists", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		const floor = 25;
+		const y = GRID_HEIGHT - 1 - floor;
+		world.placedObjects[`0,${y}`] = {
+			leftTileIndex: 0,
+			rightTileIndex: 30,
+			objectTypeCode: 7,
+			unitStatus: 0,
+			linkedRecordIndex: -1,
+			auxValueOrTimer: 0,
+			needsRefreshFlag: 1,
+			evalLevel: -1,
+			evalActiveFlag: 1,
+			activationTickCount: 0,
+			rentLevel: 1,
+		};
+		world.gateFlags.securityLedgerScale = 1;
+		world.eventState.gameStateFlags = 1;
+		world.eventState.bombFloor = floor;
+		world.eventState.bombTile = 10;
+		world.eventState.bombDeadline = 1200;
+		world.eventState.bombSearchLowerBound = floor - 1;
+		world.eventState.bombSearchUpperBound = floor;
+		world.eventState.bombSearchCurrentFloor = floor;
+		world.eventState.bombSearchScanTile = 28;
+
+		for (let tick = 0; tick < 32; tick++) {
+			tickBombEvent(world, ledger, { ...createTimeState(), dayTick: tick });
+			if ((world.eventState.gameStateFlags & 0x20) !== 0) break;
+		}
+		expect(world.eventState.gameStateFlags & 0x20).toBe(0x20);
+	});
+
+	it("counts down hotel checkout before paying out", () => {
+		const world = makeWorld();
+		const ledger = makeLedger();
+		setupOccupiedFloor(world, ledger);
+		handle_place_tile(0, GROUND_Y - 1, "hotelSingle", world, ledger);
+		rebuild_runtime_entities(world);
+		for (const entity of world.entities) {
+			entity.stateCode = 0x05;
+			entity.selectedFloor = 10;
+		}
+		const hotel = world.placedObjects[`0,${GROUND_Y - 1}`];
+		if (!hotel) throw new Error("expected hotel");
+
+		const startCash = ledger.cashBalance;
+		advance_entity_refresh_stride(world, ledger, {
+			...createTimeState(),
+			dayTick: 0,
+			daypartIndex: 4,
+			starCount: 4,
+		});
+		expect(hotel.unitStatus).toBe(0x10);
+		expect(ledger.cashBalance).toBe(startCash);
+
+		advance_entity_refresh_stride(world, ledger, {
+			...createTimeState(),
+			dayTick: 16,
+			daypartIndex: 4,
+			starCount: 4,
+		});
+		expect(hotel.unitStatus).toBe(1);
+
+		advance_entity_refresh_stride(world, ledger, {
+			...createTimeState(),
+			dayTick: 32,
+			daypartIndex: 4,
+			starCount: 4,
+		});
+		expect(hotel.unitStatus).toBe(0x28);
+		expect(ledger.cashBalance).toBeGreaterThan(startCash);
+		expect(world.gateFlags.family345SaleCount).toBe(1);
 	});
 });

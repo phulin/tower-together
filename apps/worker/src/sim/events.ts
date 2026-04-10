@@ -1,3 +1,4 @@
+import { apply_remove_elevator_car } from "./commands";
 import type { LedgerState } from "./ledger";
 import type { TimeState } from "./time";
 import {
@@ -62,6 +63,12 @@ function floorTileBoundsForFloor(
 	}
 	if (left > right) return null;
 	return { left, right };
+}
+
+function seedBombSearchCursor(world: WorldState, floor: number): void {
+	const bounds = floorTileBoundsForFloor(world, floor);
+	world.eventState.bombSearchCurrentFloor = floor;
+	world.eventState.bombSearchScanTile = bounds ? bounds.right - 2 : -1;
 }
 
 function hasSecurityGuard(world: WorldState): boolean {
@@ -169,6 +176,14 @@ export function tryTriggerBombEvent(
 	es.bombTile = selectedTile;
 	es.gameStateFlags |= 1; // bomb active
 	es.bombDeadline = BOMB_DEADLINE_TICKS;
+	es.bombSearchLowerBound = selectedFloor - 1;
+	es.bombSearchUpperBound = selectedFloor;
+	if (hasSecurityGuard(world)) {
+		seedBombSearchCursor(world, selectedFloor);
+	} else {
+		es.bombSearchCurrentFloor = -1;
+		es.bombSearchScanTile = -1;
+	}
 
 	const ransom = BOMB_RANSOM[time.starCount] ?? 0;
 	world.pendingPrompts.push({
@@ -194,9 +209,60 @@ export function tickBombEvent(
 		return;
 	}
 	// Check active search deadline → detonation
+	if ((es.gameStateFlags & 1) !== 0 && hasSecurityGuard(world)) {
+		advanceBombSearch(world, time);
+	}
 	if ((es.gameStateFlags & 1) !== 0 && time.dayTick >= es.bombDeadline) {
 		resolveBombSearch(world, time, false);
 	}
+}
+
+function advanceBombSearch(world: WorldState, time: TimeState): void {
+	const es = world.eventState;
+	if (es.bombSearchCurrentFloor < 0) return;
+	const floor = es.bombSearchCurrentFloor;
+	const bounds = floorTileBoundsForFloor(world, floor);
+	if (!bounds) {
+		if (!advanceBombSearchFloor(world)) {
+			es.bombSearchCurrentFloor = -1;
+		}
+		return;
+	}
+	if (es.bombSearchScanTile < 0) {
+		es.bombSearchScanTile = bounds.right - 2;
+	}
+	if (bounds.left < es.bombSearchScanTile) {
+		es.bombSearchScanTile -= 1;
+		checkSecurityPatrolBomb(world, time, floor, es.bombSearchScanTile);
+		return;
+	}
+	if (!advanceBombSearchFloor(world)) {
+		es.bombSearchCurrentFloor = -1;
+	}
+}
+
+function advanceBombSearchFloor(world: WorldState): boolean {
+	const es = world.eventState;
+	const current = es.bombSearchCurrentFloor;
+	if (current < 0) return false;
+	const tryAbove =
+		current <= es.bombFloor ? es.bombSearchUpperBound : es.bombSearchLowerBound;
+	const tryBelow =
+		current <= es.bombFloor ? es.bombSearchLowerBound : es.bombSearchUpperBound;
+	for (const candidate of [tryAbove, tryBelow]) {
+		if (candidate < 0 || candidate >= GRID_HEIGHT) continue;
+		if (candidate === current) continue;
+		const bounds = floorTileBoundsForFloor(world, candidate);
+		if (!bounds) continue;
+		if (candidate >= es.bombFloor) {
+			es.bombSearchUpperBound = candidate + 1;
+		} else {
+			es.bombSearchLowerBound = candidate - 1;
+		}
+		seedBombSearchCursor(world, candidate);
+		return true;
+	}
+	return false;
 }
 
 /**
@@ -250,6 +316,10 @@ function bombCleanup(world: WorldState, time: TimeState): void {
 	const es = world.eventState;
 	// Clear found/detonated flags
 	es.gameStateFlags &= ~0x60;
+	es.bombSearchCurrentFloor = -1;
+	es.bombSearchScanTile = -1;
+	es.bombSearchLowerBound = -1;
+	es.bombSearchUpperBound = -1;
 	// Fast-forward time to 1500 if earlier
 	if (time.dayTick < 1500) {
 		(time as { dayTick: number }).dayTick = 1500;
@@ -601,6 +671,14 @@ export function handlePromptResponse(
 				message: "Helicopter dispatched to fight the fire!",
 			});
 		}
+		return true;
+	}
+
+	if (promptId.startsWith("carrier_remove_")) {
+		const column = world.eventState.pendingCarrierEditColumn;
+		world.eventState.pendingCarrierEditColumn = -1;
+		if (!accepted || column < 0) return true;
+		apply_remove_elevator_car(world, column);
 		return true;
 	}
 
