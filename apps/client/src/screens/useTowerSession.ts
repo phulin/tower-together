@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GameScene } from "../game/GameScene";
-import * as socket from "../lib/socket";
+import type { TowerSocket } from "../lib/socket";
 import type {
 	CarrierCarStateData,
 	ConnectionStatus,
@@ -12,6 +12,7 @@ import type { ActivePrompt, CellInfoData } from "./gameScreenTypes";
 interface UseTowerSessionOptions {
 	playerId: string;
 	displayName: string;
+	socket: TowerSocket;
 	sceneRef: React.MutableRefObject<GameScene | null>;
 	addToast: (message: string, variant?: "error" | "info") => void;
 }
@@ -49,6 +50,7 @@ const DEFAULT_TICK_INTERVAL_MS = 50;
 export function useTowerSession({
 	playerId,
 	displayName,
+	socket,
 	sceneRef,
 	addToast,
 }: UseTowerSessionOptions): UseTowerSessionResult {
@@ -168,7 +170,7 @@ export function useTowerSession({
 					break;
 			}
 		});
-	}, [addToast, sceneRef, updatePresentationClock]);
+	}, [addToast, sceneRef, socket, updatePresentationClock]);
 
 	useEffect(() => {
 		return socket.onStatus((status: ConnectionStatus) => {
@@ -177,7 +179,7 @@ export function useTowerSession({
 				socket.send({ type: "join_tower", playerId, displayName });
 			}
 		});
-	}, [displayName, playerId]);
+	}, [displayName, playerId, socket]);
 
 	const sendTileCommand = useCallback(
 		(x: number, y: number, tileType: string, shift: boolean) => {
@@ -206,12 +208,15 @@ export function useTowerSession({
 			socket.send({ type: "place_tile", x, y, tileType });
 			sceneRef.current?.setLastPlaced(x, y, tileType);
 		},
-		[sceneRef],
+		[sceneRef, socket],
 	);
 
-	const inspectCell = useCallback((x: number, y: number) => {
-		socket.send({ type: "query_cell", x, y });
-	}, []);
+	const inspectCell = useCallback(
+		(x: number, y: number) => {
+			socket.send({ type: "query_cell", x, y });
+		},
+		[socket],
+	);
 
 	const respondToPrompt = useCallback(
 		(accepted: boolean) => {
@@ -223,35 +228,44 @@ export function useTowerSession({
 			});
 			setActivePrompt(null);
 		},
-		[activePrompt],
+		[activePrompt, socket],
 	);
 
-	const setSpeedMultiplier = useCallback((multiplier: 1 | 3 | 10) => {
-		setSpeedMultiplierState(multiplier);
-		socket.send({
-			type: "set_speed",
-			multiplier,
-		});
-	}, []);
+	const setSpeedMultiplier = useCallback(
+		(multiplier: 1 | 3 | 10) => {
+			setSpeedMultiplierState(multiplier);
+			socket.send({
+				type: "set_speed",
+				multiplier,
+			});
+		},
+		[socket],
+	);
 
 	const setRentLevel = useCallback(
 		(x: number, y: number, rentLevel: number) => {
 			socket.send({ type: "set_rent_level", x, y, rentLevel });
 		},
-		[],
+		[socket],
 	);
 
-	const addElevatorCar = useCallback((x: number) => {
-		socket.send({ type: "add_elevator_car", x });
-	}, []);
+	const addElevatorCar = useCallback(
+		(x: number) => {
+			socket.send({ type: "add_elevator_car", x });
+		},
+		[socket],
+	);
 
-	const removeElevatorCar = useCallback((x: number) => {
-		socket.send({ type: "remove_elevator_car", x });
-	}, []);
+	const removeElevatorCar = useCallback(
+		(x: number) => {
+			socket.send({ type: "remove_elevator_car", x });
+		},
+		[socket],
+	);
 
 	const reconnect = useCallback(() => {
 		socket.reconnect();
-	}, []);
+	}, [socket]);
 
 	return {
 		connectionStatus,

@@ -3,148 +3,152 @@ import type { ClientMessage, ConnectionStatus, ServerMessage } from "../types";
 type MessageListener = (msg: ServerMessage) => void;
 type StatusListener = (status: ConnectionStatus) => void;
 
-let ws: WebSocket | null = null;
-let currentTowerId: string | null = null;
-let currentStatus: ConnectionStatus = "disconnected";
-const messageListeners = new Set<MessageListener>();
-const statusListeners = new Set<StatusListener>();
-
-let pingTimer: ReturnType<typeof setInterval> | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let reconnectDelay = 1000; // ms, doubles on each failure up to MAX_RECONNECT_DELAY
 const MAX_RECONNECT_DELAY = 30_000;
-let intentionalDisconnect = false;
 
-function getWsUrl(towerId: string): string {
-	const loc = window.location;
-	const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
-	return `${protocol}//${loc.host}/api/ws/${towerId}`;
-}
+export class TowerSocket {
+	private ws: WebSocket | null = null;
+	private currentTowerId: string | null = null;
+	private currentStatus: ConnectionStatus = "disconnected";
+	private messageListeners = new Set<MessageListener>();
+	private statusListeners = new Set<StatusListener>();
+	private pingTimer: ReturnType<typeof setInterval> | null = null;
+	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	private reconnectDelay = 1000;
+	private intentionalDisconnect = false;
 
-function setStatus(status: ConnectionStatus) {
-	currentStatus = status;
-	for (const l of statusListeners) l(status);
-}
-
-function clearTimers() {
-	if (pingTimer !== null) {
-		clearInterval(pingTimer);
-		pingTimer = null;
+	connect(towerId: string): void {
+		this.intentionalDisconnect = false;
+		this.currentTowerId = towerId;
+		this.reconnectDelay = 1000;
+		this.connectInternal(towerId);
 	}
-	if (reconnectTimer !== null) {
-		clearTimeout(reconnectTimer);
-		reconnectTimer = null;
-	}
-}
 
-function scheduleReconnect() {
-	if (intentionalDisconnect || !currentTowerId) return;
-	reconnectTimer = setTimeout(() => {
-		reconnectTimer = null;
-		if (!intentionalDisconnect && currentTowerId) {
-			connectInternal(currentTowerId);
+	disconnect(): void {
+		this.intentionalDisconnect = true;
+		this.currentTowerId = null;
+		this.clearTimers();
+		if (this.ws) {
+			this.ws.onclose = null;
+			this.ws.close();
+			this.ws = null;
 		}
-	}, reconnectDelay);
-	reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
-}
-
-function connectInternal(towerId: string) {
-	// Close any existing socket without triggering auto-reconnect
-	if (ws) {
-		ws.onclose = null;
-		ws.onerror = null;
-		ws.close();
-		ws = null;
+		this.setStatus("disconnected");
 	}
-	clearTimers();
-	setStatus("connecting");
 
-	ws = new WebSocket(getWsUrl(towerId));
+	send(msg: ClientMessage): void {
+		if (this.ws?.readyState === WebSocket.OPEN) {
+			this.ws.send(JSON.stringify(msg));
+		}
+	}
 
-	ws.onopen = () => {
-		reconnectDelay = 1000; // reset backoff on successful connect
-		setStatus("connected");
-		// Send a ping every 20 s to keep the proxy from timing out the connection
-		pingTimer = setInterval(() => {
-			if (ws?.readyState === WebSocket.OPEN) {
-				ws.send(JSON.stringify({ type: "ping" }));
+	reconnect(): void {
+		if (this.currentTowerId) {
+			this.intentionalDisconnect = false;
+			this.reconnectDelay = 1000;
+			this.connectInternal(this.currentTowerId);
+		}
+	}
+
+	getStatus(): ConnectionStatus {
+		return this.currentStatus;
+	}
+
+	onMessage(listener: MessageListener): () => void {
+		this.messageListeners.add(listener);
+		return () => {
+			this.messageListeners.delete(listener);
+		};
+	}
+
+	onStatus(listener: StatusListener): () => void {
+		this.statusListeners.add(listener);
+		listener(this.currentStatus);
+		return () => {
+			this.statusListeners.delete(listener);
+		};
+	}
+
+	private getWsUrl(towerId: string): string {
+		const loc = window.location;
+		const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
+		return `${protocol}//${loc.host}/api/ws/${towerId}`;
+	}
+
+	private setStatus(status: ConnectionStatus) {
+		this.currentStatus = status;
+		for (const listener of this.statusListeners) {
+			listener(status);
+		}
+	}
+
+	private clearTimers() {
+		if (this.pingTimer !== null) {
+			clearInterval(this.pingTimer);
+			this.pingTimer = null;
+		}
+		if (this.reconnectTimer !== null) {
+			clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
+	}
+
+	private scheduleReconnect() {
+		if (this.intentionalDisconnect || !this.currentTowerId) return;
+		this.reconnectTimer = setTimeout(() => {
+			this.reconnectTimer = null;
+			if (!this.intentionalDisconnect && this.currentTowerId) {
+				this.connectInternal(this.currentTowerId);
 			}
-		}, 20_000);
-	};
+		}, this.reconnectDelay);
+		this.reconnectDelay = Math.min(
+			this.reconnectDelay * 2,
+			MAX_RECONNECT_DELAY,
+		);
+	}
 
-	ws.onmessage = (event: MessageEvent) => {
-		try {
-			const msg = JSON.parse(event.data as string) as ServerMessage;
-			if (msg.type === "pong") return; // keepalive response, nothing to do
-			for (const l of messageListeners) l(msg);
-		} catch (e) {
-			console.error("Failed to parse server message", e);
+	private connectInternal(towerId: string) {
+		if (this.ws) {
+			this.ws.onclose = null;
+			this.ws.onerror = null;
+			this.ws.close();
+			this.ws = null;
 		}
-	};
 
-	ws.onclose = () => {
-		ws = null;
-		clearTimers();
-		setStatus("disconnected");
-		scheduleReconnect();
-	};
+		this.clearTimers();
+		this.setStatus("connecting");
+		this.ws = new WebSocket(this.getWsUrl(towerId));
 
-	ws.onerror = (e) => {
-		console.error("WebSocket error", e);
-		// onclose will fire after onerror, so reconnect logic lives there
-	};
-}
+		this.ws.onopen = () => {
+			this.reconnectDelay = 1000;
+			this.setStatus("connected");
+			this.pingTimer = setInterval(() => {
+				if (this.ws?.readyState === WebSocket.OPEN) {
+					this.ws.send(JSON.stringify({ type: "ping" }));
+				}
+			}, 20_000);
+		};
 
-export function connect(towerId: string): void {
-	intentionalDisconnect = false;
-	currentTowerId = towerId;
-	reconnectDelay = 1000;
-	connectInternal(towerId);
-}
+		this.ws.onmessage = (event: MessageEvent) => {
+			try {
+				const msg = JSON.parse(event.data as string) as ServerMessage;
+				if (msg.type === "pong") return;
+				for (const listener of this.messageListeners) {
+					listener(msg);
+				}
+			} catch (error) {
+				console.error("Failed to parse server message", error);
+			}
+		};
 
-export function disconnect(): void {
-	intentionalDisconnect = true;
-	currentTowerId = null;
-	clearTimers();
-	if (ws) {
-		ws.onclose = null;
-		ws.close();
-		ws = null;
+		this.ws.onclose = () => {
+			this.ws = null;
+			this.clearTimers();
+			this.setStatus("disconnected");
+			this.scheduleReconnect();
+		};
+
+		this.ws.onerror = (error) => {
+			console.error("WebSocket error", error);
+		};
 	}
-	setStatus("disconnected");
-}
-
-export function send(msg: ClientMessage): void {
-	if (ws?.readyState === WebSocket.OPEN) {
-		ws.send(JSON.stringify(msg));
-	}
-}
-
-export function reconnect(): void {
-	if (currentTowerId) {
-		intentionalDisconnect = false;
-		reconnectDelay = 1000;
-		connectInternal(currentTowerId);
-	}
-}
-
-export function getStatus(): ConnectionStatus {
-	return currentStatus;
-}
-
-/** Subscribe to incoming messages. Returns unsubscribe function. */
-export function onMessage(listener: MessageListener): () => void {
-	messageListeners.add(listener);
-	return () => {
-		messageListeners.delete(listener);
-	};
-}
-
-/** Subscribe to status changes. Fires immediately with current status. Returns unsubscribe function. */
-export function onStatus(listener: StatusListener): () => void {
-	statusListeners.add(listener);
-	listener(currentStatus);
-	return () => {
-		statusListeners.delete(listener);
-	};
 }

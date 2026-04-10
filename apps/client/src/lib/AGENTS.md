@@ -2,5 +2,5 @@
 
 Client utility modules.
 
-- **socket.ts** — `TowerSocket` class. Wraps a native `WebSocket`, derives the correct `ws://`/`wss://` URL (dev port 5173 → `localhost:8787`), and exposes `send(msg)`, `reconnect()`, and `destroy()`. Invokes `onMessage` and `onStatus` callbacks provided by `GameScreen`.
+- **socket.ts** — `TowerSocket` class. Wraps a native `WebSocket`, owns reconnect/ping timers and listener sets per instance, derives the correct `ws://`/`wss://` URL, and exposes `connect()`, `disconnect()`, `send()`, `reconnect()`, `getStatus()`, `onMessage()`, and `onStatus()` so `App` can own socket lifecycle explicitly instead of relying on module-global state.
 - **storage.ts** — localStorage helpers: `savePlayer`, `getPlayer`, `clearPlayer`, `addRecentTower`, `getRecentTowers`, `generateUUID`.

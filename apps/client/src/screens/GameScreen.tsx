@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import type { GameScene } from "../game/GameScene";
 import { PhaserGame } from "../game/PhaserGame";
 import { buildTransportMetrics } from "../game/transportSelectors";
+import type { TowerSocket } from "../lib/socket";
 import type { SelectedTool } from "../types";
 import { DAY_TICK_MAX, TILE_COSTS } from "../types";
 import { CellInspectionDialog } from "./CellInspectionDialog";
@@ -17,6 +18,7 @@ import { useTowerSession } from "./useTowerSession";
 interface Props {
 	playerId: string;
 	displayName: string;
+	socket: TowerSocket;
 	towerId: string;
 	onLeave: () => void;
 }
@@ -102,7 +104,13 @@ const TOOLS: ToolDef[] = [
 
 let toastCounter = 0;
 
-export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
+export function GameScreen({
+	playerId,
+	displayName,
+	socket,
+	towerId,
+	onLeave,
+}: Props) {
 	const [selectedTool, setSelectedTool] = useState<SelectedTool>("floor");
 	const [isRenaming, setIsRenaming] = useState(false);
 	const [aliasInput, setAliasInput] = useState("");
@@ -147,6 +155,7 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 	} = useTowerSession({
 		playerId,
 		displayName,
+		socket,
 		sceneRef,
 		addToast,
 	});
