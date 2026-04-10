@@ -51,6 +51,7 @@ const ROUTE_MODE_SEGMENT = 1;
 const ROUTE_MODE_CARRIER = 2;
 const COMMERCIAL_VENUE_DWELL_TICKS = 60;
 const COMMERCIAL_DWELL_STATE = 0x62;
+const CONDO_COMMERCIAL_FAMILIES = new Set([6, 10]);
 
 function makeEntity(
 	floorAnchor: number,
@@ -378,6 +379,90 @@ function beginCommercialVenueDwell(
 	entity.stateCode = COMMERCIAL_DWELL_STATE;
 }
 
+function beginCommercialVenueTrip(
+	entity: EntityRecord,
+	destinationFloor: number,
+): void {
+	entity.encodedRouteTarget = destinationFloor;
+	entity.selectedFloor = entity.floorAnchor;
+	entity.stateCode = 0x22;
+}
+
+function finishCommercialVenueDwell(
+	entity: EntityRecord,
+	time: TimeState,
+	defaultState: number,
+): boolean {
+	if (entity.stateCode !== COMMERCIAL_DWELL_STATE) return false;
+	if (time.dayTick - entity.word0a < COMMERCIAL_VENUE_DWELL_TICKS) return true;
+	entity.selectedFloor = entity.floorAnchor;
+	entity.stateCode = entity.auxState || defaultState;
+	entity.auxState = 0;
+	return true;
+}
+
+function finishCommercialVenueTrip(
+	entity: EntityRecord,
+	returnState: number,
+): boolean {
+	if (entity.stateCode !== 0x22) return false;
+	if (entity.selectedFloor !== entity.encodedRouteTarget) return true;
+	entity.encodedRouteTarget = -1;
+	entity.selectedFloor = entity.floorAnchor;
+	entity.stateCode = returnState;
+	return true;
+}
+
+function dispatchCommercialVenueVisit(
+	world: WorldState,
+	time: TimeState,
+	entity: EntityRecord,
+	options: {
+		venueFamilies: Set<number>;
+		returnState: number;
+		successStressDelta: number;
+		failureStressDelta: number;
+		unavailableState?: number;
+		onVenueReserved?: () => void;
+	},
+): boolean {
+	const venue = pickAvailableVenue(
+		world,
+		entity.floorAnchor,
+		options.venueFamilies,
+	);
+	if (!venue) {
+		raiseStress(entity, options.failureStressDelta);
+		if (options.unavailableState !== undefined) {
+			entity.stateCode = options.unavailableState;
+		}
+		return false;
+	}
+
+	reserveVenue(venue.record);
+	recordDemandSample(entity, time);
+	options.onVenueReserved?.();
+	if (venue.floor === entity.floorAnchor) {
+		beginCommercialVenueDwell(entity, venue.floor, options.returnState);
+	} else {
+		beginCommercialVenueTrip(entity, venue.floor);
+	}
+	lowerStress(entity, options.successStressDelta);
+	return true;
+}
+
+function handleCommercialVenueArrival(
+	entity: EntityRecord,
+	arrivalFloor: number,
+	returnState: number,
+): boolean {
+	if (entity.stateCode !== 0x22 || entity.encodedRouteTarget !== arrivalFloor) {
+		return false;
+	}
+	beginCommercialVenueDwell(entity, arrivalFloor, returnState);
+	return true;
+}
+
 function activateHotelStay(
 	world: WorldState,
 	entity: EntityRecord,
@@ -461,37 +546,22 @@ function processHotelEntity(
 				entity.stateCode = 0x05;
 				return;
 			}
-			const venue = pickAvailableVenue(
-				world,
-				entity.floorAnchor,
-				COMMERCIAL_FAMILIES,
-			);
-			if (venue) {
-				reserveVenue(venue.record);
-				recordDemandSample(entity, time);
-				object.activationTickCount = Math.min(
-					0x78,
-					object.activationTickCount + 1,
-				);
-				if (venue.floor === entity.floorAnchor) {
-					beginCommercialVenueDwell(entity, venue.floor, 0x01);
-					lowerStress(entity, 16);
-					return;
-				}
-				entity.encodedRouteTarget = venue.floor;
-				entity.selectedFloor = entity.floorAnchor;
-				entity.stateCode = 0x22;
-				lowerStress(entity, 16);
-			} else {
-				raiseStress(entity, 8);
-			}
+			dispatchCommercialVenueVisit(world, time, entity, {
+				venueFamilies: COMMERCIAL_FAMILIES,
+				returnState: 0x01,
+				successStressDelta: 16,
+				failureStressDelta: 8,
+				onVenueReserved: () => {
+					object.activationTickCount = Math.min(
+						0x78,
+						object.activationTickCount + 1,
+					);
+				},
+			});
 			return;
 		}
 		case 0x22:
-			if (entity.selectedFloor !== entity.encodedRouteTarget) return;
-			entity.encodedRouteTarget = -1;
-			entity.selectedFloor = entity.floorAnchor;
-			entity.stateCode = 0x01;
+			finishCommercialVenueTrip(entity, 0x01);
 			return;
 		case 0x05:
 		case 0x04:
@@ -514,10 +584,7 @@ function processHotelEntity(
 			checkoutHotelStay(world, ledger, entity, object);
 			return;
 		case COMMERCIAL_DWELL_STATE:
-			if (time.dayTick - entity.word0a < COMMERCIAL_VENUE_DWELL_TICKS) return;
-			entity.selectedFloor = entity.floorAnchor;
-			entity.stateCode = entity.auxState || 0x01;
-			entity.auxState = 0;
+			finishCommercialVenueDwell(entity, time, 0x01);
 			return;
 		default:
 			entity.stateCode = 0x24;
@@ -611,10 +678,7 @@ function processOfficeEntity(
 	}
 
 	if (state === COMMERCIAL_DWELL_STATE) {
-		if (time.dayTick - entity.word0a < COMMERCIAL_VENUE_DWELL_TICKS) return;
-		entity.selectedFloor = entity.floorAnchor;
-		entity.stateCode = entity.auxState || 0x21;
-		entity.auxState = 0;
+		finishCommercialVenueDwell(entity, time, 0x21);
 		return;
 	}
 
@@ -629,27 +693,13 @@ function processOfficeEntity(
 			return;
 		}
 
-		const venue = pickAvailableVenue(
-			world,
-			entity.floorAnchor,
-			COMMERCIAL_FAMILIES,
-		);
-		if (venue) {
-			reserveVenue(venue.record);
-			recordDemandSample(entity, time);
-			if (venue.floor === entity.floorAnchor) {
-				beginCommercialVenueDwell(entity, venue.floor, 0x21);
-				lowerStress(entity, 12);
-				return;
-			}
-			entity.encodedRouteTarget = venue.floor;
-			entity.selectedFloor = entity.floorAnchor;
-			entity.stateCode = 0x22;
-			lowerStress(entity, 12);
-		} else {
-			raiseStress(entity, 8);
-			entity.stateCode = 0x26;
-		}
+		dispatchCommercialVenueVisit(world, time, entity, {
+			venueFamilies: COMMERCIAL_FAMILIES,
+			returnState: 0x21,
+			successStressDelta: 12,
+			failureStressDelta: 8,
+			unavailableState: 0x26,
+		});
 		return;
 	}
 
@@ -705,38 +755,16 @@ function processCondoEntity(
 	}
 
 	if (entity.stateCode === 0x27) entity.stateCode = 0x01;
-	if (entity.stateCode === COMMERCIAL_DWELL_STATE) {
-		if (time.dayTick - entity.word0a < COMMERCIAL_VENUE_DWELL_TICKS) return;
-		entity.selectedFloor = entity.floorAnchor;
-		entity.stateCode = entity.auxState || 0x01;
-		entity.auxState = 0;
-	}
+	if (finishCommercialVenueDwell(entity, time, 0x01)) return;
 	if (entity.stateCode === 0x01) {
-		const venue = pickAvailableVenue(
-			world,
-			entity.floorAnchor,
-			new Set([6, 10]),
-		);
-		if (venue) {
-			reserveVenue(venue.record);
-			recordDemandSample(entity, time);
-			if (venue.floor === entity.floorAnchor) {
-				beginCommercialVenueDwell(entity, venue.floor, 0x01);
-				lowerStress(entity, 10);
-				return;
-			}
-			entity.encodedRouteTarget = venue.floor;
-			entity.selectedFloor = entity.floorAnchor;
-			entity.stateCode = 0x22;
-			lowerStress(entity, 10);
-		} else {
-			raiseStress(entity, 7);
-		}
+		dispatchCommercialVenueVisit(world, time, entity, {
+			venueFamilies: CONDO_COMMERCIAL_FAMILIES,
+			returnState: 0x01,
+			successStressDelta: 10,
+			failureStressDelta: 7,
+		});
 	} else if (entity.stateCode === 0x22) {
-		if (entity.selectedFloor !== entity.encodedRouteTarget) return;
-		entity.encodedRouteTarget = -1;
-		entity.selectedFloor = entity.floorAnchor;
-		entity.stateCode = 0x01;
+		finishCommercialVenueTrip(entity, 0x01);
 	}
 
 	recomputeObjectOperationalStatus(world, time, entity, object);
@@ -1080,11 +1108,7 @@ function dispatch_entity_arrival(
 		case 3:
 		case 4:
 		case 5:
-			if (
-				entity.stateCode === 0x22 &&
-				entity.encodedRouteTarget === arrivalFloor
-			) {
-				beginCommercialVenueDwell(entity, arrivalFloor, 0x01);
+			if (handleCommercialVenueArrival(entity, arrivalFloor, 0x01)) {
 				return;
 			}
 			if (
@@ -1106,11 +1130,7 @@ function dispatch_entity_arrival(
 				return;
 			}
 			// Arrived at venue floor from venue trip (0x22)
-			if (
-				entity.stateCode === 0x22 &&
-				entity.encodedRouteTarget === arrivalFloor
-			) {
-				beginCommercialVenueDwell(entity, arrivalFloor, 0x21);
+			if (handleCommercialVenueArrival(entity, arrivalFloor, 0x21)) {
 				return;
 			}
 			// Arrived at lobby from evening departure (0x05)
@@ -1121,12 +1141,7 @@ function dispatch_entity_arrival(
 			}
 			return;
 		case 9:
-			if (
-				entity.stateCode === 0x22 &&
-				entity.encodedRouteTarget === arrivalFloor
-			) {
-				beginCommercialVenueDwell(entity, arrivalFloor, 0x01);
-			}
+			handleCommercialVenueArrival(entity, arrivalFloor, 0x01);
 			return;
 		default:
 			// Cathedral evaluation entities
