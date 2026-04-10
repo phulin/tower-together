@@ -5,10 +5,10 @@ No I/O, no Cloudflare dependencies, no Phaser. Fully unit-testable in Node.
 ## Files
 
 ### `index.ts`
-`TowerSim` class — the public façade. Exposes `create()`, `from_snapshot()`, `step()`, `submit_command()`, `save_state()`, and read-only accessors. `step()` advances the clock by one tick and fires all checkpoints via `scheduler.ts`. `submit_command()` accepts sim-level commands only and delegates to `commands.ts`.
+`TowerSim` class — the public façade. Exposes `create()`, `from_snapshot()`, `step()`, `submit_command()`, `save_state()`, and read-only accessors. `step()` advances the clock by one tick and fires all checkpoints via `scheduler.ts`. `submit_command()` accepts sim-level commands only and delegates to `commands.ts`. Snapshot hydration/defaulting and persistence cloning now live in `snapshot.ts`, keeping the class focused on runtime orchestration plus query helpers.
 
 ### `snapshot.ts`
-Simulation snapshot helpers. Owns new-game snapshot creation plus snapshot normalization/migration for persisted saves before `TowerSim.from_snapshot()` reconstructs runtime state.
+Simulation snapshot helpers. Owns new-game snapshot creation plus snapshot normalization/migration for persisted saves, runtime hydration/defaulting (`hydrateSnapshot()`), and snapshot-safe cloning of live sim state for persistence (`serializeSimState()`).
 
 ### `time.ts`
 `TimeState` + `advanceOneTick()`. Tracks `day_tick` (0–2599), `daypart_index` (day_tick÷400), `day_counter`, `calendar_phase_flag`, `star_count`, and `total_ticks`. Constants: `DAY_TICK_MAX = 0x0a28`, `DAY_TICK_INCOME = 0x08fc`, `NEW_GAME_DAY_TICK = 0x9e5`. Two factory functions: `createTimeState()` (starts at tick 0, for unit tests) and `createNewGameTimeState()` (starts at 0x9e5 / daypart 6, matches the real game's `new_game_initializer`).

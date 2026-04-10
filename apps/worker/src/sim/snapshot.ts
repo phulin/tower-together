@@ -1,7 +1,14 @@
+import { init_carrier_state } from "./carriers";
+import { rebuild_runtime_entities } from "./entities";
 import type { LedgerState } from "./ledger";
 import { createLedgerState } from "./ledger";
 import { LEGACY_VIP_TILE_TO_STANDARD } from "./resources";
 import { RingBuffer } from "./ring-buffer";
+import {
+	rebuild_special_links,
+	rebuild_transfer_group_cache,
+	rebuild_walkability_flags,
+} from "./routing";
 import { createNewGameTimeState, type TimeState } from "./time";
 import {
 	createEventState,
@@ -302,4 +309,114 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	}
 
 	return snapshot;
+}
+
+export function hydrateSnapshot(raw: SimSnapshot): SimSnapshot {
+	const snapshot = normalizeSnapshot(raw);
+
+	if (snapshot.world.height < GRID_HEIGHT) snapshot.world.height = GRID_HEIGHT;
+	snapshot.world.placedObjects ??= {};
+	snapshot.world.sidecars ??= [];
+	snapshot.world.entities ??= [];
+
+	if (!snapshot.ledger) {
+		const legacyWorld = snapshot.world as unknown as Record<string, unknown>;
+		const cash = (legacyWorld.cash as number) ?? 2_000_000;
+		snapshot.ledger = createLedgerState(cash);
+		delete (snapshot.world as unknown as Record<string, unknown>).cash;
+	}
+
+	init_carrier_state(snapshot.world);
+	for (const carrier of snapshot.world.carriers) {
+		carrier.completedRouteIds ??= [];
+		if (
+			!Array.isArray(carrier.dwellMultiplierFlags) ||
+			carrier.dwellMultiplierFlags.length !== 14
+		) {
+			carrier.dwellMultiplierFlags = new Array(14).fill(1);
+		}
+		for (const route of carrier.pendingRoutes ?? []) {
+			route.assignedCarIndex ??= -1;
+		}
+		for (const car of carrier.cars ?? []) {
+			car.active ??= true;
+			car.pendingAssignmentCount ??= 0;
+			car.homeFloor ??= car.currentFloor ?? carrier.bottomServedFloor;
+			car.destinationCountByFloor ??= new Array(
+				Math.max(0, carrier.topServedFloor - carrier.bottomServedFloor + 1),
+			).fill(0);
+			car.activeRouteSlots ??= [];
+		}
+	}
+
+	snapshot.world.specialLinks ??= createEmptySpecialLinks();
+	snapshot.world.specialLinkRecords ??= createEmptySpecialLinkRecords();
+	snapshot.world.transferGroupEntries ??= createEmptyTransferGroupEntries();
+	for (const entity of snapshot.world.entities) {
+		entity.routeRetryDelay ??= 0;
+	}
+	snapshot.world.eventState ??= createEventState();
+
+	rebuild_special_links(snapshot.world);
+	rebuild_walkability_flags(snapshot.world);
+	rebuild_transfer_group_cache(snapshot.world);
+	rebuild_runtime_entities(snapshot.world);
+
+	return snapshot;
+}
+
+export function serializeSimState(
+	time: TimeState,
+	world: WorldState,
+	ledger: LedgerState,
+): SimSnapshot {
+	return {
+		time: { ...time },
+		world: {
+			towerId: world.towerId,
+			name: world.name,
+			width: world.width,
+			height: world.height,
+			gateFlags: { ...world.gateFlags },
+			cells: { ...world.cells },
+			cellToAnchor: { ...world.cellToAnchor },
+			overlays: { ...world.overlays },
+			overlayToAnchor: { ...world.overlayToAnchor },
+			placedObjects: JSON.parse(
+				JSON.stringify(world.placedObjects),
+			) as WorldState["placedObjects"],
+			sidecars: JSON.parse(
+				JSON.stringify(world.sidecars),
+			) as WorldState["sidecars"],
+			entities: JSON.parse(
+				JSON.stringify(world.entities),
+			) as WorldState["entities"],
+			carriers: JSON.parse(
+				JSON.stringify(world.carriers),
+			) as WorldState["carriers"],
+			specialLinks: JSON.parse(
+				JSON.stringify(world.specialLinks),
+			) as WorldState["specialLinks"],
+			specialLinkRecords: JSON.parse(
+				JSON.stringify(world.specialLinkRecords),
+			) as WorldState["specialLinkRecords"],
+			floorWalkabilityFlags: [...world.floorWalkabilityFlags],
+			transferGroupEntries: JSON.parse(
+				JSON.stringify(world.transferGroupEntries),
+			) as WorldState["transferGroupEntries"],
+			transferGroupCache: [...world.transferGroupCache],
+			eventState: JSON.parse(
+				JSON.stringify(world.eventState),
+			) as WorldState["eventState"],
+			pendingNotifications: [],
+			pendingPrompts: [],
+		},
+		ledger: {
+			cashBalance: ledger.cashBalance,
+			populationLedger: [...ledger.populationLedger],
+			incomeLedger: [...ledger.incomeLedger],
+			expenseLedger: [...ledger.expenseLedger],
+			cashBalanceCycleBase: ledger.cashBalanceCycleBase,
+		},
+	};
 }

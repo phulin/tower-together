@@ -1,4 +1,4 @@
-import { init_carrier_state, tick_all_carriers } from "./carriers";
+import { tick_all_carriers } from "./carriers";
 import type { CellPatch, CommandResult, SimCommand } from "./commands";
 import {
 	handle_add_elevator_car,
@@ -12,7 +12,6 @@ import {
 	create_entity_state_records,
 	on_carrier_arrival,
 	populate_carrier_requests,
-	rebuild_runtime_entities,
 	reconcile_entity_transport,
 } from "./entities";
 import {
@@ -22,28 +21,17 @@ import {
 	tickVipSpecialVisitor,
 	triggerRandomNewsEvent,
 } from "./events";
-import { createLedgerState, type LedgerState } from "./ledger";
+import type { LedgerState } from "./ledger";
 import { STARTING_CASH } from "./resources";
-import {
-	rebuild_special_links,
-	rebuild_transfer_group_cache,
-	rebuild_walkability_flags,
-} from "./routing";
 import { run_checkpoints, type SimState } from "./scheduler";
 import {
 	createInitialSnapshot,
-	normalizeSnapshot,
+	hydrateSnapshot,
 	type SimSnapshot,
+	serializeSimState,
 } from "./snapshot";
 import { advanceOneTick, type TimeState } from "./time";
-import {
-	createEventState,
-	GRID_HEIGHT,
-	MAX_SPECIAL_LINK_RECORDS,
-	MAX_SPECIAL_LINKS,
-	MAX_TRANSFER_GROUPS,
-	type WorldState,
-} from "./world";
+import type { WorldState } from "./world";
 
 export type { EntityStateRecord } from "./entities";
 export type { SimSnapshot } from "./snapshot";
@@ -97,89 +85,8 @@ export class TowerSim {
 	}
 
 	static from_snapshot(snap: SimSnapshot): TowerSim {
-		const normalized = normalizeSnapshot(snap);
-
-		// Migrate old saves that have a flat WorldState without placedObjects
-		if (normalized.world.height < GRID_HEIGHT)
-			normalized.world.height = GRID_HEIGHT;
-		normalized.world.placedObjects ??= {};
-		normalized.world.sidecars ??= [];
-		normalized.world.entities ??= [];
-
-		// Migrate old saves that stored cash in world instead of ledger
-		if (!normalized.ledger) {
-			const old = normalized.world as unknown as Record<string, unknown>;
-			const cash = (old.cash as number) ?? STARTING_CASH;
-			normalized.ledger = createLedgerState(cash);
-			delete (normalized.world as unknown as Record<string, unknown>).cash;
-		}
-
-		// Migrate old saves without Phase 3 carrier/routing fields
-		init_carrier_state(normalized.world);
-		for (const carrier of normalized.world.carriers) {
-			carrier.completedRouteIds ??= [];
-			if (
-				!Array.isArray(carrier.dwellMultiplierFlags) ||
-				carrier.dwellMultiplierFlags.length !== 14
-			) {
-				carrier.dwellMultiplierFlags = new Array(14).fill(1);
-			}
-			for (const route of carrier.pendingRoutes ?? []) {
-				route.assignedCarIndex ??= -1;
-			}
-			for (const car of carrier.cars ?? []) {
-				car.active ??= true;
-				car.pendingAssignmentCount ??= 0;
-				car.homeFloor ??= car.currentFloor ?? carrier.bottomServedFloor;
-				car.destinationCountByFloor ??= new Array(
-					Math.max(0, carrier.topServedFloor - carrier.bottomServedFloor + 1),
-				).fill(0);
-				car.activeRouteSlots ??= [];
-			}
-		}
-		normalized.world.specialLinks ??= Array.from(
-			{ length: MAX_SPECIAL_LINKS },
-			() => ({
-				active: false,
-				flags: 0,
-				heightMetric: 0,
-				entryFloor: 0,
-				reservedByte: 0,
-				descendingLoadCounter: 0,
-				ascendingLoadCounter: 0,
-			}),
-		);
-		normalized.world.specialLinkRecords ??= Array.from(
-			{ length: MAX_SPECIAL_LINK_RECORDS },
-			() => ({
-				active: false,
-				lowerFloor: 0,
-				upperFloor: 0,
-				reachabilityMasksByFloor: new Array(GRID_HEIGHT).fill(0),
-			}),
-		);
-		normalized.world.transferGroupEntries ??= Array.from(
-			{ length: MAX_TRANSFER_GROUPS },
-			() => ({
-				active: false,
-				taggedFloor: -1,
-				carrierMask: 0,
-			}),
-		);
-		// Migrate entity fields added after initial release
-		for (const entity of normalized.world.entities) {
-			entity.routeRetryDelay ??= 0;
-		}
-		// Migrate old saves without event state
-		normalized.world.eventState ??= createEventState();
-
-		// Recompute derived routing state from carriers
-		rebuild_special_links(normalized.world);
-		rebuild_walkability_flags(normalized.world);
-		rebuild_transfer_group_cache(normalized.world);
-		rebuild_runtime_entities(normalized.world);
-
-		return new TowerSim(normalized.time, normalized.world, normalized.ledger);
+		const hydrated = hydrateSnapshot(snap);
+		return new TowerSim(hydrated.time, hydrated.world, hydrated.ledger);
 	}
 
 	// ── Tick ──────────────────────────────────────────────────────────────────
@@ -362,63 +269,7 @@ export class TowerSim {
 	// ── Serialization ──────────────────────────────────────────────────────────
 
 	save_state(): SimSnapshot {
-		return {
-			time: { ...this.time },
-			world: this.cloneWorld(),
-			ledger: this.cloneLedger(),
-		};
-	}
-
-	private cloneWorld(): WorldState {
-		return {
-			towerId: this.world.towerId,
-			name: this.world.name,
-			width: this.world.width,
-			height: this.world.height,
-			gateFlags: { ...this.world.gateFlags },
-			cells: { ...this.world.cells },
-			cellToAnchor: { ...this.world.cellToAnchor },
-			overlays: { ...this.world.overlays },
-			overlayToAnchor: { ...this.world.overlayToAnchor },
-			placedObjects: JSON.parse(
-				JSON.stringify(this.world.placedObjects),
-			) as WorldState["placedObjects"],
-			sidecars: JSON.parse(
-				JSON.stringify(this.world.sidecars),
-			) as WorldState["sidecars"],
-			entities: JSON.parse(
-				JSON.stringify(this.world.entities),
-			) as WorldState["entities"],
-			carriers: JSON.parse(
-				JSON.stringify(this.world.carriers),
-			) as WorldState["carriers"],
-			specialLinks: JSON.parse(
-				JSON.stringify(this.world.specialLinks),
-			) as WorldState["specialLinks"],
-			specialLinkRecords: JSON.parse(
-				JSON.stringify(this.world.specialLinkRecords),
-			) as WorldState["specialLinkRecords"],
-			floorWalkabilityFlags: [...this.world.floorWalkabilityFlags],
-			transferGroupEntries: JSON.parse(
-				JSON.stringify(this.world.transferGroupEntries),
-			) as WorldState["transferGroupEntries"],
-			transferGroupCache: [...this.world.transferGroupCache],
-			eventState: JSON.parse(
-				JSON.stringify(this.world.eventState),
-			) as WorldState["eventState"],
-			pendingNotifications: [],
-			pendingPrompts: [],
-		};
-	}
-
-	private cloneLedger(): LedgerState {
-		return {
-			cashBalance: this.ledger.cashBalance,
-			populationLedger: [...this.ledger.populationLedger],
-			incomeLedger: [...this.ledger.incomeLedger],
-			expenseLedger: [...this.ledger.expenseLedger],
-			cashBalanceCycleBase: this.ledger.cashBalanceCycleBase,
-		};
+		return serializeSimState(this.time, this.world, this.ledger);
 	}
 
 	drainNotifications(): Array<{ kind: string; message: string }> {
