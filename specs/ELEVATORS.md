@@ -14,13 +14,59 @@ These labels are build identities. The router's local-vs-express selection is re
 
 A carrier needs:
 
-- carrier mode
+- carrier mode (0 = express, 1 = standard/local, 2 = service)
 - top and bottom served floors
 - assignment capacity
 - per-daypart schedule data
 - served-floor flags
 - upward and downward floor-assignment tables
 - up to 8 car units
+
+### Schedule Tables
+
+Each carrier has two 14-byte schedule arrays in the carrier header:
+
+| Offset | Name | Meaning |
+|--------|------|---------|
+| `+0x20` | `schedule_mode_table[14]` | per-slot operational mode / dwell multiplier (reloaded into car's `schedule_flag` at terminal floors) |
+| `+0x2e` | `enable_table[14]` | per-slot enable flag (0 = disabled, nonzero = enabled) |
+
+The current schedule slot index is computed as:
+
+```
+schedule_index = g_daypart_index + g_calendar_phase_flag * 7
+```
+
+This produces 14 values: 7 dayparts × 2 calendar phases. `g_daypart_index` ranges 0–6,
+`g_calendar_phase_flag` is 0 or 1.
+
+The same index is also used to read the idle-home vs moving-car comparison threshold
+from carrier header byte `+0x12` (via `served_floor_flags[schedule_index - 0x30]` in
+the decompilation, which resolves to the same carrier-header region).
+
+### Schedule Modes
+
+The `schedule_mode_table` value controls both the car's operational mode (in
+`select_next_target_floor`) and its dwell time (in `should_car_depart`):
+
+| `enable_table[slot]` | `schedule_mode_table[slot]` | Mode | Dwell | Behavior |
+|---|---|---|---|---|
+| 0 | (any) | Disabled | 0 | Car departs immediately, does not pick up passengers |
+| nonzero | 1 | Express up | 30 ticks | Scans downward for assignments; fallback target = `top_served_floor` |
+| nonzero | 2 | Express down | 60 ticks | Scans upward for assignments; fallback target = `bottom_served_floor` |
+| nonzero | other | Normal | `value * 30` ticks | Bidirectional sweep: scan current direction, wrap at endpoints |
+
+Binary-verified from `select_next_target_floor` at `1098:1553`:
+
+- **Express up** (`schedule_flag == 1`): car prioritizes ascending. When it has no
+  assignments in the downward scan, it returns to `top_served_floor`. This is the
+  morning rush mode — shuttles passengers from lobby to upper floors.
+- **Express down** (`schedule_flag == 2`): car prioritizes descending. When it has no
+  assignments in the upward scan, it returns to `bottom_served_floor`. This is the
+  evening rush mode — shuttles passengers from upper floors to lobby.
+- **Normal** (any other value): standard bidirectional sweep. The car scans for
+  assigned floors in its current direction, wraps around at endpoints, and returns
+  -1 if no assignments exist.
 
 Assignment capacities:
 
@@ -123,26 +169,30 @@ Recovered idle-floor behavior:
 
 ## Motion Profile
 
-Motion profile is distance-sensitive.
+Motion profile is computed by `compute_car_motion_mode`, which returns a mode 0–3 based
+on `carrier_mode`, distance to target, and distance from previous floor.
 
-Express carriers:
+### carrier_mode 0 (express elevator)
 
-- stop/dwell when they are within 1 floor of either the previous floor or the target floor
-- move `+/-3` floors per step when far from both
-- otherwise move `+/-1` floor per step
+| Condition | Mode | Step | Door wait |
+|-----------|------|------|-----------|
+| `dist_to_target < 2` OR `dist_from_prev < 2` | 0 (stop) | set `speed_counter = 5` | 5 ticks |
+| `dist_to_target > 4` AND `dist_from_prev > 4` | 3 (fast) | ±3 floors/step | — |
+| otherwise | 2 (normal) | ±1 floor/step | — |
 
-Standard and Service carriers:
+### carrier_mode ≠ 0 (standard / service elevator)
 
-- stop/dwell when they are within 1 floor of either the previous floor or the target floor
-- use a short slow-stop mode when within 3 floors of either
-- otherwise move `+/-1` floor per step
+| Condition | Mode | Step | Door wait |
+|-----------|------|------|-----------|
+| `dist_to_target < 2` OR `dist_from_prev < 2` | 0 (stop) | set `speed_counter = 5` | 5 ticks |
+| `dist_to_target < 4` OR `dist_from_prev < 4` | 1 (slow) | ±1 floor/step | 2 ticks |
+| otherwise | 2 (normal) | ±1 floor/step | — |
 
-Door dwell times:
-
-- full stop: `5` ticks
-- slow stop: `2` ticks
-
-`speed_counter = 5` is also the boarding/departure-sequence marker checked by the arrival handler.
+Notes:
+- Mode 3 (±3 floors/step) exists **only** for carrier_mode 0 (express elevators).
+- Standard and service elevators have a slow-stop band (mode 1) that express elevators lack.
+- `speed_counter = 5` is also the boarding/departure-sequence marker checked by the arrival handler.
+- Distance is `abs(current_floor - target_floor)` or `abs(current_floor - prev_floor)`.
 
 ## Departure Rules
 
@@ -209,11 +259,38 @@ Residual note:
 - this looks like a genuine binary quirk, not a decompiler inference artifact, because the final instruction path writes the literal `0`
 - a faithful reimplementation should preserve that behavior unless direct parity testing proves a control-flow reconstruction mistake
 
-Target-floor selection:
+## Home Floor
 
-- if a car has no pending assignments and no special flag, it returns to its home floor
-- otherwise it scans the direction-appropriate floor-assignment tables in the current travel direction
-- at top/bottom served floors, reversal is allowed when the current dwell flag requests it
+Each car has a per-car home floor stored at:
+
+```
+carrier->reachability_masks_by_floor[car_index - 8]
+```
+
+This is set at construction time and is per-car (not per-carrier).
+
+Target-floor selection (`select_next_target_floor` at `1098:1553`):
+
+- if a car has no pending assignments (`pending_assignment_count == 0`) and no special
+  flag, it returns to its home floor
+- otherwise behavior depends on the car's current `schedule_flag`:
+
+**`schedule_flag == 1` (express up):**
+- scans downward from current floor for assigned floors (passengers to pick up or
+  destination requests)
+- if no downward assignment found, returns `top_served_floor` as the target
+- this biases the car toward ascending — ideal for morning rush
+
+**`schedule_flag == 2` (express down):**
+- scans upward from current floor for assigned floors
+- if no upward assignment found, returns `bottom_served_floor` as the target
+- this biases the car toward descending — ideal for evening rush
+
+**Any other `schedule_flag` value (normal):**
+- scans for assigned floors in the current travel direction
+- if nothing found in current direction, wraps around: reverses direction and scans
+  from the opposite endpoint back toward the current floor
+- if still nothing found, returns -1 (no target)
 
 ## Slot Limits
 

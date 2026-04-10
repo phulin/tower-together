@@ -42,171 +42,250 @@ documented with field layout and two-step computation.
 
 ## Tier 1 --- Blocks Major Subsystem Implementation
 
-### G-010: Elevator schedule table structure
+### G-010: Elevator schedule table structure --- RESOLVED
 
-ELEVATORS.md references a "14-entry daypart/calendar schedule table" and
-`schedule_flag` values that control dwell time (`schedule_flag * 30` ticks) and
-departure/reversal behavior. Missing:
-- What the 14 entries represent (dayparts? time slots? calendar phases?).
-- Valid `schedule_flag` values and their semantics.
-- Behavior when `schedule_flag == 0` (formula gives `> 0`, meaning instant departure).
-- How the "current" entry is selected.
+Added to ELEVATORS.md: two 14-byte arrays at carrier offsets +0x20 (dwell multiplier)
+and +0x2e (enable flag). Schedule index = `g_daypart_index + g_calendar_phase_flag * 7`
+(7 dayparts × 2 calendar phases). Dwell threshold = `schedule_flag * 0x1e` (30 ticks).
 
-### G-011: Elevator motion profile thresholds
+### G-011: Elevator motion profile thresholds --- RESOLVED
 
-ELEVATORS.md describes `+/-3` floors/step "when far" and `+/-1` "otherwise", with
-a slow-stop mode "within 3 floors." Missing:
-- Definition of "far" (> 3 floors? > 1?).
-- Whether Express elevators use slow-stop at all.
-- Exact boundary: does "within 3" mean `<= 3` or `< 3`?
-- Transition rules between speed modes.
+Added to ELEVATORS.md: exact `compute_car_motion_mode` thresholds. carrier_mode 0:
+dist < 2 → stop, both > 4 → fast (±3), else normal (±1). Non-zero mode: dist < 2 →
+stop, dist < 4 → slow (±1, door_wait=2), else normal (±1). Mode 3 only for standard.
 
-### G-012: Elevator home floor and idle behavior
+### G-012: Elevator home floor and idle behavior --- RESOLVED
 
-"Idle-home candidate" requires car to be at "home floor" but home floor is never
-defined. Is it per-car, per-carrier? Set at construction? Configurable?
+Added to ELEVATORS.md: per-car home floor stored at
+`carrier->reachability_masks_by_floor[car_index - 8]`. Set at construction.
+`select_next_target_floor` returns home floor when `pending_assignment_count == 0`
+and no special flag. Reversal at terminal floors when `schedule_flag == 1`.
 
-### G-013: Transfer zone gap tolerance rules
+### G-013: Transfer zone gap tolerance rules --- RESOLVED
 
-ROUTING.md "Derived Transfer Zones" has contradictory gap tolerance:
-- "one gap region is tolerated only within the first two scanned floors"
-- But the zone-building stop rule says "stop on the first zero walkability byte."
-- Unclear whether "gap region" means one floor or one contiguous run of floors.
-- "First two scanned floors" --- physical floors or scan-order index?
+Updated ROUTING.md: `scan_special_link_span_bound` has two distinct stop conditions:
+(1) zero walkability byte = no floor → immediate stop; (2) nonzero byte with bit 0
+clear = gap → tolerated within center ± 3 floors, but terminates scan beyond that.
+Max range is center ± 6. Contradictory language replaced with exact algorithm.
 
-### G-014: Route cost tie-breaking and distance penalties
+### G-014: Route cost tie-breaking and distance penalties --- RESOLVED
 
-ROUTING.md lists cost formulas but:
-- "Medium distance mismatch" and "large distance mismatch" penalties (`0x1e`, `0x3c`)
-  have no defined thresholds for what counts as medium vs large.
-- Tie-breaking between equal-cost candidates of different transport types (stairs vs
-  escalator vs elevator) is not specified.
+Updated ROUTING.md: distance penalty thresholds are `abs(height_metric_delta)`:
+≤79 = none, 80–124 = 0x1e (30 ticks), ≥125 = 0x3c (60 ticks). Applies only to
+express/service carriers and all special-link segments. Tie-breaking already documented:
+strict `<` comparison keeps first candidate in scan order (segments 0..63, then
+zones 0..7, then carriers 0..23).
 
-### G-015: Evaluation qualitative gates undefined
+### G-015: Evaluation qualitative gates undefined --- RESOLVED
 
-EVALUATION.md lists gate categories (security adequacy, office-service quality, route
-viability, metro presence, time-of-day/calendar restrictions) but does NOT:
-- Specify which gates apply at each star level.
-- Define the pass/fail logic for each gate.
-- Specify when advancement attempts are triggered (automatic? player-initiated?).
+Updated EVALUATION.md with binary-verified star advancement flow from
+`check_and_advance_star_rating` (1148:002d). Per-tier gate conditions already
+documented in GAME-STATE.md were confirmed correct. Added function addresses and
+evaluation visitor details.
 
-### G-016: Star advancement gate details
+### G-016: Star advancement gate details --- RESOLVED
 
-GAME-STATE.md documents gates but is missing:
-- Star 5 normal advancement is impossible (only cathedral path) --- not stated.
-- VIP suite placement requirement for 4-to-5 not documented as a gate condition.
-- Specific daypart and calendar_phase conditions for star 4.
+Confirmed GAME-STATE.md gates correct. Added to EVALUATION.md: star 5 normal
+advancement returns 0 unconditionally (cathedral path only). Ledger tier thresholds
+from tuning data at DS:e630–e63c plus hardcoded 15000 for tier 6
+(`compute_tower_tier_from_ledger` at 1148:041d).
 
-### G-017: VIP special visitor system undocumented
+### G-017: VIP special visitor system undocumented --- RESOLVED
 
-RE data reveals a system where VIP hotel suites get special visitors at 1% probability
-per tick (when `day_tick > 0xf0` and `daypart_index < 4`). Toggles sidecar field,
-fires notification 0x271a. Not mentioned anywhere in the specs.
+Added to EVENTS.md: `trigger_vip_special_visitor` (11f0:0273). Fires when
+`day_tick > 0xf0`, `daypart_index < 4`, `game_state_flags & 9 == 0`,
+`g_vip_system_eligibility >= 0`. 1% chance per tick. Sweeps types 0x1f/0x20/0x21,
+toggles sidecar +0x0c (0→2 activate, else→0 clear). Notification 0x271a on activation.
 
-### G-018: Fire event details underspecified
+### G-018: Fire event details underspecified --- RESOLVED
 
-EVENTS.md fire section is missing:
-- Definition of "early daypart band" for fire eligibility.
-- Fire target area size and shape.
-- Fire spread mechanics and timeline.
-- Helicopter rescue "fast-forward" behavior.
-- Fire suppressor object --- what family/type is it?
+Updated EVENTS.md with full binary-verified fire mechanics. "Early daypart band" =
+`daypart_index < 4`. Target floor width >= 32 tiles; fire starts at `right_tile - 32`.
+No fire suppressor in binary; guard is `g_eval_entity_index < 0`. Fire spread: two
+per-floor fronts (left/right) advance by 1 tile every `[DS:0xe644]` ticks, spread
+vertically with `[DS:0xe646]` tick delay per floor. Helicopter: prompt at
+`fire_start + [DS:0xe64a]` ticks, extinguishes at `[DS:0xe648]` ticks/tile rate.
+Fire ends when all fronts exhausted or `g_day_tick == 2000`.
 
-### G-019: Bomb event details underspecified
+### G-019: Bomb event details underspecified --- RESOLVED
 
-EVENTS.md bomb section is missing:
-- Security patrol algorithm ("deterministic" but no traversal order specified).
-- Blast area centering (exact floor/tile bounds from bomb position).
-- Partial destruction of multi-floor objects crossing blast boundary.
-- Star-rating ransom amounts for 1-star and 5-star towers.
+Updated EVENTS.md with full binary-verified bomb mechanics. Security patrol is normal
+guard movement — `FUN_10d0_01c4` checks if guard's current floor/tile matches bomb
+position. Blast area: 6 floors (`bomb_floor - 2` to `+3`) × 40 tiles (`bomb_tile ± 20`),
+using `delete_object_covering_floor_tile` per cell. Stars 1 and 5 cannot trigger bombs.
+Post-resolution: fast-forwards `g_day_tick` to 1500. Timer extension on found:
+`g_day_tick + [DS:0xe64a]`.
 
 ---
 
 ## Tier 2 --- Requires Guesswork but Workaroundable
 
-### G-020: Office worker stagger initialization
+**All tier 2 items have been resolved.**
 
-`base_offset` is referenced as staggering trip timing but no formula maps it to
-dispatch timing. Valid values and initialization rules are unclear.
+### G-020: Office worker stagger initialization --- RESOLVED
 
-### G-021: Condo sale trigger timing
+Binary-verified from `reinitialize_entity_slot_family_fields` at `1228:0631`.
+`base_offset` is entity record word `+0x02`, initialized to the 0-indexed occupant
+slot number (0..5 for offices, 0..2 for condos, etc.) via a plain loop counter.
+Dispatch stagger comes from entity table position: `refresh_runtime_entities_for_tick_stride`
+(`1228:0d64`) processes entity index `g_day_tick % 16`, so workers with different
+`base_offset` values are processed on different ticks. Additional stagger from
+probabilistic gates (1/12 chance in daypart 0). `base_offset == 1` has a special
+branch in the family 7 dispatch handler: worker #1 returns to state 0x00 (morning
+re-arrival) while all others go to state 0x05 (evening departure).
 
-"A condo sells when an entity in the unsold regime gets any non-failure route result."
-Does this fire once on state transition, or every tick the entity is queued? Changes
-income timing by orders of magnitude.
+### G-021: Condo sale trigger timing --- RESOLVED
 
-### G-022: Hotel sibling synchronization for 3-person suites
+Binary-verified from `dispatch_object_family_9_state_handler` at `1228:3870`.
+The sale fires **once on state transition**, not per-tick. In the state 0x20/0x60
+handler, any non-failure route result (1/2/3/4) when `stay_phase >= 0x18` (unsold)
+calls `activate_commercial_tenant_cashflow` (`1180:105d`), which resets `stay_phase`
+below 0x18 as part of the sale. This prevents the `stay_phase >= 0x18` condition from
+ever being true again. Route failure (0xFFFF) returns to state 0x20 for retry but
+never triggers the sale.
 
-Suite occupancy resets to 2, but suites can hold 3 guests. How does the third
-occupant synchronize? Are occupants tracked individually or as a count?
+### G-022: Hotel sibling synchronization for 3-person suites --- RESOLVED
 
-### G-023: Commercial venue struct fields
+Binary-verified from `sync_stay_phase_if_all_siblings_ready_345` at `1228:6b5c`.
+Occupants are tracked as **individual entities** with 1-based `base_offset` (1..3 for
+suites). Pairwise sync uses formula `3 - base_offset`: occupant 1 checks occupant 2
+and vice versa. Occupant 3 computes `3 - 3 = 0`, which is the inactive tile-base
+entity, so it **cannot pass the sibling check**. Instead, occupant 3 relies on the
+`stay_phase & 7 == 1` shortcut (unconditional sync regardless of sibling state).
+Checkout resets shared `stay_phase` to 2 (same as twin). Two decrements bring it to 0,
+firing checkout exactly once. The third occupant decrements post-checkout (0x28 → 0x27,
+`& 7 == 7 ≠ 0`) and simply routes to lobby without double payment.
 
-COMMERCIAL.md lists required fields by description but not by name or offset.
-"Attendance or visitor count" --- one field or two? Capacity seed selection order
-relative to tuning cap is ambiguous.
+### G-023: Commercial venue struct fields --- RESOLVED
 
-### G-024: Entertainment phase system
+Binary-verified from `rebuild_linked_facility_records` (`11b0:0184`),
+`acquire_commercial_venue_slot` (`11b0:0d92`), `try_consume_commercial_venue_capacity`
+(`11b0:1150`). Full 18-byte (0x12) struct: `+0x00` owner_floor_index (byte),
+`+0x01` owner_subtype_index (byte, 0xFF = orphaned), `+0x02` availability_state
+(byte, 0xFF=invalid, 0=open, 1=partial, 2=near-full, 3=closed),
+`+0x03/+0x04/+0x05` capacity_seed_phase_A/B/override (bytes, init 10 each),
+`+0x06` active_capacity_limit (byte), `+0x07` today_visit_count (byte),
+`+0x08` yesterday_visit_count (byte), `+0x09` current_active_count (byte, max 39),
+`+0x0A` derived_state_byte (byte), `+0x0B` variant_index (byte, round-robin),
+`+0x0C` negative_capacity_gate (word), `+0x10` visitor_count (word).
+**Attendance is two fields**: `today_visit_count` (+0x07) feeds the family ledger;
+`visitor_count` (+0x10) counts cross-owner visitors for income derivation (thresholds
+25/35/50). Capacity order: seed selection first (phase A/B/override based on
+`g_calendar_phase_flag` and `g_facility_progress_override`), tuning cap second
+(`min(seed, type_limit)`), floor at 10.
 
-Phase values 0-3 are mentioned but never defined. Phase promotion conditions mix
-checkpoint-driven and arrival-driven triggers. Link age counter increment timing
-and budget tier formula (`link_age_counter / 3`) need clarification on integer
-division behavior and initial value.
+### G-024: Entertainment phase system --- RESOLVED
 
-### G-025: Parking expense formula semantics
+Binary-verified from `activate_entertainment_link_half_runtime_phase` (`1188:06a8`),
+`promote_entertainment_links_to_ready_phase` (`1188:0826`),
+`advance_entertainment_facility_phase` (`1188:090a`),
+`increment_entertainment_link_runtime_counters` (`1188:0c2b`).
+Phase values: 0=idle/reset, 1=activated (awaiting guests), 2=first-guest-arrived
+(arrival-driven: 1→2 on first entity arrival), 3=ready (checkpoint-driven: any
+phase > 1 promoted to 3 by `promote_entertainment_links_to_ready_phase`).
+`link_age_counter`: starts at 0, incremented by 1 at tick 0x0F0 in
+`rebuild_entertainment_family_ledger` (`1188:05af`), capped at 127 (0x7F).
+Budget tier = `link_age_counter / 3` (truncating C integer division on non-negative
+value). Tier 0 (age 0–2), tier 1 (age 3–5), tier 2 (age 6–8), tier 3 (age 9+).
+Paired-link (family 0x12) budget from `compute_entertainment_income_rate` (`1188:0b3e`):
+subtype < 7 gets {40,40,40,20}, subtype ≥ 7 gets {60,60,40,20} by tier.
+Single-link (family 0x1d): hardcoded forward=0, reverse=50.
 
-`(right_tile_index - left_tile_index) * tier_rate / 10` --- tile index units unclear.
-`lowest_floor_bound` for underground exclusion band undefined. Coverage propagation
-anchor state machine transitions not fully specified.
+### G-025: Parking expense formula semantics --- RESOLVED
 
-### G-026: Carrier mode definitions
+Binary-verified from `add_parking_operating_expense` at `1180:0ae4` and exclusion
+check `FUN_10a8_133b` at `10a8:133b`. Tile indices are world tile coordinates from
+the placed-object record (offsets +6 and +8), so the difference is span width in tiles.
+Underground exclusion band: `11 <= floor_index < g_lobby_height + 10`. Since
+`g_lobby_height` is 1–3, this excludes atrium floors directly above the lobby.
+`g_lobby_height == 1`: no exclusion; `== 2`: floor 11 only; `== 3`: floors 11–12.
+Expense applies to types 0x18/0x19/0x1a (parking variants).
 
-COMMANDS.md references "carrier mode 0" (width 6) and "other modes" (width 4) for
-clearance rectangles. RE data clarifies: mode 0 = standard/local (6-wide), mode 1 =
-express (4-wide). This should be in the spec.
+### G-026: Carrier mode definitions --- RESOLVED
 
-### G-027: Queue-full retry and route failure lifecycle
+Binary-verified from `place_carrier_shaft` at `1200:1034` and
+`apply_periodic_operating_expenses` at `1180:0bbe`. **Mode 0 = Express** (6-wide
+clearance, cap 0x2a = 42 slots, expense type 0x2a). **Mode 1 = Standard** (4-wide
+clearance, cap 0x15 = 21 slots, expense type 0x01). **Mode 2 = Service** (4-wide
+clearance, cap 0x15 = 21 slots, expense type 0x2b). The route scorer treats mode 0
+as skipping distance-based delay; mode 2 skips route delay accumulation. Updated
+ELEVATORS.md to correct the swapped mode 0/1 labels.
 
-When elevator queue is full (40 per direction) or route fails:
-- ROUTING.md gives delay values (queue-full: 5, route-failure: 300) but not the
-  retry state machine.
-- Does the actor re-route or retry the same route?
-- Integration with family dispatch path on transfer-floor resolution failure
-  is unspecified.
+### G-027: Queue-full retry and route failure lifecycle --- RESOLVED
 
-### G-028: Command validation ordering and failure
+Binary-verified from `resolve_entity_route_between_floors` at `1218:0000`,
+`enqueue_request_into_route_queue` at `1218:1002`,
+`maybe_dispatch_queued_route_after_wait` at `1228:15a0`.
+Three distinct failure paths: (1) **Queue full** (count == 40): 5-tick delay
+(`g_waiting_state_delay`), entity byte +8 = 0xFF sentinel, entity does NOT re-route
+(waits in place). (2) **Route failure** (no candidate): 300-tick delay
+(`g_route_failure_delay`), `advance_entity_demand_counters` called (entity gives up
+this trip and advances demand state), returns -1. (3) **Transfer-floor resolution
+failure**: 0-tick delay (`g_requeue_failure_delay`), `force_dispatch_entity_state_by_family`
+(`1228:1614`) re-dispatches through the family-specific state handler for a fresh
+route attempt.
 
-Build validation lists checks but not their required order. If multiple checks fail,
-which error is returned? Can cost be deducted before placement fails? Demolish cache
-rebuild scope per family type is unspecified.
+### G-028: Command validation ordering and failure --- RESOLVED
 
-### G-029: Office service evaluation trigger cadence
+Binary-verified from `place_object_on_floor` at `1200:1847` and
+`place_carrier_shaft` at `1200:1034`. Validation is a short-circuit chain — first
+failing check wins and returns its error code immediately. No error accumulation.
+Generic placement order: (1) bounds check → error 0x14, (2) funds availability →
+return 0, (3) support/span validation → errors 0x14/0x03/0x06/0x02/0x04,
+(4) floor class validation → errors 0x0c/0x05/0x0e/0x0a/0x0b, (5) slot insertion →
+error 0x09. **Cost is never deducted before validation passes** —
+`charge_single_floor_construction_cost` is called only inside the successful placement
+branch, after all checks.
 
-RE data shows this fires every 9th day (`day_counter % 9 == 3`). Not documented in
-specs. The evaluation sets flag 0xc19c and stores entity reference in 0xc198.
+### G-029: Office service evaluation trigger cadence --- RESOLVED
 
-### G-030: Venue unavailable delay
+Binary-verified from `check_office_service_evaluation_trigger` at `1248:0000`.
+Fires every 9th day: `g_day_counter % 9 == 3`, gated to `star_count == 3` only.
+Additional guards: `[0xc197] == 0` (not already passed) and `[0xc19c] == 0` (not
+in progress). On trigger: sets `[0xc19c] = 1`, stores entity reference in `[0xc198]`,
+fires notification 3000. Resolution at `resolve_office_service_evaluation` (`1248:0115`):
+computes `compute_runtime_tile_average()` against threshold at `[DS:0xe5ec]`;
+pass sets `[0xc197] = 1`, fail clears it.
 
-`g_venue_unavailable_delay` (0 ticks) from RE data is not in specs. Applied when
-target commercial venue slot is invalid, demolished, or has path-seed dependency of -1.
+### G-030: Venue unavailable delay --- RESOLVED
 
-### G-031: Commands during disasters and pause
+Binary-verified from `load_startup_tuning_resource_table` at `1198:0005`.
+`g_venue_unavailable_delay` at `[DS:0xe5f6]` is loaded from tuning resource
+(type 0xff05, id 1000) with value **0 ticks**. The global is **vestigial** — it is
+never read after initialization (no xrefs outside the loader). The venue-unavailable
+code path falls through to other delay mechanisms. Since the value is 0, even if it
+were read, it would add zero delay.
 
-No spec covers whether build/demolish/edit commands are allowed during active bomb or
-fire events. "Inspection-only commands" during pause are mentioned but not enumerated.
-Elevator editing + disaster interaction is unspecified.
+### G-031: Commands during disasters and pause --- RESOLVED
 
-### G-032: Ledger mirroring and overflow behavior
+Binary-verified from `trigger_bomb_event` (`10d0:006e`), `trigger_fire_event`
+(`10f0:0029`), and entity state handlers. `g_game_state_flags` at `[0xbc7a]`:
+bit 0 = bomb active, bit 3 = fire active, bit 4 = game running, bit 5 = bomb found,
+bit 6 = bomb detonated. `bc7a & 9` (bomb OR fire) blocks entity state transitions
+(`gate_object_family_0f_connection_state` at `1228:5f39`) and random events. **No
+evidence that build/demolish commands are blocked during disasters** — placement
+validation functions (`place_object_on_floor`, `place_carrier_shaft`) do not check
+`bc7a`. Build commands appear to remain available during active bomb/fire events.
 
-When cash is clamped at $99,999,999: does secondary ledger get the nominal or clamped
-delta? No spec for negative cash behavior (debt). Primary ledger semantics (used for
-star thresholds, security tiers) not centrally defined.
+### G-032: Ledger mirroring and overflow behavior --- RESOLVED
 
-### G-033: `calendar_phase_flag` formula vs cycle length
+Binary-verified from `add_cashflow_from_family_resource` at `1180:08ce` and
+`add_income_to_cash_with_display` at `1180:07e9`. `clamp_cash_balance_addition`
+(`1180:13f2`) takes a **pointer** to the amount and modifies it in place before
+addition. The **clamped delta** (not the nominal) is then added to both
+`g_cash_balance` and the secondary family ledger bucket. Secondary ledger receives
+the clamped value. Clamping applies only to additions —
+`remove_cashflow_from_family_resource` (`1180:0966`) subtracts directly without
+clamping.
 
-TIME.md says "12-day cycle" but formula `((day_counter % 12) % 3) >= 2` produces a
-3-day repeating pattern. The "12-day" framing is misleading or there is additional
-logic not captured.
+### G-033: `calendar_phase_flag` formula vs cycle length --- RESOLVED
+
+Binary-verified from `compute_calendar_phase_flag` at `1208:0558`. Formula:
+`((g_day_counter % 12) % 3) >= 2`. This produces flag=1 on days 2, 5, 8, 11 of each
+12-day period (pattern: off, off, ON repeating). Since `12 % 3 == 0`, the formula is
+functionally equivalent to `(g_day_counter % 3) >= 2` — a **3-day repeating pattern**.
+The "12-day cycle" in TIME.md refers to the outer modulus but is observationally
+redundant. Day counter wraps at 12,500 (0x2ed4).
 
 ---
 

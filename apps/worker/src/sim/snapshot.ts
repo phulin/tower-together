@@ -4,6 +4,7 @@ import { LEGACY_VIP_TILE_TO_STANDARD } from "./resources";
 import { RingBuffer } from "./ring-buffer";
 import { createNewGameTimeState, type TimeState } from "./time";
 import {
+	createEventState,
 	createGateFlags,
 	GRID_HEIGHT,
 	GRID_WIDTH,
@@ -74,6 +75,7 @@ export function createInitialSnapshot(
 			floorWalkabilityFlags: new Array(GRID_HEIGHT).fill(0),
 			transferGroupEntries: createEmptyTransferGroupEntries(),
 			transferGroupCache: new Array(GRID_HEIGHT).fill(0),
+			eventState: createEventState(),
 		},
 		ledger: createLedgerState(startingCash),
 	};
@@ -147,6 +149,7 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 			floorWalkabilityFlags: [],
 			transferGroupEntries: [],
 			transferGroupCache: [],
+			eventState: createEventState(),
 		};
 	}
 
@@ -190,6 +193,7 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	if (snapshot.world.transferGroupCache.length !== GRID_HEIGHT) {
 		snapshot.world.transferGroupCache = new Array(GRID_HEIGHT).fill(0);
 	}
+	snapshot.world.eventState ??= createEventState();
 
 	const vipAnchors = new Set<string>();
 	for (const [key, tileType] of Object.entries(snapshot.world.cells)) {

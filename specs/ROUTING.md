@@ -84,23 +84,30 @@ Use these delays:
 - local-branch special-link per-stop delay: `16`
 - express-branch special-link per-stop delay: `35`
 
-Long-distance penalty:
+Long-distance penalty (applied when `emit_distance_feedback` is set):
 
-- add `0x1e` for medium distance mismatch
-- add `0x3c` for large distance mismatch
+- computed from `abs(height_metric_delta)` between the segment/carrier and entity
+- `<= 0x4f` (79): no penalty
+- `> 0x4f` (79) and `< 0x7d` (125): add `0x1e` (30 ticks) delay
+- `>= 0x7d` (125): add `0x3c` (60 ticks) delay
+- for carriers, this penalty applies only when `carrier_mode != 0` (standard/service)
+- for special-link segments, it applies to all branches
 
 ## Walkability Rules
 
 Local walkability:
 
-- maximum span checked: `< 7` floors
-- every floor in the span must exist
-- one gap region is tolerated only within the first two scanned floors; once a gap has been seen, extending beyond two scanned floors fails
+- maximum span checked: 6 floors in each direction from center (i.e. `center ± 6`)
+- two distinct stop conditions on each floor:
+  1. **zero walkability byte** (no floor exists): immediate stop, returns that floor as the bound
+  2. **nonzero walkability byte but bit 0 clear** (floor exists but not locally walkable): marks a "gap"
+- after the first gap, the scan continues only within the 3-floor center band (`center ± 3`); once the scan reaches 3 floors from center with a gap having been seen, it stops
+- if no gap is encountered, the scan extends to the full 6-floor range
 
 Express walkability:
 
-- maximum span checked: `< 7` floors
-- every floor in the span must have express walkability
+- maximum span checked: 6 floors in each direction from center
+- every floor in the span must have express walkability (bit 1 of walkability byte)
 - no gap tolerance
 
 ## Transfer Groups
@@ -150,19 +157,23 @@ Recovered record set:
 - one each centered around floors `24`, `39`, `54`, `69`, `84`, and `99`
 - at most 7 of those records are typically live at once
 
-Recovered zone-building rule:
+Recovered zone-building rule (`scan_special_link_span_bound`):
 
-- each record scans outward from its center using the local-walkability gap rule
-- upward scan:
-  - start at `center`
-  - stop on the first zero walkability byte
-  - after the first floor whose local-walk bit is clear, stop as soon as `floor >= center + 3`
-  - otherwise cap at `center + 6`
-- downward scan:
-  - start at `center - 1`
-  - stop on the first zero walkability byte and return the next floor above it
-  - after the first floor whose local-walk bit is clear, stop as soon as `floor < center - 3`
-  - otherwise cap at `center - 6`
+- each record scans outward from its center using `g_floor_walkability_flags`
+- upward scan (`dir != 0`):
+  - start at `center`, iterate `floor` from `center` to `center + 5`
+  - if `walkability[floor] == 0`: return `floor` (exclusive upper bound)
+  - if `walkability[floor] & 1 == 0`: set gap flag
+  - if gap flag set AND `floor >= center + 3`: return `floor`
+  - if loop completes: return `center + 6`
+- downward scan (`dir == 0`):
+  - start at `center`, iterate checking floors `center` down to `center - 5`
+  - if `walkability[floor] == 0`: return `floor` (exclusive lower bound)
+  - if `walkability[floor] & 1 == 0`: set gap flag
+  - if gap flag set AND next floor `< center - 3`: exit, return current floor
+  - if loop completes: return `center - 6`
+- the span stored in the record is `[downward_bound, upward_bound)` (lower inclusive, upper exclusive)
+- `is_floor_within_special_link_span` tests `bottom_floor <= floor <= top_floor`
 
 Recovered route-use rule for these zones:
 

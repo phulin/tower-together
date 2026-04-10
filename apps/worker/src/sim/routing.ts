@@ -380,9 +380,10 @@ function score_express_route_segment(
 	return Math.abs(toFloor - fromFloor) * 8 + 0x280;
 }
 
-function distance_mismatch_penalty(delta: number): number {
-	if (delta >= 20) return 0x3c;
-	if (delta >= 10) return 0x1e;
+function distance_mismatch_penalty(heightMetricDelta: number): number {
+	const absDelta = Math.abs(heightMetricDelta);
+	if (absDelta >= 125) return 0x3c;
+	if (absDelta > 79) return 0x1e;
 	return 0;
 }
 
@@ -404,7 +405,9 @@ function score_carrier_direct_route(
 		toFloor > fromFloor ? 0 : 1,
 	);
 	const delta = Math.abs(toFloor - fromFloor);
-	const penalty = distance_mismatch_penalty(delta);
+	// Distance penalty only applies to standard/service carriers (mode != 0)
+	const penalty =
+		carrier.carrierMode !== 0 ? distance_mismatch_penalty(delta) : 0;
 	return status === 0x28
 		? 1000 + delta * 8 + penalty
 		: delta * 8 + 0x280 + penalty;
@@ -439,7 +442,9 @@ function score_carrier_transfer_route(
 		toFloor > fromFloor ? 0 : 1,
 	);
 	const delta = Math.abs(toFloor - fromFloor);
-	const penalty = distance_mismatch_penalty(delta);
+	// Distance penalty only applies to standard/service carriers (mode != 0)
+	const penalty =
+		carrier.carrierMode !== 0 ? distance_mismatch_penalty(delta) : 0;
 	return status === 0x28
 		? 6000 + delta * 8 + penalty
 		: delta * 8 + 3000 + penalty;
@@ -509,11 +514,11 @@ function scan_special_link_span_bound(
 		return centerFloor + 6;
 	}
 
-	for (let floor = centerFloor - 1; floor > centerFloor - 6; floor--) {
+	for (let floor = centerFloor; floor > centerFloor - 6; floor--) {
 		const flags = world.floorWalkabilityFlags[floor] ?? 0;
-		if (flags === 0) return floor + 1;
+		if (flags === 0) return floor;
 		if ((flags & 1) === 0) seenGap = true;
-		if (seenGap && floor < centerFloor - 3) return floor + 1;
+		if (seenGap && floor <= centerFloor - 3) return floor;
 	}
 	return centerFloor - 6;
 }

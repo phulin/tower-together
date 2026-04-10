@@ -1,5 +1,7 @@
 import {
+	activateEvalEntities,
 	closeCommercialVenues,
+	dispatchEvalMiddayReturn,
 	refund_unhappy_condos,
 	reset_entity_runtime_state,
 	resetCommercialVenueCycle,
@@ -7,6 +9,7 @@ import {
 	runOfficeServiceEvaluation,
 	update_security_housekeeping_state,
 } from "./entities";
+import { checkDailyEvents } from "./events";
 import {
 	do_ledger_rollover,
 	type LedgerState,
@@ -26,7 +29,10 @@ export interface SimState {
 // ─── Checkpoint bodies ────────────────────────────────────────────────────────
 
 function checkpoint_start_of_day(_s: SimState): void {
-	// Phase 3+: reset entity arrival queues
+	// Daily event triggers (bomb at day%60==59, fire at day%84==83)
+	checkDailyEvents(_s.world, _s.ledger, _s.time);
+	// Activate cathedral evaluation entities
+	activateEvalEntities(_s.world, _s.time);
 }
 
 function checkpoint_housekeeping_reset(_s: SimState): void {
@@ -42,7 +48,8 @@ function checkpoint_entertainment_half1(_s: SimState): void {
 }
 
 function checkpoint_hotel_sale_reset(_s: SimState): void {
-	// Phase 4: reset hotel nightly sale flags; eval entity midday return dispatch
+	// Dispatch midday return for cathedral evaluation entities
+	dispatchEvalMiddayReturn(_s.world);
 }
 
 function checkpoint_entertainment_half2(_s: SimState): void {

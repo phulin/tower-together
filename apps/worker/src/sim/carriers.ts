@@ -157,18 +157,18 @@ function compute_car_motion_mode(
 	// First leg: prevFloor === currentFloor, car needs to depart
 	const firstLeg = distFromPrev === 0 && distToTarget > 0;
 
-	// Express carriers (mode 0): stop within 1 floor, +/-3 when far, +/-1 otherwise
+	// Express carriers (mode 0): stop within 2 floors, +/-3 when both > 4, +/-1 otherwise
 	if (carrier.carrierMode === 0) {
-		if (firstLeg) return distToTarget > 3 ? 3 : 2;
-		if (distToTarget <= 1 || distFromPrev <= 1) return 0;
-		if (distToTarget > 3 && distFromPrev > 3) return 3;
+		if (firstLeg) return distToTarget > 4 ? 3 : 2;
+		if (distToTarget < 2 || distFromPrev < 2) return 0;
+		if (distToTarget > 4 && distFromPrev > 4) return 3;
 		return 2;
 	}
 
-	// Standard (1) and Service (2): stop within 1 floor, slow-stop within 3, +/-1 otherwise
+	// Standard (1) and Service (2): stop within 2 floors, slow-stop within 4, +/-1 otherwise
 	if (firstLeg) return 2;
-	if (distToTarget <= 1 || distFromPrev <= 1) return 0;
-	if (distToTarget <= 3 || distFromPrev <= 3) return 1;
+	if (distToTarget < 2 || distFromPrev < 2) return 0;
+	if (distToTarget < 4 || distFromPrev < 4) return 1;
 	return 2;
 }
 
@@ -585,6 +585,10 @@ function process_unit_travel_queue(
 	carIndex: number,
 	time: TimeState,
 ): void {
+	// When schedule is disabled, car does not pick up passengers
+	const scheduleIndex = get_schedule_index(time);
+	if ((carrier.serviceScheduleFlags[scheduleIndex] ?? 1) === 0) return;
+
 	let remainingSlots = Math.max(
 		0,
 		get_car_capacity(carrier) - car.assignedCount,
@@ -690,7 +694,32 @@ function select_next_target(
 		}
 	}
 
-	// Scan in current travel direction
+	// Schedule-flag-dependent scanning
+	if (car.scheduleFlag === 1) {
+		// Express up: scan downward for assignments, fallback = top_served_floor
+		for (
+			let floor = car.currentFloor - 1;
+			floor >= carrier.bottomServedFloor;
+			floor--
+		) {
+			if (targetSet.has(floor)) return floor;
+		}
+		return carrier.topServedFloor;
+	}
+
+	if (car.scheduleFlag === 2) {
+		// Express down: scan upward for assignments, fallback = bottom_served_floor
+		for (
+			let floor = car.currentFloor + 1;
+			floor <= carrier.topServedFloor;
+			floor++
+		) {
+			if (targetSet.has(floor)) return floor;
+		}
+		return carrier.bottomServedFloor;
+	}
+
+	// Normal: bidirectional sweep in current direction, wrap at endpoints
 	const dir = car.directionFlag === 0 ? 1 : -1;
 	for (
 		let floor = car.currentFloor + dir;
@@ -700,16 +729,7 @@ function select_next_target(
 		if (targetSet.has(floor)) return floor;
 	}
 
-	// At terminal floors, allow reversal when schedule flag permits
-	if (
-		(car.currentFloor === carrier.topServedFloor ||
-			car.currentFloor === carrier.bottomServedFloor) &&
-		car.scheduleFlag !== 0
-	) {
-		car.directionFlag = car.directionFlag === 0 ? 1 : 0;
-	}
-
-	// Scan in reverse direction
+	// Wrap: reverse direction and scan from opposite endpoint back
 	for (
 		let floor = car.currentFloor - dir;
 		floor >= carrier.bottomServedFloor && floor <= carrier.topServedFloor;
@@ -718,7 +738,8 @@ function select_next_target(
 		if (targetSet.has(floor)) return floor;
 	}
 
-	return car.currentFloor;
+	// No target found
+	return -1;
 }
 
 function load_schedule_flag(
@@ -881,7 +902,7 @@ function step_carrier_car(
 	load_schedule_flag(carrier, car, time);
 	const next = select_next_target(car, carrier, carIndex);
 
-	if (next === car.currentFloor) {
+	if (next < 0 || next === car.currentFloor) {
 		// At target floor with no further targets: check if passengers waiting
 		const currentSlot = floor_to_slot(carrier, car.currentFloor);
 		const waitingHere =

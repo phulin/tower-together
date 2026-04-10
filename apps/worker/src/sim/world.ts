@@ -286,6 +286,57 @@ export type SidecarRecord =
 	| ServiceRequestEntry
 	| EntertainmentLinkRecord;
 
+// ─── Event state ─────────────────────────────────────────────────────────────
+
+/**
+ * Bitfield for game_state_flags at [0xbc7a]:
+ * bit 0 = bomb active, bit 3 = fire active, bit 5 = bomb found, bit 6 = bomb detonated.
+ */
+export interface EventState {
+	/** Bitfield: bit 0 = bomb active search, bit 3 = fire active,
+	 *  bit 5 = bomb found, bit 6 = bomb detonated. */
+	gameStateFlags: number;
+	/** Floor where the bomb was placed. */
+	bombFloor: number;
+	/** Tile where the bomb was placed. */
+	bombTile: number;
+	/** Day tick deadline for bomb detonation / post-resolution cleanup. */
+	bombDeadline: number;
+	/** Floor where the fire started. */
+	fireFloor: number;
+	/** Tile column where fire starts (right_tile - 0x20). */
+	fireTile: number;
+	/** Day tick when fire started. */
+	fireStartTick: number;
+	/** Per-floor left-spreading fire front position (120 entries, 0xffff = inactive). */
+	fireLeftPos: number[];
+	/** Per-floor right-spreading fire front position (120 entries, 0xffff = inactive). */
+	fireRightPos: number[];
+	/** Rescue countdown (with security); 0 = no countdown active. */
+	rescueCountdown: number;
+	/** Helicopter extinguish position; 0 = not active. */
+	helicopterExtinguishPos: number;
+	/** LCG15 state for event randomness. */
+	lcgState: number;
+}
+
+export function createEventState(): EventState {
+	return {
+		gameStateFlags: 0,
+		bombFloor: 0,
+		bombTile: 0,
+		bombDeadline: 0,
+		fireFloor: 0,
+		fireTile: 0,
+		fireStartTick: 0,
+		fireLeftPos: new Array(GRID_HEIGHT).fill(0xffff),
+		fireRightPos: new Array(GRID_HEIGHT).fill(0xffff),
+		rescueCountdown: 0,
+		helicopterExtinguishPos: 0,
+		lcgState: 1,
+	};
+}
+
 // ─── WorldState ───────────────────────────────────────────────────────────────
 
 /** All placed tile data for one tower. */
@@ -325,4 +376,6 @@ export interface WorldState {
 	transferGroupEntries: TransferGroupEntry[];
 	/** Per-floor bitmask of carrier IDs that serve each floor. Size = GRID_HEIGHT. */
 	transferGroupCache: number[];
+	/** Bomb/fire/VIP event state. */
+	eventState: EventState;
 }

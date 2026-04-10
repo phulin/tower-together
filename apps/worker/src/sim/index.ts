@@ -9,6 +9,7 @@ import {
 	rebuild_runtime_entities,
 	reconcile_entity_transport,
 } from "./entities";
+import { tickBombEvent, tickFireEvent, tickVipSpecialVisitor } from "./events";
 import { createLedgerState, type LedgerState } from "./ledger";
 import { STARTING_CASH } from "./resources";
 import {
@@ -24,6 +25,7 @@ import {
 } from "./snapshot";
 import { advanceOneTick, type TimeState } from "./time";
 import {
+	createEventState,
 	GRID_HEIGHT,
 	MAX_SPECIAL_LINK_RECORDS,
 	MAX_SPECIAL_LINKS,
@@ -149,6 +151,8 @@ export class TowerSim {
 		for (const entity of normalized.world.entities) {
 			entity.routeRetryDelay ??= 0;
 		}
+		// Migrate old saves without event state
+		normalized.world.eventState ??= createEventState();
 
 		// Recompute derived routing state from carriers
 		rebuild_special_links(normalized.world);
@@ -175,6 +179,12 @@ export class TowerSim {
 			ledger: this.ledger,
 		};
 		run_checkpoints(state, prevTick, currTick);
+
+		// Per-tick event processing
+		tickBombEvent(this.world, this.ledger, this.time);
+		tickFireEvent(this.world, this.ledger, this.time);
+		tickVipSpecialVisitor(this.world, this.time);
+
 		advance_entity_refresh_stride(this.world, this.ledger, this.time);
 		populate_carrier_requests(this.world, this.time);
 		tick_all_carriers(this.world, this.time, (routeId, arrivalFloor) => {
@@ -255,6 +265,9 @@ export class TowerSim {
 				JSON.stringify(this.world.transferGroupEntries),
 			) as WorldState["transferGroupEntries"],
 			transferGroupCache: [...this.world.transferGroupCache],
+			eventState: JSON.parse(
+				JSON.stringify(this.world.eventState),
+			) as WorldState["eventState"],
 		};
 	}
 

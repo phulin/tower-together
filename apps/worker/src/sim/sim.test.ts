@@ -1692,7 +1692,7 @@ describe("select_best_route_candidate", () => {
 		const route = select_best_route_candidate(world, 12, 2);
 		expect(route?.kind).toBe("carrier");
 		expect(route?.id).toBe(0);
-		expect(route?.cost).toBe(3000 + 10 * 8 + 0x1e); // +0x1e medium distance penalty
+		expect(route?.cost).toBe(3000 + 10 * 8); // no distance penalty (delta 10 < threshold 80)
 	});
 
 	it("does not score transfer routes from derived floor cache without a tagged entry", () => {

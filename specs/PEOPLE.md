@@ -251,18 +251,37 @@ Visits commercial venues during the day. Not tied to hotel revenue.
 | 0x62 | (in-transit back) | Delegates to family 0x12/0x1d dispatch |
 | 0x27 | `day_tick >= 0x8fd` → state 0x01 | (parked) |
 
-### Families `0x24`–`0x28` — Evaluation Entities
+### Families `0x24`–`0x28` — Cathedral Evaluation Visitors
 
-5 families × 8 slots = 40 entities. Activated daily from state `0x20` at checkpoint
-`0x000` (when cathedral placed and star > 2).
+Types 0x24–0x28 are the 5 per-floor slices of the cathedral building (bottom to top).
+Each floor hosts 8 runtime entity slots → 5 floors × 8 = 40 evaluation visitors.
 
-| State | Behavior |
-|-------|----------|
-| 0x20 | Route from floor 10 to assigned eval floor (109–119). 0/1/2 → 0x60; 3 → 0x03; fail → 0x27 |
-| 0x60 | Continue routing. On arrival → 0x03 |
-| 0x03 | Arrived at eval zone. `check_evaluation_completion_and_award` fires: if `g_day_tick < 800` and all 40 entities in state 0x03 and ledger ≥ 15000 → award Tower (star_count := 6). Otherwise stamp object `aux = 3` |
-| 0x05 | Midday return (set by checkpoint 0x04b0). Route back to floor 10 | 0/1/2 → 0x45; 3 → 0x27 |
-| 0x27 | Parked. Reset to 0x20 at next day-start |
+Binary-verified from `gate_object_family_24_state_handler` at `1228:5b5a`,
+`handle_evaluation_entity_outbound_route` at `1228:5ddd`,
+`handle_evaluation_entity_return_route` at `1228:5e7e`.
+
+**Daily spawn** (`activate_upper_tower_runtime_group`, checkpoint 0x000):
+when `g_eval_entity_index >= 0` (cathedral placed) and `star_count > 2`,
+sweeps floors 0x6d–0x77 for types 0x24–0x28, forces 8 entity slots each to state 0x20.
+
+**Gate** (state 0x20):
+- Requires `calendar_phase_flag == 1`
+- `daypart_index == 0`: staggered dispatch — `sample_lcg15() % 12 == 0` (1/12 chance)
+  per tick after `g_day_tick > 0x50` (80); guaranteed every tick after `g_day_tick > 0xf0` (240)
+- `daypart_index >= 1`: missed dispatch window → state 0x27 (parked)
+
+**Selector** (`resolve_family_24_selector_value`):
+- State 0x45 → target floor 10 (lobby)
+- State 0x60 → target floor 0x6d (109, evaluation zone)
+
+| State | Gate | Behavior |
+|-------|------|----------|
+| 0x20 | `calendar_phase_flag == 1`, daypart 0, stagger | Route from floor 10 to floor 0x6d (109). Result: 0/1/2 → 0x60; 3 → 0x03 + award check; fail → 0x27 |
+| 0x60 | — | In transit to eval zone. On arrival → 0x03 + `check_evaluation_completion_and_award` |
+| 0x03 | — | Arrived. If `g_day_tick < 800` and all 40 in state 0x03 and ledger tier > star_count → Tower promotion. Otherwise stamp object `aux = 3, dirty = 1` |
+| 0x05 | — | Midday return (set by `dispatch_evaluation_entity_midday_return` at checkpoint 0x04b0). Route from floor 0x6d to floor 10. Result: 0/1/2 → 0x45; 3 or fail → 0x27 |
+| 0x45 | — | In transit back to lobby. On arrival → 0x27 |
+| 0x27 | — | Parked. Reset to 0x20 at next day-start |
 
 ### Family `0x18` — Lobby
 
