@@ -73,10 +73,10 @@ manual's "stress" is the same quantity as the facility operational score: averag
 inter-visit interval per tile, computed via `0x1000 / sample_count` (see
 FACILITIES.md "Shared Readiness / Pairing Model").
 
-The thresholds (80 / 150 / 200) match the `pairing_status` grade cutoffs exactly.
+The thresholds (80 / 150 / 200) match the `eval_level` grade cutoffs exactly.
 There is no separate stress accumulator, no per-actor frustration counter, and no
 behavioral branching based on a "stress" field. The A/B/C ratings displayed to the
-player map directly to `pairing_status` values 2/1/0.
+player map directly to `eval_level` values 2/1/0.
 
 A clean-room implementation should use the documented `compute_object_operational_score`
 pipeline and threshold mapping. The manual's "stress" wording can be used in
@@ -125,7 +125,7 @@ Entity fields: `+6` = target floor (`0x58` = searching), `+7` = spawn floor
 
 Vacant-room search scope: rentable units (families 3/4/5) in the same modulo-6 floor
 group (`floor / 6`). Claim writes guest entity ref into the room's ServiceRequestEntry
-sidecar, sets `room.stay_phase = rand(2..14)`, sets `room[+0x13] = 1` (occupied).
+sidecar, sets `room.unit_status = rand(2..14)`, sets `room[+0x13] = 1` (occupied).
 
 ### Families `3`, `4`, `5` — Hotel Room Occupants
 
@@ -148,15 +148,15 @@ Lifecycle: check-in → venue trips → sibling sync → checkout → vacancy.
 
 | States | Operation | Route outcomes |
 |--------|-----------|----------------|
-| 0x20/0x60 | Route to hotel room. If 0x20: `assign_hotel_room` first (sets `stay_phase = rand(2..14)`, encodes target floor). If `stay_phase > 0x17` and no route-block: state → 0x26 | 0/1/2 → 0x60; 3 → `activate_family_345_unit` + `increment_stay_phase` → 0x01 or 0x04; fail → clear/reset |
-| 0x01/0x41 | Call `decrement_stay_phase_345`. Route to commercial venue | 0/1/2 → 0x41; 3 → 0x22; fail → `increment_stay_phase` → 0x04 |
-| 0x22/0x62 | Release venue slot, route back | 0/1/2 → 0x62; 3 → `increment_stay_phase` → 0x04; fail → 0x04 |
-| 0x04 | Sibling sync: state → 0x10. `sync_stay_phase_if_all_siblings_ready_345`: family 3 → unconditional; family 4/5 → if `stay_phase & 7 == 1` OR sibling at 0x10 → write `stay_phase = 0x10` | |
-| 0x10 | If `stay_phase == 0x10`: family 3 → `stay_phase = 1`; family 4/5 → `stay_phase = 2`. State → 0x05 | |
-| 0x05/0x45 | `decrement_stay_phase_345`. If `stay_phase & 7 == 0`: checkout (set `stay_phase = 0x28`/`0x30`, clear occupancy, credit income, increment sale count). Route to lobby | 0/1/2 → 0x45; 3 → 0x20 (reset); fail → 0x20 if vacant, else increment |
+| 0x20/0x60 | Route to hotel room. If 0x20: `assign_hotel_room` first (sets `unit_status = rand(2..14)`, encodes target floor). If `unit_status > 0x17` and no route-block: state → 0x26 | 0/1/2 → 0x60; 3 → `activate_family_345_unit` + `increment_unit_status` → 0x01 or 0x04; fail → clear/reset |
+| 0x01/0x41 | Call `decrement_unit_status_345`. Route to commercial venue | 0/1/2 → 0x41; 3 → 0x22; fail → `increment_unit_status` → 0x04 |
+| 0x22/0x62 | Release venue slot, route back | 0/1/2 → 0x62; 3 → `increment_unit_status` → 0x04; fail → 0x04 |
+| 0x04 | Sibling sync: state → 0x10. `sync_unit_status_if_all_siblings_ready_345`: family 3 → unconditional; family 4/5 → if `unit_status & 7 == 1` OR sibling at 0x10 → write `unit_status = 0x10` | |
+| 0x10 | If `unit_status == 0x10`: family 3 → `unit_status = 1`; family 4/5 → `unit_status = 2`. State → 0x05 | |
+| 0x05/0x45 | `decrement_unit_status_345`. If `unit_status & 7 == 0`: checkout (set `unit_status = 0x28`/`0x30`, clear occupancy, credit income, increment sale count). Route to lobby | 0/1/2 → 0x45; 3 → 0x20 (reset); fail → 0x20 if vacant, else increment |
 
-`activate_family_345_unit`: sets `stay_phase` to 0 (morning) or 8 (evening), marks
-dirty, adds to primary ledger (+1/+2/+2 for families 3/4/5).
+`activate_family_345_unit`: sets `unit_status` to 0 (morning) or 8 (evening), marks
+dirty, adds to population ledger (+1/+2/+2 for families 3/4/5).
 
 ### Family `7` — Office Workers
 
@@ -170,7 +170,7 @@ dirty, adds to primary ledger (+1/+2/+2 for families 3/4/5).
 | 0x01 | daypart ≥ 4 → state 0x05; daypart 2–3 → dispatch; daypart 1 → 1/12 chance; daypart 0 → wait |
 | 0x02 | (shared with 0x01) |
 | 0x05 | daypart == 4 → 1/6 chance; daypart > 4 → dispatch |
-| 0x20 | `calendar_phase_flag != 0` → skip; `pairing_active_flag != 0` required; daypart 0 → 1/12; daypart 1–2 → dispatch; daypart ≥ 3 → dispatch |
+| 0x20 | `calendar_phase_flag != 0` → skip; `eval_active_flag != 0` required; daypart 0 → 1/12; daypart 1–2 → dispatch; daypart ≥ 3 → dispatch |
 | 0x21 | daypart ≥ 4 → dispatch; daypart 3 → 1/12 chance; daypart < 3 → wait |
 | 0x22 | daypart ≥ 4 → state 0x27 + release request; daypart ≥ 2 → dispatch; daypart < 2 → wait |
 | 0x23 | (shared with 0x22) |
@@ -187,11 +187,11 @@ dirty, adds to primary ledger (+1/+2/+2 for families 3/4/5).
 | 0x02/0x42 | Continue venue transit, resolve route to venue floor | 0–2 → 0x42; 3 → `try_claim_office_slot`: claimed → 0x23, busy → 0x42, none → 0x41 |
 | 0x05/0x45 | Route from assigned floor to lobby (floor 10) | 0–2 → 0x45; fail → 0x26 |
 | 0x20/0x60 | If 0x20: `assign_hotel_room` then route to assigned floor. If 0x60: continue | 0–2 → 0x40; 3 → 0x21 |
-| 0x21/0x61 | Route to floor 10 (0x21) or saved floor (0x61) | 0–2 → 0x61; 3 → `advance_stay_phase_or_wrap` |
-| 0x22/0x62 | Release venue slot, route home | 0–2 → 0x62; 3 → `advance_stay_phase_or_wrap`; fail → failure |
-| 0x23/0x63 | Enforce 16-tick venue dwell, then route to saved target | 0–2 → 0x63; 3 → `advance_stay_phase_or_wrap`; if `base_offset == 1` → 0x00 else → 0x05 |
+| 0x21/0x61 | Route to floor 10 (0x21) or saved floor (0x61) | 0–2 → 0x61; 3 → `advance_unit_status_or_wrap` |
+| 0x22/0x62 | Release venue slot, route home | 0–2 → 0x62; 3 → `advance_unit_status_or_wrap`; fail → failure |
+| 0x23/0x63 | Enforce 16-tick venue dwell, then route to saved target | 0–2 → 0x63; 3 → `advance_unit_status_or_wrap`; if `base_offset == 1` → 0x00 else → 0x05 |
 
-`advance_stay_phase_or_wrap`: increments trip counter, wraps back to start when
+`advance_unit_status_or_wrap`: increments trip counter, wraps back to start when
 per-family bound is reached. Next state: `base_offset == 1` → 0x00 (idle); else → 0x05.
 
 ### Family `9` — Condo Residents
@@ -216,15 +216,15 @@ State 0x04: base_offset == 2 → daypart >= 5 → dispatch; else daypart >= 5, d
 
 | States | Operation | Route outcomes |
 |--------|-----------|----------------|
-| 0x10 | If `stay_phase == 0x10`: rewrite to 3, mark dirty. If `calendar_phase_flag == 1`: odd subtype → INC stay_phase → 0x04; even → 0x01. Else: `base_offset == 1` → 0x01; else → 0x00 | |
-| 0x01/0x41 | If 0x01: DEC stay_phase. Choose venue selector by calendar phase + subtype parity. Route to commercial venue | fail → INC stay_phase → 0x04; else → 0x41 |
-| 0x20/0x60 | Route to commercial venue. **SALE POINT**: if `stay_phase >= 0x18` and route succeeds → `activate_commercial_tenant_cashflow` (credit sale, reset stay_phase to 0/8, +3 ledger) | fail + unsold → 0x20; fail + sold → INC → 0x04; success + unsold → 0x60 (SALE); arrived → 0x04 |
-| 0x21/0x61 | Route to floor 10 / saved floor | 0–2 → 0x61; fail or arrived → INC stay_phase → 0x04 |
+| 0x10 | If `unit_status == 0x10`: rewrite to 3, mark dirty. If `calendar_phase_flag == 1`: odd subtype → INC unit_status → 0x04; even → 0x01. Else: `base_offset == 1` → 0x01; else → 0x00 | |
+| 0x01/0x41 | If 0x01: DEC unit_status. Choose venue selector by calendar phase + subtype parity. Route to commercial venue | fail → INC unit_status → 0x04; else → 0x41 |
+| 0x20/0x60 | Route to commercial venue. **SALE POINT**: if `unit_status >= 0x18` and route succeeds → `activate_commercial_tenant_cashflow` (credit sale, reset unit_status to 0/8, +3 ledger) | fail + unsold → 0x20; fail + sold → INC → 0x04; success + unsold → 0x60 (SALE); arrived → 0x04 |
+| 0x21/0x61 | Route to floor 10 / saved floor | 0–2 → 0x61; fail or arrived → INC unit_status → 0x04 |
 | 0x22/0x62 | Release venue, route home | fail/arrived → INC → 0x04 |
-| 0x04 | State → 0x10. `try_set_parent_state_in_transit_if_all_slots_transit`: if `stay_phase & 7 == 1` → shortcut `stay_phase = 0x10`; else check all 3 siblings at 0x10 | |
+| 0x04 | State → 0x10. `try_set_parent_state_in_transit_if_all_slots_transit`: if `unit_status & 7 == 1` → shortcut `unit_status = 0x10`; else check all 3 siblings at 0x10 | |
 
 Trip counter net effect per morning cycle: even tiles DEC, odd tile INC → net −1.
-After ~2 cycles from 3, stay_phase reaches 1 → sync shortcut → back to 0x10.
+After ~2 cycles from 3, unit_status reaches 1 → sync shortcut → back to 0x10.
 
 ### Families `0x12`, `0x1d` — Entertainment Entities
 
@@ -262,7 +262,7 @@ Binary-verified from `gate_object_family_24_state_handler` at `1228:5b5a`,
 
 **Daily spawn** (`activate_upper_tower_runtime_group`, checkpoint 0x000):
 when `g_eval_entity_index >= 0` (cathedral placed) and `star_count > 2`,
-sweeps floors 0x6d–0x77 for types 0x24–0x28, forces 8 entity slots each to state 0x20.
+sweeps floors 100–104 for types 0x24–0x28, forces 8 entity slots each to state 0x20.
 
 **Gate** (state 0x20):
 - Requires `calendar_phase_flag == 1`
@@ -271,15 +271,15 @@ sweeps floors 0x6d–0x77 for types 0x24–0x28, forces 8 entity slots each to s
 - `daypart_index >= 1`: missed dispatch window → state 0x27 (parked)
 
 **Selector** (`resolve_family_24_selector_value`):
-- State 0x45 → target floor 10 (lobby)
-- State 0x60 → target floor 0x6d (109, evaluation zone)
+- State 0x45 → target floor 0 (lobby)
+- State 0x60 → target floor 100 (cathedral base)
 
 | State | Gate | Behavior |
 |-------|------|----------|
-| 0x20 | `calendar_phase_flag == 1`, daypart 0, stagger | Route from floor 10 to floor 0x6d (109). Result: 0/1/2 → 0x60; 3 → 0x03 + award check; fail → 0x27 |
-| 0x60 | — | In transit to eval zone. On arrival → 0x03 + `check_evaluation_completion_and_award` |
+| 0x20 | `calendar_phase_flag == 1`, daypart 0, stagger | Route from floor 0 to floor 100 (cathedral). Result: 0/1/2 → 0x60; 3 → 0x03 + award check; fail → 0x27 |
+| 0x60 | — | In transit to cathedral. On arrival → 0x03 + `check_evaluation_completion_and_award` |
 | 0x03 | — | Arrived. If `g_day_tick < 800` and all 40 in state 0x03 and ledger tier > star_count → Tower promotion. Otherwise stamp object `aux = 3, dirty = 1` |
-| 0x05 | — | Midday return (set by `dispatch_evaluation_entity_midday_return` at checkpoint 0x04b0). Route from floor 0x6d to floor 10. Result: 0/1/2 → 0x45; 3 or fail → 0x27 |
+| 0x05 | — | Midday return (set by `dispatch_evaluation_entity_midday_return` at checkpoint 0x04b0). Route from floor 100 to floor 0. Result: 0/1/2 → 0x45; 3 or fail → 0x27 |
 | 0x45 | — | In transit back to lobby. On arrival → 0x27 |
 | 0x27 | — | Parked. Reset to 0x20 at next day-start |
 

@@ -27,7 +27,7 @@ Maintain:
 "morning" behavioral period. When false (`daypart_index >= 4`), the game is in the
 "evening" period. This distinction controls:
 
-- `stay_phase` initialization: morning starts at `0`, evening starts at `8`
+- `unit_status` initialization: morning starts at `0`, evening starts at `8`
 - checkout band selection: morning → `0x28`, evening → `0x30`
 - deactivation mark: morning → `0x18`, evening → `0x20` (condos); `0x10`/`0x18` (offices)
 - hotel vacancy band: morning → `0x18`, evening → `0x20`
@@ -62,15 +62,19 @@ Clean-room rule:
 
 ## Top-Level Tick Order
 
-Each simulation tick:
+Each simulation tick, in this exact order:
 
 1. increment `day_tick`
 2. recompute `daypart_index`
 3. increment `day_counter` at the end-of-day boundary
 4. wrap `day_tick` after the full daily range
-5. run checkpoint-triggered work
+5. run checkpoint-triggered work (if `day_tick` matches a checkpoint value)
 6. run the entity refresh stride when not paused
 7. run the carrier tick for every active car
+
+Checkpoints always run before entity refresh on the same tick. Entities serviced
+in the stride therefore see state that was already modified by any checkpoint that
+fired on this tick.
 
 ## Entity Refresh Stride
 
@@ -119,16 +123,17 @@ are listed inline; multi-step checkpoints are expanded below.
 ### `0x000` — Start of Day
 
 1. clear `g_facility_progress_override` to 0
-2. **normalize object state bytes** (sweep all floors):
-   - hotel (3/4/5): map `stay_phase` 0x20→0x18, 0x30→0x28, 0x40→0x38 (step down one tier)
+2. **normalize object state bytes** (sweep all floors, exact-value matches only —
+   values not listed below are left unchanged):
+   - hotel (3/4/5): map `unit_status` 0x20→0x18, 0x30→0x28, 0x40→0x38 (step down one tier)
    - elevator (type 7): 0x18→0x10; any other nonzero → 0 (if `calendar_phase_flag == 0`) or 8 (if != 0)
    - escalator (type 9): 0x20→0x18
    - families 0x1f..0x21, 0x24..0x28: clear `object[+0xc]` and `object[+0xd]` to 0
    - mark each modified object dirty
-3. **rebuild demand history table**: clear log, sweep 0x200-slot source table dropping invalid entries, append live entries, recompute summary totals
-4. **rebuild path-seed bucket table**: clear seed list, sweep 10 entries, drop invalid entries, rebuild bucket table. If `star_count > 2`, set flag enabling upper-tower entity activation
+3. **rebuild demand history table**: clear log, sweep 0x200-slot source table dropping invalid entries (an entry is **invalid** when its subtype byte equals `0xff` — the demolished-object tombstone), append live entries where the owning parking-space object's coverage flag is not `1`, recompute summary totals
+4. **rebuild path-seed bucket table**: clear seed list, sweep the 10 service-link (type 0x0d) tracking slots, drop invalid entries, rebuild zone bucket tables for retail/restaurant/fast-food. Zone assignment: `bucket_index = max(0, (floor - 9) / 15)`, dividing the tower into 7 fifteen-floor bands. If `star_count > 2`, set flag enabling upper-tower entity activation
 5. **refresh security/housekeeping states**: if `star_count <= 2` → fire low-star notification. Otherwise sweep placed objects: reset security guard (type 0x0e) state to 0, housekeeping cart (type 0x0f) state to 6; fire start-of-day notification
-6. **activate upper-tower runtime group**: gated on `g_eval_entity_index >= 0` and `star_count > 2`. Sweep floors 109–119 for types 0x24..0x28; force 8 consecutive runtime entity slots per object to state `0x20` (yielding 40 eval entities total)
+6. **activate upper-tower runtime group**: gated on `g_eval_entity_index >= 0` and `star_count > 2`. Sweep floors 100–104 for types 0x24..0x28; force 8 consecutive runtime entity slots per object to state `0x20` (yielding 40 eval entities total)
 7. **update facility progress override**: if `day_counter % 8 == 4` AND `star_count < 5` → set `facility_progress_override = 1`
 
 ### `0x020` — Housekeeping Daily Reset
@@ -145,15 +150,15 @@ are listed inline; multi-step checkpoints are expanded below.
 
 ### `0x0f0` — Facility Ledger Rebuild
 
-1. **rebuild linked facility records**: clear family-0xc and family-0xa primary ledger buckets; sweep 0x200-entry commercial-venue record table:
+1. **rebuild linked facility records**: clear family-0xc and family-0xa population ledger buckets; sweep 0x200-entry commercial-venue record table:
    - `floor_index == -1` → skip
    - `subtype_index == -1` → mark invalid, decrement active venue count
    - else if object is not type 6 → `recompute_facility_runtime_state(floor, subtype, record_index)`
-2. **rebuild entertainment family ledger**: clear family-0x12 and family-0x1d primary ledger buckets; sweep 16-entry entertainment-link table:
+2. **rebuild entertainment family ledger**: clear family-0x12 and family-0x1d population ledger buckets; sweep 16-entry entertainment-link table:
    - `forward_floor_index == -1` → skip
    - single-link (`family_selector < 0`): `forward_runtime_phase = 0`, `reverse_runtime_phase = 50`; family = 0x1d
    - paired-link: compute `income_rate` for both halves; family = 0x12
-   - add combined rate to primary ledger bucket
+   - add combined rate to population ledger bucket
    - increment `link_age_counter` (capped at 0x7f)
    - clear `pending_transition_flag`, `active_runtime_count`, `attendance_counter`
 3. **event triggers**:
@@ -169,7 +174,7 @@ are listed inline; multi-step checkpoints are expanded below.
 1. reset `g_family345_sale_count = 0`
 2. promote paired entertainment links with `link_phase_state >= 2` to ready phase (state 3)
 3. activate reverse-half runtime slots for single-link records with `link_phase_state == 0`: set slots to state `0x20`, advance to phase 1
-4. **evaluation midday return**: if `g_eval_entity_index >= 0`: sweep floors 0x6d–0x77 for types 0x24–0x28; clear `object[+0xc]` to 0, mark dirty; advance associated entities in state `0x03` to state `0x05`; if `game_state_flags bit 2` set → clear it
+4. **evaluation midday return**: if `g_eval_entity_index >= 0`: sweep floors 100–104 for types 0x24–0x28; clear `object[+0xc]` to 0, mark dirty; advance associated entities in state `0x03` to state `0x05`; if `game_state_flags bit 2` set → clear it
 
 ### `0x0578` — Entertainment Half-Runtime Activation Pass 2
 
@@ -185,12 +190,13 @@ are listed inline; multi-step checkpoints are expanded below.
 
 ### `0x0640` — Midday Sweep
 
-1. **rebuild type-6 facility records**: clear family-6 primary ledger bucket; sweep venue table: for type-6 entries call `recompute_facility_runtime_state`
+1. **rebuild type-6 facility records**: clear family-6 population ledger bucket; sweep venue table: for type-6 entries call `recompute_facility_runtime_state`
 2. **hotel pair-state update**: for hotel rooms (3/4/5) with `state >= 0x38`: check adjacent same-floor objects; if neighbor is hotel with state < 0x38: set neighbor's state to `0x40` (pre-day-4) or `0x38` (post); reset neighbor pairing fields
 3. **hotel operational update**: for each hotel room: `recompute_object_operational_status`; `handle_extended_vacancy_expiry`. Then for each: `attempt_pairing_with_floor_neighbor`
 4. **clear periodic vacancy slot**: if `day_counter % 9 != 3` → clear
 5. **flush hotel requests**: sweep `g_active_request_table`, remove entries for families 3/4/5
-6. **advance stay-phase tiers** (sweep all placed objects):
+6. **advance stay-phase tiers** (sweep all placed objects, exact-value matches only —
+   values not listed are left unchanged):
    - hotel (3/4/5): 0x18→0x20, 0x28→0x30, 0x38→0x40; mark dirty
    - elevator (7): 0x10→0x18, 0x00→0x08; mark dirty
    - escalator (9): 0x18→0x20; if `state & 0xf8 == 0` → `state = (state & 7) | 0x08`
@@ -199,7 +205,7 @@ are listed inline; multi-step checkpoints are expanded below.
 7. **entertainment midday cycle**:
    - promote paired-link reverse-half `link_phase_state` 2→3
    - advance reverse phase for all links: single-link entities in `0x03` → `0x05`/`0x01`, accrue income (family 0x1d), reset `link_phase_state = 0`. Paired-link: same, accrue income (family 0x12), reset phase
-8. **security housekeeping reset**: `update_security_housekeeping_state(0)` — clears `security_adequate` flag, sets all type-0x0e/0x0f `stay_phase` to 0
+8. **security housekeeping reset**: `update_security_housekeeping_state(0)` — clears `security_adequate` flag, sets all type-0x0e/0x0f `unit_status` to 0
 9. **clear progress override**: clear `facility_progress_override` gate bit
 
 ### `0x06a4` — Afternoon Notification
@@ -234,10 +240,10 @@ are listed inline; multi-step checkpoints are expanded below.
 
 1. **rebuild all entity tile spans**: sweep all floors, call `update_entity_tile_span` per object
 2. **reset runtime entity state** (sweep entity table, normalize by family):
-   - 3/4/5 (hotel): state-word == 0 → `0x24`; stay_phase ≤ 0x17 → `0x10`; else → `0x20`. Clear `[+7]`, `[+8]`
+   - 3/4/5 (hotel): state-word == 0 → `0x24`; unit_status ≤ 0x17 → `0x10`; else → `0x20`. Clear `[+7]`, `[+8]`
    - 6/10/12 (commercial): → `0x20`
    - 7 (office): → `0x20`. Clear `[+7]`, `[+8]`, word `[+0xc]`
-   - 9 (condo): stay_phase < 0x18 → `0x10`; else → `0x20`. Clear `[+7]`, `[+8]`
+   - 9 (condo): unit_status < 0x18 → `0x10`; else → `0x20`. Clear `[+7]`, `[+8]`
    - 14/33 (0xe/0x21 — security/hotel guest): → `0x01`
    - 15 (0xf — VIP claimant): → `0x00`, `[+7] = 0xff`
    - 18/29/36 (0x12/0x1d/0x24 — entertainment/eval): → `0x27`. Clear `[+7..+0x0e]`
@@ -249,7 +255,7 @@ are listed inline; multi-step checkpoints are expanded below.
 
 ### `0x09e5` — Ledger Rollover And Expenses
 
-1. if `day_counter % 3 == 0`: roll secondary/tertiary ledgers — save `g_cash_balance` into cycle base, clear 11 bucket slots each
+1. if `day_counter % 3 == 0`: roll income/expense ledgers — save `g_cash_balance` into cycle base, clear 11 bucket slots each
 2. for all objects: `recompute_object_operational_status`. If `day_counter % 3 == 0`: also `deactivate_family_cashflow_if_unpaired` then `activate_family_cashflow_if_operational`
 3. if `day_counter % 3 == 0`: `apply_periodic_operating_expenses` — sweep floors, carriers, special links:
    - parking (0x18/0x19/0x1a): `add_parking_operating_expense`
@@ -299,7 +305,7 @@ New game state should initialize:
 
 ## Security/Housekeeping Tier Check
 
-The tower computes a required duty tier from total primary-ledger activity divided by the security scaling factor.
+The tower computes a required duty tier from total population-ledger activity divided by the security scaling factor.
 
 Two daily checkpoints use this:
 
@@ -308,7 +314,7 @@ Two daily checkpoints use this:
 
 If the required tier is above the allowed checkpoint tier, the tower is considered security-inadequate for that phase of the day.
 
-Required duty tier maps from total primary-ledger activity using these thresholds:
+Required duty tier maps from total population-ledger activity using these thresholds:
 
 - `< 500`: tier `1`
 - `< 1000`: tier `2`

@@ -9,20 +9,20 @@ All values in the tables below are denominated in `$100` units.
 The simulation maintains:
 
 - `cash_balance`
-- `primary_ledger`: live per-family contribution totals
-- `secondary_ledger`: realized income since the last rollover
-- `tertiary_ledger`: realized expenses since the last rollover
+- `population_ledger`: live per-family active-unit counts (drives star thresholds and security tier)
+- `income_ledger`: realized income since the last 3-day rollover
+- `expense_ledger`: realized operating expenses since the last 3-day rollover
 
 Income:
 
 - add to cash
 - clamp so cash never exceeds `$99,999,999`
-- mirror into the secondary ledger
+- mirror into the income ledger
 
 Expenses:
 
 - subtract from cash
-- mirror into the tertiary ledger
+- mirror into the expense ledger
 
 ## Construction Costs
 
@@ -138,7 +138,7 @@ Parking expense formula:
   - star `3`: `30`
   - stars `>= 4`: `100`
 - these are `$100` units before the `/ 10` scaling step
-- the resulting expense is recorded under tertiary family ledger bucket `0x18`
+- the resulting expense is recorded under expense ledger bucket `0x18`
 - the charge is skipped for floor indices inside the excluded underground band `1 <= floor < lowest_floor_bound`
 
 This naming-to-behavior inversion is strange, but it is no longer unresolved.
@@ -156,9 +156,17 @@ Examples:
 
 ## Pricing Tiers
 
-`variant_index` is the pricing/rent tier:
+`rent_level` (placed-object offset `+0x16`) is the player-configurable pricing/rent
+tier. The player sets it via the facility info dialog for priced families (3, 4, 5, 7,
+9, 10). It indexes into the YEN #1001 payout resource table.
 
-- `0..3`: valid priced tiers
-- `4`: no payout / unpriced sentinel
+- `0`: highest price (tier 0) — readiness penalty `+30`
+- `1`: default price (tier 1) — set at placement, no readiness modifier
+- `2`: lower price (tier 2) — readiness bonus `-30`
+- `3`: lowest price (tier 3) — forces readiness score to `0` (always passes)
+- `4`: no payout / unpriced sentinel — set for all non-priced families
 
-Changing rent or pricing updates `variant_index` and then recomputes readiness/cashflow for the affected object.
+Condo (family 9) guard: rent level can only be changed while unsold (`unit_status >= 0x18`).
+All other priced families allow changes at any time.
+
+Changing rent level recomputes readiness and cashflow for the affected object.

@@ -130,11 +130,31 @@ function supportsFamily(
 	originFamilyCode: number,
 	targetFamilyCode: number,
 ): boolean {
+	if (targetFamilyCode === 18 || targetFamilyCode === 29) {
+		return (
+			originFamilyCode === 3 ||
+			originFamilyCode === 4 ||
+			originFamilyCode === 5 ||
+			originFamilyCode === 7 ||
+			originFamilyCode === 9
+		);
+	}
+
+	if (
+		originFamilyCode === 3 ||
+		originFamilyCode === 4 ||
+		originFamilyCode === 5
+	) {
+		return (
+			targetFamilyCode === 6 ||
+			targetFamilyCode === 7 ||
+			targetFamilyCode === 10 ||
+			targetFamilyCode === 12
+		);
+	}
+
 	if (originFamilyCode === 7) {
 		return (
-			targetFamilyCode === 3 ||
-			targetFamilyCode === 4 ||
-			targetFamilyCode === 5 ||
 			targetFamilyCode === 6 ||
 			targetFamilyCode === 10 ||
 			targetFamilyCode === 12
@@ -142,7 +162,15 @@ function supportsFamily(
 	}
 
 	if (originFamilyCode === 9) {
-		return targetFamilyCode === 6 || targetFamilyCode === 10;
+		return (
+			targetFamilyCode === 3 ||
+			targetFamilyCode === 4 ||
+			targetFamilyCode === 5 ||
+			targetFamilyCode === 6 ||
+			targetFamilyCode === 7 ||
+			targetFamilyCode === 10 ||
+			targetFamilyCode === 12
+		);
 	}
 
 	return COMMERCIAL_FAMILIES.has(targetFamilyCode);
@@ -176,19 +204,59 @@ function recomputeObjectOperationalStatus(
 	entity: EntityRecord,
 	object: PlacedObjectRecord,
 ): void {
-	if (object.objectTypeCode !== 7 && object.objectTypeCode !== 9) return;
+	if (
+		object.objectTypeCode !== 3 &&
+		object.objectTypeCode !== 4 &&
+		object.objectTypeCode !== 5 &&
+		object.objectTypeCode !== 7 &&
+		object.objectTypeCode !== 9
+	)
+		return;
+
+	if (object.objectTypeCode <= 5 && object.unitStatus > 0x37) {
+		object.evalLevel = 0xff;
+		object.needsRefreshFlag = 1;
+		return;
+	}
+	if (
+		object.objectTypeCode === 7 &&
+		object.unitStatus > 0x0f &&
+		object.evalActiveFlag !== 0
+	) {
+		object.evalLevel = 0xff;
+		object.needsRefreshFlag = 1;
+		return;
+	}
+	if (
+		object.objectTypeCode === 9 &&
+		object.unitStatus > 0x17 &&
+		object.evalActiveFlag !== 0
+	) {
+		object.evalLevel = 0xff;
+		object.needsRefreshFlag = 1;
+		return;
+	}
 
 	const siblings = findSiblingEntities(world, entity);
 	const sampleTotal = siblings.reduce(
 		(sum, sibling) => sum + sibling.byte09,
 		0,
 	);
-	const sampleCount = Math.max(1, siblings.length);
+	const sampleDivisor =
+		object.objectTypeCode === 3
+			? 1
+			: object.objectTypeCode === 4
+				? 2
+				: object.objectTypeCode === 5
+					? 2
+					: object.objectTypeCode === 7
+						? 6
+						: 3;
 	let score = Math.trunc(
-		4096 / Math.max(1, Math.trunc(sampleTotal / sampleCount)),
+		4096 / Math.max(1, Math.trunc(sampleTotal / sampleDivisor)),
 	);
 
-	switch (object.variantIndex) {
+	switch (object.rentLevel) {
 		case 0:
 			score += 30;
 			break;
@@ -202,7 +270,8 @@ function recomputeObjectOperationalStatus(
 			break;
 	}
 
-	const supportRadius = object.objectTypeCode === 7 ? 10 : 30;
+	const supportRadius =
+		object.objectTypeCode === 7 ? 10 : object.objectTypeCode === 9 ? 30 : 20;
 	if (hasNearbySupport(world, object, entity.floorAnchor, supportRadius)) {
 		score += 60;
 	}
@@ -210,9 +279,9 @@ function recomputeObjectOperationalStatus(
 	const [lower, upper] = OP_SCORE_THRESHOLDS[Math.min(time.starCount, 5)] ?? [
 		80, 200,
 	];
-	object.pairingStatus = score < lower ? 2 : score < upper ? 1 : 0;
-	if (object.pairingActiveFlag === 0 && object.pairingStatus > 0) {
-		object.pairingActiveFlag = 1;
+	object.evalLevel = score < lower ? 2 : score < upper ? 1 : 0;
+	if (object.evalActiveFlag === 0 && object.evalLevel > 0) {
+		object.evalActiveFlag = 1;
 	}
 	object.needsRefreshFlag = 1;
 }
@@ -316,7 +385,7 @@ function activateHotelStay(
 	entity.stateCode = 0x01;
 	entity.originFloor = 10;
 	entity.selectedFloor = entity.floorAnchor;
-	object.stayPhase = time.daypartIndex < 4 ? 0 : 8;
+	object.unitStatus = time.daypartIndex < 4 ? 0 : 8;
 	object.needsRefreshFlag = 1;
 	lowerStress(entity, 8);
 }
@@ -346,11 +415,11 @@ function checkoutHotelStay(
 	add_cashflow_from_family_resource(
 		ledger,
 		tileName,
-		object.variantIndex,
+		object.rentLevel,
 		object.objectTypeCode,
 	);
 	for (const sibling of siblings) sibling.stateCode = 0x24;
-	object.stayPhase = 0x28;
+	object.unitStatus = 0x28;
 	object.needsRefreshFlag = 1;
 }
 
@@ -441,7 +510,7 @@ function processOfficeEntity(
 		// Weekday-only: calendar_phase_flag must be 0
 		if (time.calendarPhaseFlag !== 0) return;
 		// Needs operational pairing
-		if (object.pairingActiveFlag === 0) return;
+		if (object.evalActiveFlag === 0) return;
 
 		// Daypart gate: daypart 0 → 1/12 stagger; daypart 1–2 → dispatch; daypart ≥ 3 → dispatch
 		if (time.daypartIndex === 0) {
@@ -458,7 +527,7 @@ function processOfficeEntity(
 			add_cashflow_from_family_resource(
 				ledger,
 				"office",
-				object.variantIndex,
+				object.rentLevel,
 				object.objectTypeCode,
 			);
 		}
@@ -561,14 +630,14 @@ function processCondoEntity(
 	const object = findObjectForEntity(world, entity);
 	if (!object) return;
 
-	if (object.stayPhase >= 0x18) {
+	if (object.unitStatus >= 0x18) {
 		if (hasViableRouteBetweenFloors(world, 10, entity.floorAnchor)) {
-			object.stayPhase = time.daypartIndex < 4 ? 0 : 8;
+			object.unitStatus = time.daypartIndex < 4 ? 0 : 8;
 			if (entity.baseOffset === 0) {
 				add_cashflow_from_family_resource(
 					ledger,
 					"condo",
-					object.variantIndex,
+					object.rentLevel,
 					object.objectTypeCode,
 				);
 			}
@@ -636,9 +705,9 @@ export function rebuild_runtime_entities(world: WorldState): void {
 		if (
 			object.objectTypeCode === 9 &&
 			object.activationTickCount === 0 &&
-			object.stayPhase === 0
+			object.unitStatus === 0
 		) {
-			object.stayPhase = 0x18;
+			object.unitStatus = 0x18;
 		}
 
 		for (let baseOffset = 0; baseOffset < population; baseOffset++) {
@@ -666,7 +735,7 @@ export function reset_entity_runtime_state(world: WorldState): void {
 		if (HOTEL_FAMILIES.has(entity.familyCode)) {
 			entity.stateCode = 0x24;
 		} else if (entity.familyCode === 9) {
-			entity.stateCode = object.stayPhase >= 0x18 ? 0x27 : 0x01;
+			entity.stateCode = object.unitStatus >= 0x18 ? 0x27 : 0x01;
 		} else {
 			entity.stateCode = 0x27;
 		}
@@ -1184,8 +1253,8 @@ export function closeCommercialVenues(world: WorldState): void {
 
 export function resetHousekeepingDutyTier(world: WorldState): void {
 	for (const object of Object.values(world.placedObjects)) {
-		if (object.objectTypeCode === 21 && object.stayPhase === 6) {
-			object.stayPhase = 0;
+		if (object.objectTypeCode === 21 && object.unitStatus === 6) {
+			object.unitStatus = 0;
 			object.needsRefreshFlag = 1;
 		}
 	}
@@ -1206,7 +1275,7 @@ export function update_security_housekeeping_state(
 		world.gateFlags.securityAdequate = 0;
 		for (const object of Object.values(world.placedObjects)) {
 			if (object.objectTypeCode === 20 || object.objectTypeCode === 21) {
-				object.stayPhase = 0;
+				object.unitStatus = 0;
 				object.needsRefreshFlag = 1;
 			}
 		}
@@ -1219,7 +1288,7 @@ export function update_security_housekeeping_state(
 		return;
 	}
 
-	const primaryTotal = ledger.primaryLedger.reduce(
+	const primaryTotal = ledger.populationLedger.reduce(
 		(sum, value) => sum + value,
 		0,
 	);
@@ -1242,7 +1311,7 @@ export function update_security_housekeeping_state(
 	world.gateFlags.securityAdequate = adequate;
 	for (const object of Object.values(world.placedObjects)) {
 		if (object.objectTypeCode === 20 || object.objectTypeCode === 21) {
-			object.stayPhase = dutyTier;
+			object.unitStatus = dutyTier;
 			object.needsRefreshFlag = 1;
 		}
 	}
@@ -1259,7 +1328,7 @@ export function runOfficeServiceEvaluation(
 		if (entity.familyCode !== 7 || entity.stateCode !== 0x01) continue;
 		const object = findObjectForEntity(world, entity);
 		if (!object) continue;
-		passed ||= object.pairingStatus > 0;
+		passed ||= object.evalLevel > 0;
 	}
 
 	world.gateFlags.officeServiceOk = passed ? 1 : 0;
@@ -1271,12 +1340,12 @@ export function refund_unhappy_condos(
 ): void {
 	for (const [key, object] of Object.entries(world.placedObjects)) {
 		if (object.objectTypeCode !== 9) continue;
-		if (object.pairingStatus !== 0) continue;
-		if (object.stayPhase >= 0x18) continue;
+		if (object.evalLevel !== 0) continue;
+		if (object.unitStatus >= 0x18) continue;
 		const tileName = "condo";
-		const payout = YEN_1001[tileName]?.[Math.min(object.variantIndex, 3)] ?? 0;
+		const payout = YEN_1001[tileName]?.[Math.min(object.rentLevel, 3)] ?? 0;
 		ledger.cashBalance = Math.max(0, ledger.cashBalance - payout * 1000);
-		object.stayPhase = 0x18;
+		object.unitStatus = 0x18;
 		object.needsRefreshFlag = 1;
 		const [x, y] = key.split(",").map(Number);
 		for (const entity of world.entities) {
@@ -1642,8 +1711,8 @@ export function advanceEntertainmentReversePhaseAndAccrue(
 						99_999_999,
 						ledger.cashBalance + payout,
 					);
-					ledger.secondaryLedger[ENTERTAINMENT_FAMILY_PAIRED] =
-						(ledger.secondaryLedger[ENTERTAINMENT_FAMILY_PAIRED] ?? 0) + payout;
+					ledger.incomeLedger[ENTERTAINMENT_FAMILY_PAIRED] =
+						(ledger.incomeLedger[ENTERTAINMENT_FAMILY_PAIRED] ?? 0) + payout;
 				}
 			}
 		} else if (object.objectTypeCode === ENTERTAINMENT_FAMILY_SINGLE) {
@@ -1654,8 +1723,8 @@ export function advanceEntertainmentReversePhaseAndAccrue(
 				);
 				const payout = 20_000;
 				ledger.cashBalance = Math.min(99_999_999, ledger.cashBalance + payout);
-				ledger.secondaryLedger[ENTERTAINMENT_FAMILY_SINGLE] =
-					(ledger.secondaryLedger[ENTERTAINMENT_FAMILY_SINGLE] ?? 0) + payout;
+				ledger.incomeLedger[ENTERTAINMENT_FAMILY_SINGLE] =
+					(ledger.incomeLedger[ENTERTAINMENT_FAMILY_SINGLE] ?? 0) + payout;
 			}
 		}
 
@@ -1696,10 +1765,10 @@ function entityStressLevel(
 	entity: EntityRecord,
 	object: PlacedObjectRecord | undefined,
 ): "low" | "medium" | "high" {
-	if (object?.pairingStatus === 0 || entity.accumulatedDelay >= 120) {
+	if (object?.evalLevel === 0 || entity.accumulatedDelay >= 120) {
 		return "high";
 	}
-	if (object?.pairingStatus === 1 || entity.accumulatedDelay >= 40) {
+	if (object?.evalLevel === 1 || entity.accumulatedDelay >= 40) {
 		return "medium";
 	}
 	return "low";

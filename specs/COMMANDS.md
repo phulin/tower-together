@@ -171,7 +171,7 @@ Demolition confirmation prompts are known for some carrier edits:
 
 ## Price / Rent Change
 
-Price-change commands update `variant_index` and then recompute readiness and cashflow consequences for the affected facility.
+Price-change commands update `rent_level` (placed-object offset `+0x16`) and then recompute readiness and cashflow consequences for the affected facility. Valid for priced families (3, 4, 5, 7, 9, 10); values 0–3. Condo (family 9) rejects changes while sold (`unit_status < 0x18`).
 
 ## Prompt Response
 

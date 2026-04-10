@@ -27,13 +27,13 @@ Every placed object needs, at minimum:
 
 - horizontal span: `left_tile_index`, `right_tile_index`
 - `object_type_code`
-- lifecycle/state byte: `stay_phase`
+- lifecycle/state byte: `unit_status`
 - family-specific aux/timer field
 - optional linked sidecar index
 - dirty/refresh flag
-- readiness latch: `pairing_active_flag`
-- current readiness grade: `pairing_status`
-- pricing tier: `variant_index`
+- readiness latch: `eval_active_flag`
+- current readiness grade: `eval_level`
+- pricing tier: `rent_level` (player-configurable, 0–3)
 - activity counter: `activation_tick_count`
 
 The implementation can choose any internal struct layout. The important part is preserving these behaviors and fields.
@@ -65,9 +65,9 @@ Many families follow this pattern:
 
 Not every family uses every value, but this convention is useful across the spec.
 
-## `stay_phase`
+## `unit_status`
 
-`stay_phase` is the main per-object lifecycle field.
+`unit_status` is the main per-object lifecycle field.
 
 Shared meanings:
 
@@ -107,9 +107,9 @@ This field is used to stagger per-occupant behavior. It is based on population, 
 The simulation maintains:
 
 - `cash_balance`
-- `primary_ledger`: live per-family contribution totals
-- `secondary_ledger`: realized income accumulated since rollover
-- `tertiary_ledger`: realized expenses accumulated since rollover
+- `population_ledger`: live per-family active-unit counts (drives star thresholds and security tier)
+- `income_ledger`: realized income accumulated since 3-day rollover
+- `expense_ledger`: realized operating expenses accumulated since 3-day rollover
 
 ## Global State
 

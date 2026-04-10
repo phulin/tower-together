@@ -140,9 +140,9 @@ export type ServerMessage =
 			tileType: string;
 			objectInfo?: {
 				objectTypeCode: number;
-				variantIndex: number;
-				pairingStatus: number;
-				stayPhase: number;
+				rentLevel: number;
+				evalLevel: number;
+				unitStatus: number;
 				activationTickCount: number;
 			};
 			carrierInfo?: {

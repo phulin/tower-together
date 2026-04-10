@@ -34,7 +34,7 @@ Flow:
 Armed bomb behavior:
 
 - `bomb_active` flag set (`[0xbc7a] += 1`)
-- deadline stored at `[0xbc80] = 0x4b0` (1200 ticks)
+- deadline stored as absolute day_tick: `[0xbc80] = 0x4b0` (detonates at `g_day_tick == 1200`)
 - with security (`0xbc5e >= 0`): shows prompt 0xbcd with floor offset
 - without security (`0xbc5e < 0`): shows prompt 0xbce
 
@@ -59,7 +59,7 @@ Each tick checks:
 
 ### Search Resolution (`resolve_bomb_search`)
 
-- found (`param != 0`): flag `|= 0x20`, deadline extended: `[0xbc80] = g_day_tick + [DS:0xe64a]`
+- found (`param != 0`): flag `|= 0x20`, deadline extended to `[0xbc80] = g_day_tick + [DS:0xe64a]` (relative extension from current tick; same field, reused for cleanup timing)
 - not found (`param == 0`): flag `|= 0x40`, notification 0x2714, blast damage applied
 
 ### Bomb Cleanup (`FUN_10d0_0254`)
@@ -122,7 +122,7 @@ Two independent fire fronts track left-spreading and right-spreading fire per fl
 
 - If `rescue_countdown` (`[0xbc86]`) > 0: decrement it and skip spread (helicopter en route)
 - For each floor in the tower:
-  - Fire starts on a new floor when `(floor - fire_floor) * [DS:0xe646] + fire_start_tick == g_day_tick` — fires spread vertically with a delay of `[DS:0xe646]` ticks per floor
+  - Fire starts on a new floor when `abs(floor - fire_floor) * [DS:0xe646] + fire_start_tick == g_day_tick` — fires spread vertically (both up and down) with a delay of `[DS:0xe646]` ticks per floor. The fire floor itself ignites at `g_day_tick == fire_start_tick` (the `abs` term is zero)
   - Both fronts initialize at the fire tile position (`[0xbc88]`)
   - Left front: deletes objects at its position, moves left by 1 tile every `[DS:0xe644]` ticks; stops when it reaches the floor's left boundary
   - Right front: deletes objects at `position + 12`, moves right by 1 tile every `[DS:0xe644]` ticks; stops when `position + 12` exceeds the floor's right boundary
@@ -143,7 +143,8 @@ Helicopter rescue prompt fires at `fire_start_tick + [DS:0xe64a]` ticks after ig
 **Helicopter extinguish** (`advance_fire_spread`):
 
 - When `[0xbc8c]` > 0: decrements position by 1 every `[DS:0xe648]` ticks
-- For each floor: if fire position > helicopter position, resets that floor's fire fronts to -1
+- The helicopter has a single tile position that sweeps all floors simultaneously: for each floor in the tower, if that floor's fire front position > helicopter position, reset that floor's fire fronts to -1
+- This means the helicopter extinguishes fire on every affected floor at once as it passes each tile column — there is no per-floor sequencing
 - When the position reaches the floor's left boundary, extinguish is complete
 
 ### Fire Resolution
@@ -161,14 +162,16 @@ On resolution (`FUN_10f0_02a1`):
 
 ### Tuning Parameters (Fire)
 
-| Address | Meaning |
-|---------|---------|
-| `DS:0xe644` | fire spread rate: ticks per tile advance |
-| `DS:0xe646` | vertical spread delay: ticks per floor |
-| `DS:0xe648` | helicopter extinguish rate: ticks per tile |
-| `DS:0xe64a` | helicopter prompt delay from fire start |
-| `DS:0xe64c` | rescue countdown (with security) |
-| `DS:0xe688` | helicopter rescue cost |
+Binary-verified default values from startup tuning resource:
+
+| Address | Meaning | Default value |
+|---------|---------|---:|
+| `DS:0xe644` | fire spread rate: ticks per tile advance | `7` |
+| `DS:0xe646` | vertical spread delay: ticks per floor | `80` |
+| `DS:0xe648` | helicopter extinguish rate: ticks per tile | `1` |
+| `DS:0xe64a` | helicopter/bomb deadline extension delay | `2` |
+| `DS:0xe64c` | rescue countdown ticks (with security) | `80` |
+| `DS:0xe688` | helicopter rescue cost ($100 units) | `5000` ($500,000) |
 
 ## VIP Special Visitor Event
 

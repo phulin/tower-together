@@ -10,7 +10,7 @@ Families `6`, `0x0c`, and `10` are commercial destinations.
 
 ## Priced Family Row
 
-Retail shop (`family 10`) uses the priced payout table keyed by `variant_index`:
+Retail shop (`family 10`) uses the priced payout table keyed by `rent_level`:
 
 | Tier 0 | Tier 1 | Tier 2 | Tier 3 |
 |---:|---:|---:|---:|
@@ -61,7 +61,7 @@ Daily capacity recompute:
 4. floor capacity at `10`
 5. write `active_capacity_limit` and its negative gate marker
 6. roll `today_visit_count` into `yesterday_visit_count`
-7. add the previous day's visit count into the primary family ledger
+7. add the previous day's visit count into the population ledger
 8. reset `today_visit_count`, `current_active_count`, and `visitor_count`
 9. append the venue to its floor bucket table
 
@@ -73,6 +73,35 @@ Initialization:
 - disabled-link venues start with `active_capacity_limit = 0` and `today_visit_count = 10`
 
 Venue bucket tables are maintained separately for retail, restaurant, and fast food and are used by random destination selection.
+
+### Venue Selection Algorithm
+
+Commercial venue customers select a destination via zone-bucketed uniform random selection:
+
+1. the actor's current floor is mapped to one of seven 15-floor zones by `classify_path_bucket_index`: `bucket_index = max(0, (floor - 9) / 15)`, covering floors 5–104
+2. one venue record is chosen uniformly at random from all available entries in the matching zone bucket for the requested type
+3. if the selected venue is invalid or demolished, the actor receives an immediate retry (delay = 0)
+
+Hotel guests (family 0x21) use a separate path: first pick one of the three commercial types uniformly at random (`rand() % 3`: 0=restaurant, 1=fast food, 2=retail), then select uniformly within that type's zone-0 bucket.
+
+Bucket tables are rebuilt at start-of-day (checkpoint `0x000`) via `rebuild_path_seed_bucket_table`.
+
+### Retail Income Timing
+
+Retail shop income is **recurring**, not per-visit or closure-based. `activate_retail_shop_cashflow` registers a continuous cashflow stream via `add_cashflow_from_family_resource(10, rent_level)` that persists while the venue is operational. `deactivate_retail_shop_cashflow` removes it. The priced payout table ($20k/$15k/$10k/$4k by rent_level) reflects the recurring income rate, not a lump-sum payment.
+
+### Phase A/B/Override Trigger
+
+`select_facility_progress_slot` returns the active capacity seed column:
+- **Override (slot 5):** when `g_facility_progress_override != 0`
+- **Phase A (slot 3):** when `calendar_phase_flag == 0` and no override
+- **Phase B (slot 4):** when `calendar_phase_flag != 0` and no override
+
+Override lifecycle each day:
+1. Tick 0: `g_facility_progress_override = 0`, then `update_periodic_facility_progress_override()` sets it if `day_counter % 8 == 4` AND tower rank < star-4 AND not already set.
+2. Tick 1600 (0x640): `clear_facility_progress_override()` clears it unconditionally.
+
+The override therefore applies only during the first half of every 5th day in each 8-day cycle, while the tower is below 4-star rank.
 
 Per-type tuning:
 

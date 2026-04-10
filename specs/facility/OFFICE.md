@@ -10,7 +10,7 @@ Family `7` is the office family.
 
 ## Rent Payouts
 
-Office payout per activation is determined by `variant_index`:
+Office payout per activation is determined by `rent_level`:
 
 | Tier 0 | Tier 1 | Tier 2 | Tier 3 |
 |---:|---:|---:|---:|
@@ -32,13 +32,13 @@ The result maps into the shared readiness grades `2`, `1`, or `0`.
 
 Open offices:
 
-- contribute to the primary ledger
+- contribute to the population ledger
 - realize cashflow on the 3-day activation sweep and again on worker-arrival reopen paths
 - increment `activation_tick_count`
 
 Deactivated offices:
 
-- move into a deactivated `stay_phase` band
+- move into a deactivated `unit_status` band
 - clear readiness latch state
 - clear activation tick count
 - stop contributing recurring cashflow
@@ -52,16 +52,16 @@ Exact open/closed bands:
 Activation cadence:
 
 - `recompute_object_operational_status` runs every day
-- office activation and deactivation cashflow changes only run on the `g_day_counter % 3 == 0` cadence at the `0x09e5` sweep
-- activation increments `activation_tick_count` up to a cap of `120`
-- fresh reopen after a close resets `stay_phase` to `0`, adds `+6` to the primary ledger, and refreshes the 6-tile span
+- office activation and deactivation cashflow changes only run on the `g_day_counter % 3 == 0` cadence at the `0x09e5` sweep (starting on day 0)
+- activation increments `activation_tick_count` (record `+0x17`) up to a cap of `120` (0x78). This is cumulative, not per-day — it saturates at 120 and resets to 0 only on deactivation. It feeds into readiness scoring but is not consumed by any discrete trigger.
+- fresh reopen after a close resets `unit_status` to `0`, adds `+6` to the population ledger, and refreshes the 6-tile span
 
 Deactivation trigger:
 
-- if `pairing_status == 0` and the office is still in the active band, deactivation clears `pairing_active_flag`
+- if `eval_level == 0` and the office is still in the active band, deactivation clears `eval_active_flag`
 - deactivation resets `activation_tick_count`
-- deactivation subtracts the office's recurring contribution from cash and removes `6` from the primary ledger
-- after a deactivation, the same-floor scan may immediately re-pair it with an A-rated neighbor and restore both to the stable band
+- deactivation subtracts the office's recurring contribution from cash and removes `6` from the population ledger
+- after a deactivation, the same-floor scan (`attempt_pairing_with_floor_neighbor`) may immediately re-pair it with an "A-rated neighbor" — a same-floor, same-family slot with `pairing_state == 2` (waiting/advertised). Re-pairing promotes both to `pairing_state == 1` (the "stable band" = active paired open state). `pairing_state` values: `0` = unpaired/closed, `1` = active pair, `2` = waiting for partner
 
 ## Worker Loop
 
@@ -72,7 +72,7 @@ Workers alternate between:
 - dwelling at the venue
 - routing back
 
-Workers are staggered by `base_offset`.
+Workers are staggered by `base_offset`, which is the worker's 1-based slot index within the 6-tile office span (values `1..6`). Assigned by `reinitialize_entity_slot_family_fields` from the slot index at entity initialization.
 
 Recovered worker-cycle timing:
 
@@ -86,7 +86,7 @@ Recovered gate table:
 - `0x00`: dayparts `1..3` dispatch; daypart `0` dispatches on a `1/12` chance; daypart `>= 4` gives up and switches to `0x05`
 - `0x01` and `0x02`: dayparts `2..3` dispatch; daypart `1` dispatches on a `1/12` chance; daypart `0` waits; daypart `>= 4` switches to `0x05`
 - `0x05`: daypart `4` dispatches on a `1/6` chance; later dayparts always dispatch
-- `0x20`: blocked when `calendar_phase_flag != 0`; otherwise requires `pairing_active_flag != 0`; daypart `0` dispatches on a `1/12` chance, dayparts `1..2` dispatch, and daypart `>= 3` also dispatches
+- `0x20`: blocked when `calendar_phase_flag != 0`; otherwise requires `eval_active_flag != 0`; daypart `0` dispatches on a `1/12` chance, dayparts `1..2` dispatch, and daypart `>= 3` also dispatches
 - `0x21`: daypart `3` dispatches on a `1/12` chance; daypart `>= 4` dispatches; earlier dayparts wait
 - `0x22` and `0x23`: dayparts `2..3` dispatch; daypart `>= 4` forces `0x27` and releases the service request
 - `0x25`, `0x26`, and `0x27`: remain parked until `day_tick > 2300`, then return to `0x20`

@@ -12,7 +12,7 @@ Income is realized on checkout, not continuously.
 
 ## Stay Payouts
 
-Stay payout is determined by room family and `variant_index`:
+Stay payout is determined by room family and `rent_level`:
 
 | Family | Tier 0 | Tier 1 | Tier 2 | Tier 3 |
 |---|---:|---:|---:|---:|
@@ -53,9 +53,9 @@ Recovered runtime-state bands:
 - `0x05` / `0x45`: checkout trip to lobby
 - `0x26`: pre-night preparation / deferred re-entry
 
-## `stay_phase`
+## `unit_status`
 
-Hotel `stay_phase` meanings:
+Hotel `unit_status` meanings:
 
 - `0x00` / `0x08`: active occupied band, morning vs evening start
 - `0x01..0x0f`: trip countdown
@@ -65,13 +65,17 @@ Hotel `stay_phase` meanings:
 
 ## Activation And Checkout
 
-Newly assigned guests initialize the room trip counter to a randomized value in `2..14`.
+Newly assigned guests initialize the room trip counter to `rand() % 13 + 2`, giving range `2..14` inclusive on both ends.
 
-If the room is in a vacant band (`stay_phase > 0x17`) when routing begins:
+### Occupancy Flag
 
-- activation resets `stay_phase` to `0x00` in morning periods or `0x08` in evening periods
+The room's occupancy latch is record field `+0x14` (`pairing_pending_flag`). It is set to `1` by the family-0x0f claimant at successful claim promotion and cleared at checkout by the deactivation path.
+
+If the room is in a vacant band (`unit_status > 0x17`) when routing begins:
+
+- activation resets `unit_status` to `0x00` in morning periods or `0x08` in evening periods
 - the room is marked dirty
-- the room contributes back into the primary family ledger
+- the room contributes back into the population ledger
 - the room remains active until checkout finishes
 
 When the sync sentinel is consumed at state `0x10`:
@@ -89,18 +93,33 @@ Morning/evening behavior:
 - evening check-in resets into the `0x08` band
 - successful outbound trips decrement the counter
 - failures and bounces increment it
-- checkout fires when `stay_phase & 7 == 0`
+- checkout fires when `unit_status & 7 == 0`
 
 ## Sibling Sync
 
 Multi-occupant rooms do not check out independently. They synchronize before the final checkout phase so a single room object yields one coherent stay lifecycle.
+
+`sync_stay_phase_if_all_siblings_ready_345` fires `unit_status = 0x10` (sync sentinel) when:
+- `unit_status & 7 == 1` (one-round shortcut — no sibling scan needed), OR
+- all sibling entities are in entity state `0x10`
+
+The one-round shortcut means: when the trip countdown reaches `1` in the low 3 bits, the sync sentinel is written immediately without checking other occupants. This is the fast path for the last trip.
+
+### Sibling Reset Values
+
+When the sync sentinel `0x10` is consumed by `dispatch_hotel_345_state_10_set_checkout_counter`:
+- family `3` (single room): `unit_status = 1`
+- family `4` (twin room): `unit_status = 2`
+- family `5` (suite): `unit_status = 2`
+
+These are the new trip countdown values for the next checkout cycle, not a separate field.
 
 ## Checkout Timing
 
 Checkout-ready sync:
 
 - sibling-sync wait dispatches only after late-day thresholds
-- the object enters the `0x10` sync sentinel when all siblings are ready, with a one-round shortcut when `stay_phase & 7 == 1`
+- the object enters the `0x10` sync sentinel when all siblings are ready, with a one-round shortcut when `unit_status & 7 == 1`
 - checkout routing decrements the shared trip counter and triggers payout as soon as the low three bits reach `0`
 
 Detailed dispatch windows:
@@ -118,7 +137,7 @@ Lobby routing window:
 
 Checkout effects:
 
-- payout is realized exactly once by the room object, using the family payout table and `variant_index`
+- payout is realized exactly once by the room object, using the family payout table and `rent_level`
 - morning checkout moves the room to `0x28`
 - evening checkout moves the room to `0x30`
 - the occupancy latch and activation counter are cleared so the room can be reassigned on a later cycle

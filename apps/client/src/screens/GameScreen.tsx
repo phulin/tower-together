@@ -30,9 +30,9 @@ interface CellInfoData {
 	tileType: string;
 	objectInfo?: {
 		objectTypeCode: number;
-		variantIndex: number;
-		pairingStatus: number;
-		stayPhase: number;
+		rentLevel: number;
+		evalLevel: number;
+		unitStatus: number;
 		activationTickCount: number;
 	};
 	carrierInfo?: {
@@ -634,7 +634,7 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 													key={label}
 													style={{
 														...styles.rentButton,
-														...(inspectedCell.objectInfo?.variantIndex === i
+														...(inspectedCell.objectInfo?.rentLevel === i
 															? styles.rentButtonActive
 															: {}),
 													}}
@@ -651,7 +651,7 @@ export function GameScreen({ playerId, displayName, towerId, onLeave }: Props) {
 																		...prev,
 																		objectInfo: {
 																			...prev.objectInfo,
-																			variantIndex: i,
+																			rentLevel: i,
 																		},
 																	}
 																: prev,

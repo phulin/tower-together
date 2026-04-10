@@ -94,9 +94,9 @@ Each car needs:
 
 For each active car:
 
-1. require the current floor queue to be dispatchable
+1. require the current floor queue to be dispatchable (i.e. the queue for this floor has at least one entry in either direction)
 2. compute `remaining_slots = assignment_capacity - assigned_count`
-3. look up the queue depth for the current direction; if it is empty and the car has no pending destination, flip direction
+3. look up the queue depth for the current direction; if it is empty and the car has no pending destination (`target_floor == -1` and `pending_assignment_count == 0`), flip direction
 4. pop requests FIFO from the primary direction queue, up to `remaining_slots`
 5. if the car's alternate-direction flag is enabled and slots remain, also pop FIFO from the reverse-direction queue
 6. for each popped request:
@@ -209,6 +209,9 @@ At top and bottom served floors, the current dwell/schedule flag is reloaded fro
 Recovered dwell-threshold rule:
 
 - depart when `abs(g_day_tick - departure_timestamp) > schedule_flag * 30`
+- `departure_timestamp` is set when `departure_flag` transitions from 0 to 1 (first boarding event at a floor)
+- `departure_flag` is cleared when the car begins moving away from the floor
+- a car that arrives at a floor with no waiting passengers and no pending assignments does not set `departure_flag` — it either moves toward its next target or idles
 
 ## Floor Assignment
 
@@ -291,6 +294,17 @@ Target-floor selection (`select_next_target_floor` at `1098:1553`):
 - if nothing found in current direction, wraps around: reverses direction and scans
   from the opposite endpoint back toward the current floor
 - if still nothing found, returns -1 (no target)
+
+## Queue-Full Retry Behavior
+
+When an entity encounters a full queue (40 entries) at its source floor:
+
+- the route resolver returns the queue-full waiting result with a 5-tick delay
+- the entity enters a waiting state and is re-evaluated after the 300-tick queued-leg timeout
+- there is no retry counter or maximum retry limit — the timeout is the only gate
+- when the timeout fires, the entity re-dispatches through its full family route logic, which re-runs `select_best_route_candidate` from scratch
+- this re-dispatch can select an alternate carrier if another one serves the same floor pair at lower cost, or fall back to stair/escalator links
+- the entity does not remember which carrier it previously tried; the cost function naturally penalizes full queues via the `+1000` / `+6000` surcharges
 
 ## Slot Limits
 

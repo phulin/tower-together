@@ -34,6 +34,22 @@ Parking spaces allocate service-request entries. Each entry needs:
 
 Free entries are marked invalid and omitted from the active demand log.
 
+Entry lifecycle:
+- an entry is allocated at parking-space placement, writing floor_index and subtype_index
+- `release_service_request_entry` (called at teardown) clears only the backlink handle field — the entry stays live
+- the entry's subtype byte is set to `0xff` (tombstone) by the demolition dispatch path
+- the entry is actually freed (floor byte → `0xff`, count decremented) only during `rebuild_demand_history_table` at checkpoint `0x000`, when it detects subtype == `0xff`
+
+An entry is **stale** when its subtype byte equals `0xff` — this is the demolished-object tombstone.
+
+### Coverage Initialization
+
+Parking-space objects have no coverage byte set at placement. The coverage byte (`+0xb`) defaults to `0` (uncovered), so newly placed spaces appear in the demand log immediately. Coverage is not applied until the first `rebuild_parking_ramp_coverage_and_demand_history` runs — either at demolition of a parking object or at the next start-of-day checkpoint `0x000`.
+
+### Demand Families
+
+Parking demand is emitted by family `0x0b` parking spaces (and type-code variants `0x18`/`0x19`/`0x1a`). Consumers that route to parking include hotel suites (family `0x05`) and condos (family `0x09`). Office workers (family `0x07`) may also generate parking demand at higher star levels.
+
 ## Demand History
 
 The demand-history table is rebuilt from active service-request entries.

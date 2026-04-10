@@ -2,14 +2,26 @@
 
 This document covers shared facility logic. Family-specific state machines are in `specs/facility/`.
 
-## Shared Readiness / Pairing Model
+## Facility Evaluation Model
 
-Facilities that depend on nearby support compute a score and map it into a readiness grade:
+Facilities that depend on nearby support compute an operational score and map it into a
+readiness grade (`eval_level` at placed-object offset `+0x15`):
 
-- `2`: excellent
-- `1`: acceptable
-- `0`: poor / deactivation-eligible or refund-eligible
-- `0xff`: invalid or not currently scorable
+- `2`: excellent — well-serviced, income active
+- `1`: acceptable — marginal
+- `0`: poor — deactivation-eligible or refund-eligible
+- `0xff`: not yet scorable (early lifecycle or transitional guard)
+
+The scoring pipeline (`compute_object_operational_score` at `1138:040f`, called from
+`recompute_object_operational_status` at `1138:0704`) runs for families 3, 4, 5, 7,
+and 9 only. Other families use family-specific dispatch handlers within the same
+caller. Early-exit guards per family:
+
+| Family | Guard | Returns |
+|---|---|---|
+| 3/4/5 (hotel) | `unit_status > 0x37` | `0xffff` |
+| 7 (office) | `unit_status > 0x0f` AND `eval_active_flag != 0` | `0xffff` |
+| 9 (condo) | `unit_status > 0x17` AND `eval_active_flag != 0` | `0xffff` |
 
 The shared scoring pipeline is:
 
@@ -23,18 +35,20 @@ The shared scoring pipeline is:
 2. average that metric across the family's tile divisor:
    - family 3 (single room): 1
    - family 4 (twin room): 2
-   - family 5 (suite): 3
+   - family 5 (suite): 2
    - family 7 (office): 6
    - family 9 (condo): 3
-3. apply the pricing-tier modifier (keyed to `variant_index` at object offset `+0x16`):
+3. apply the pricing-tier modifier (keyed to `rent_level` at object offset `+0x16`):
    - tier `0` (highest price): `+30`
    - tier `1` (default): `+0`
    - tier `2` (lower price): `-30`
    - tier `3` (lowest price): force score to `0` (always passes)
-4. if qualifying support is **not** found on either side within the family's search
-   radius, add `+60` penalty. (Support found → no penalty.)
+4. if qualifying support **is** found on either side within the family's search
+   radius, add `+60`. (Support missing → no adjustment.) This raises the performance
+   bar for well-serviced locations: facilities near support must sustain higher
+   visitor throughput to maintain the same readiness grade.
 5. clamp the result to `>= 0`
-6. map the score into `pairing_status`
+6. map the score into `eval_level`
 
 ### Demand Pipeline (Per-Entity Runtime Counters)
 
@@ -68,32 +82,66 @@ Support search is local and tile-based. Different families use different support
 
 ## Support Matching
 
+`map_neighbor_family_to_support_match` (`1140:01b8`) normalizes a neighbor's family
+code into a support-match code, or returns 0 when the neighbor does not qualify.
+Entertainment subtypes are grouped: `0x12/0x13/0x22/0x23` → `0x12`, `0x1d/0x1e` → `0x1d`.
+
 Accepted support families:
 
 | Requester | Accepts support from |
 |---|---|
-| hotel rooms | condos |
-| office | hotels, restaurants, fast food, retail, entertainment |
-| condo | hotels plus commercial and entertainment |
-| commercial | hotels plus commercial and entertainment |
+| hotel rooms (3/4/5) | fast food (6), office (7), restaurant (10), retail (12), entertainment |
+| office (7) | fast food (6), restaurant (10), retail (12), entertainment |
+| condo (9) | hotel rooms (3/4/5), fast food (6), office (7), restaurant (10), retail (12), entertainment |
+
+Notable exclusions: hotels do **not** accept condos or other hotels as support. Offices
+do **not** accept hotels or other offices. Commercial families (6, 10, 12) do not
+participate in the support scoring pipeline — they use a separate commercial readiness
+system with `apply_service_variant_modifier_to_score` (`1138:06b9`).
 
 ## Thresholds By Star Rating
 
-Readiness uses two thresholds:
+Thresholds are stored at `[DS:0xe5ea]` (lower) and `[DS:0xe5ec]` (upper) and are
+rewritten when the star rating changes:
 
 | Star rating | Lower | Upper |
 |---|---:|---:|
 | 1–3 | 80 | 150 |
 | 4–5 | 80 | 200 |
 
-Higher-star towers tolerate a wider upper band before a facility becomes deactivation-eligible.
+Score mapping in `recompute_object_operational_status`:
 
-Score mapping:
+- score `< 0`: `eval_level = 0xff`
+- score `< lower`: `eval_level = 2` (excellent)
+- score `< upper`: `eval_level = 1` (acceptable)
+- score `>= upper`: `eval_level = 0` (poor)
 
-- score `< 0`: `0xff`
-- score `< lower`: `2`
-- score `< upper`: `1`
-- score `>= upper`: `0`
+### eval_active_flag Latching
+
+`eval_active_flag` (offset `+0x14`) is set to `1` the first time `eval_level`
+transitions to nonzero. For hotel rooms (families 3/4/5), the latch is further guarded
+by `unit_status <= 0x27` — hotels past that lifecycle phase do not latch even if their
+score is nonzero. The latch is **not retroactive**: if a room's `eval_level` transitions
+to nonzero while `unit_status > 0x27`, the latch simply does not fire. It will not
+catch up later when the room returns to a lower `unit_status` band. The flag is
+forward-only.
+
+## Commercial Readiness
+
+Commercial families (fast food 6, restaurant 10, retail 12) use a separate readiness
+model based on customer count from the commercial-venue sidecar record (offset `+0x10`
+in the venue record). Thresholds are stored in per-family global slots (e.g.,
+`g_restaurant_state_threshold_slot_0/1/2`).
+
+Restaurant (family 10) thresholds are adjusted by `apply_service_variant_modifier_to_score`
+(`1138:06b9`), which applies a smaller rent_level-based modifier:
+
+- rent_level `0`: `+5`
+- rent_level `1`: `+0`
+- rent_level `2`: `-5`
+- rent_level `3`: `-12`
+
+Fast food (6) and retail (12) use fixed thresholds without rent_level adjustment.
 
 ## Warning State
 

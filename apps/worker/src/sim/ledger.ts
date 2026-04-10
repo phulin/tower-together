@@ -4,9 +4,9 @@ import type { WorldState } from "./world";
 // ─── Three-ledger money model ─────────────────────────────────────────────────
 //
 // cashBalance          — live balance, capped at 99,999,999
-// primaryLedger[f]     — running daily activity count / rate for family f
-// secondaryLedger[f]   — income accumulated since last 3-day rollover
-// tertiaryLedger[f]    — expenses accumulated since last 3-day rollover
+// populationLedger[f]  — live per-family active-unit counts
+// incomeLedger[f]      — income accumulated since last 3-day rollover
+// expenseLedger[f]     — expenses accumulated since last 3-day rollover
 // cashBalanceCycleBase — balance saved at each rollover (net delta reporting)
 //
 // YEN #1001 / #1002 values are in units of ¥1,000.
@@ -16,12 +16,12 @@ const CASH_CAP = 99_999_999;
 
 export interface LedgerState {
 	cashBalance: number;
-	/** Activity / income rate indexed by objectTypeCode. */
-	primaryLedger: number[];
+	/** Live per-family active-unit counts indexed by objectTypeCode. */
+	populationLedger: number[];
 	/** Income since last 3-day rollover, indexed by objectTypeCode. */
-	secondaryLedger: number[];
+	incomeLedger: number[];
 	/** Expenses since last 3-day rollover, indexed by objectTypeCode. */
-	tertiaryLedger: number[];
+	expenseLedger: number[];
 	/** Balance saved at last rollover. */
 	cashBalanceCycleBase: number;
 }
@@ -29,9 +29,9 @@ export interface LedgerState {
 export function createLedgerState(startingCash: number): LedgerState {
 	return {
 		cashBalance: startingCash,
-		primaryLedger: new Array(256).fill(0),
-		secondaryLedger: new Array(256).fill(0),
-		tertiaryLedger: new Array(256).fill(0),
+		populationLedger: new Array(256).fill(0),
+		incomeLedger: new Array(256).fill(0),
+		expenseLedger: new Array(256).fill(0),
 		cashBalanceCycleBase: startingCash,
 	};
 }
@@ -46,16 +46,15 @@ export function createLedgerState(startingCash: number): LedgerState {
 export function add_cashflow_from_family_resource(
 	ledger: LedgerState,
 	tileName: string,
-	variantIndex: number,
+	rentLevel: number,
 	familyCode: number,
 ): void {
 	const payouts = YEN_1001[tileName];
 	if (!payouts) return;
-	const amount = payouts[Math.min(variantIndex, 3)] * YEN_UNIT;
+	const amount = payouts[Math.min(rentLevel, 3)] * YEN_UNIT;
 	ledger.cashBalance = Math.min(CASH_CAP, ledger.cashBalance + amount);
 	if (familyCode >= 0 && familyCode < 256) {
-		ledger.secondaryLedger[familyCode] += amount;
-		ledger.primaryLedger[familyCode] += amount;
+		ledger.incomeLedger[familyCode] += amount;
 	}
 }
 
@@ -83,7 +82,7 @@ export function do_expense_sweep(ledger: LedgerState, world: WorldState): void {
 		const amount = rate * YEN_UNIT;
 		ledger.cashBalance = Math.max(0, ledger.cashBalance - amount);
 		if (code >= 0 && code < 256) {
-			ledger.tertiaryLedger[code] += amount;
+			ledger.expenseLedger[code] += amount;
 		}
 	}
 
@@ -106,25 +105,25 @@ export function do_expense_sweep(ledger: LedgerState, world: WorldState): void {
 				: carrier.carrierMode === 2
 					? 0x2b
 					: 0x01;
-		ledger.tertiaryLedger[code] += amount;
+		ledger.expenseLedger[code] += amount;
 	}
 }
 
 // ─── Facility ledger rebuild ──────────────────────────────────────────────────
 
 /**
- * Rebuild primaryLedger count by sweeping all placedObjects.
+ * Rebuild populationLedger count by sweeping all placedObjects.
  * Called at checkpoint 0x00f0 (start of day).
  */
 export function rebuild_facility_ledger(
 	ledger: LedgerState,
 	world: WorldState,
 ): void {
-	ledger.primaryLedger.fill(0);
+	ledger.populationLedger.fill(0);
 	for (const obj of Object.values(world.placedObjects)) {
 		const code = obj.objectTypeCode;
 		if (code >= 0 && code < 256) {
-			ledger.primaryLedger[code] += 1;
+			ledger.populationLedger[code] += 1;
 		}
 	}
 }
@@ -144,8 +143,8 @@ export function do_ledger_rollover(
 	if (dayCounter % 3 !== 0) return;
 	do_expense_sweep(ledger, world);
 	ledger.cashBalanceCycleBase = ledger.cashBalance;
-	ledger.secondaryLedger.fill(0);
-	ledger.tertiaryLedger.fill(0);
+	ledger.incomeLedger.fill(0);
+	ledger.expenseLedger.fill(0);
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────

@@ -20,12 +20,12 @@ const BOMB_RANSOM: Record<number, number> = {
 /** Blast rectangle dimensions. */
 const BLAST_HALF_TILES = 20;
 
-const FIRE_SPREAD_RATE = 3; // DS:0xe644 — ticks per tile advance
-const FIRE_VERTICAL_DELAY = 10; // DS:0xe646 — ticks per floor
-const HELICOPTER_EXTINGUISH_RATE = 2; // DS:0xe648 — ticks per tile
-const HELICOPTER_PROMPT_DELAY = 100; // DS:0xe64a — ticks after fire start
-const RESCUE_COUNTDOWN_WITH_SECURITY = 30; // DS:0xe64c
-const HELICOPTER_RESCUE_COST = 8_000; // DS:0xe688
+const FIRE_SPREAD_RATE = 7; // DS:0xe644 — ticks per tile advance
+const FIRE_VERTICAL_DELAY = 80; // DS:0xe646 — ticks per floor
+const HELICOPTER_EXTINGUISH_RATE = 1; // DS:0xe648 — ticks per tile
+const HELICOPTER_PROMPT_DELAY = 2; // DS:0xe64a — ticks after fire start / bomb extension
+const RESCUE_COUNTDOWN_WITH_SECURITY = 80; // DS:0xe64c
+const HELICOPTER_RESCUE_COST = 500_000; // DS:0xe688
 
 // ─── LCG15 PRNG ─────────────────────────────────────────────────────────────
 
@@ -132,7 +132,7 @@ export function tryTriggerBombEvent(
 	es.bombFloor = selectedFloor;
 	es.bombTile = selectedTile;
 	es.gameStateFlags |= 1; // bomb active
-	es.bombDeadline = time.dayTick + BOMB_DEADLINE_TICKS;
+	es.bombDeadline = BOMB_DEADLINE_TICKS;
 
 	const ransom = BOMB_RANSOM[time.starCount] ?? 0;
 	world.pendingPrompts.push({

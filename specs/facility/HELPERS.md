@@ -4,7 +4,7 @@ This document covers helper-style families and hotel guest behavior.
 
 ## Family `0x0f`
 
-This family is a helper that targets hotel rooms rather than behaving like a hotel occupant.
+This family is a helper that targets hotel rooms rather than behaving like a hotel occupant. Maximum 10 entities, allocated from a 10-slot table. Spawned when security office or housekeeping room is placed. Persists across save/load via the runtime entity table.
 
 Behavior:
 
@@ -48,7 +48,7 @@ Claim-completion writes:
 
 - stores the guest entity reference into the room's service-request sidecar
 - writes the encoded target floor into `entity[+0xc]`
-- sets the room's `stay_phase` to a randomized value in `2..14`
+- sets the room's `unit_status` to a randomized value in `2..14`
 - sets the room occupancy flag so later room logic treats it as taken
 
 Additional recovered constraints:
@@ -57,7 +57,7 @@ Additional recovered constraints:
 - successful claim promotion only occurs while the clock is still before tick `0x05dc`
 - the search starts at the claimant's recorded spawn floor, scans upward first to the top of the tower, then scans downward from the floor just below the spawn floor
 - only families `3`, `4`, and `5` are eligible
-- a slot qualifies only when the room `stay_phase` is `0x28` or `0x30`
+- a slot qualifies only when the room `unit_status` is `0x28` or `0x30`
 - within each eligible floor, room slots are scanned in ascending subtype/slot order and the first qualifying slot wins
 - the chosen slot's subtype byte is stored into runtime offset `+0xc`, and the selected floor is returned in `entity[+6]`
 - if no candidate is found in either direction, the finder returns `-1`

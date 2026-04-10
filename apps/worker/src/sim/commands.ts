@@ -53,7 +53,7 @@ export type SimCommand =
 
 const INFRASTRUCTURE_TILES = new Set(["floor", "lobby", "stairs"]);
 
-// Families whose variantIndex initialises to 1; all others initialise to 4 (no payout).
+// Families whose rentLevel initialises to 1; all others initialise to 4 (no payout).
 const VARIANT_INIT_ONE_FAMILIES = new Set([3, 4, 5, 7, 9, 10]);
 
 // ─── PlacedObjectRecord helpers ───────────────────────────────────────────────
@@ -71,14 +71,14 @@ function make_placed_object(
 		leftTileIndex: x,
 		rightTileIndex: x + width - 1,
 		objectTypeCode: familyCode,
-		stayPhase: 0,
+		unitStatus: 0,
 		linkedRecordIndex: sidecarIndex,
 		auxValueOrTimer: 0,
 		needsRefreshFlag: 1, // picked up by next refresh sweep
-		pairingStatus: -1, // invalid; first scoring sweep populates
-		pairingActiveFlag: 1, // first-activation latch
+		evalLevel: -1, // invalid; first scoring sweep populates
+		evalActiveFlag: 1, // first-activation latch
 		activationTickCount: 0,
-		variantIndex: VARIANT_INIT_ONE_FAMILIES.has(familyCode) ? 1 : 4,
+		rentLevel: VARIANT_INIT_ONE_FAMILIES.has(familyCode) ? 1 : 4,
 		vipFlag,
 	};
 }
@@ -541,7 +541,7 @@ export function handle_remove_tile(
 
 // ─── Rent level adjustment ────────────────────────────────────────────────────
 
-/** Families that support rent level changes (variant_index 0-3). */
+/** Families that support rent level changes (rent_level 0-3). */
 const RENT_ADJUSTABLE_FAMILIES = new Set([3, 4, 5, 6, 7, 9, 10, 12]);
 
 export function handle_set_rent_level(
@@ -549,6 +549,7 @@ export function handle_set_rent_level(
 	y: number,
 	rentLevel: number,
 	world: WorldState,
+	time: { daypartIndex: number; starCount: number },
 ): CommandResult {
 	if (rentLevel < 0 || rentLevel > 3) {
 		return { accepted: false, reason: "Rent level must be 0-3" };
@@ -564,8 +565,16 @@ export function handle_set_rent_level(
 			reason: "This facility does not have adjustable rent",
 		};
 	}
-	record.variantIndex = rentLevel;
+	if (record.objectTypeCode === 9 && record.unitStatus < 0x18) {
+		return {
+			accepted: false,
+			reason: "Sold condos cannot change rent",
+		};
+	}
+	record.rentLevel = rentLevel;
 	record.needsRefreshFlag = 1;
+	// Immediate recompute keeps the inspected facility in sync with the command.
+	void time;
 	return { accepted: true, patch: [] };
 }
 

@@ -250,13 +250,13 @@ describe("PlacedObjectRecord", () => {
 		expect(rec.leftTileIndex).toBe(0);
 		expect(rec.rightTileIndex).toBe(3); // width 4
 		expect(rec.objectTypeCode).toBe(3); // family code for hotelSingle
-		expect(rec.stayPhase).toBe(0); // init = 0
+		expect(rec.unitStatus).toBe(0); // init = 0
 		expect(rec.linkedRecordIndex).toBe(-1); // no sidecar for hotel
 		expect(rec.needsRefreshFlag).toBe(1); // init = 1 (dirty — picked up next sweep)
-		expect(rec.pairingStatus).toBe(-1); // init = -1 (invalid; first sweep populates)
-		expect(rec.pairingActiveFlag).toBe(1); // init = 1 (first-activation latch)
+		expect(rec.evalLevel).toBe(-1); // init = -1 (invalid; first sweep populates)
+		expect(rec.evalActiveFlag).toBe(1); // init = 1 (first-activation latch)
 		expect(rec.activationTickCount).toBe(0);
-		expect(rec.variantIndex).toBe(1); // family 3 → init = 1
+		expect(rec.rentLevel).toBe(1); // family 3 → init = 1
 		expect(rec.vipFlag).toBe(false);
 	});
 
@@ -393,17 +393,17 @@ describe("checkpoint dispatcher", () => {
 
 	it("fires checkpoint_facility_ledger_rebuild at tick 0x0f0", () => {
 		const state = makeState();
-		// Place a tile so primaryLedger has something to count
+		// Place a tile so populationLedger has something to count
 		const y = GROUND_Y - 1;
 		for (let x = 0; x < GRID_WIDTH; x++)
 			state.world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, y, "hotelSingle", state.world, state.ledger);
-		// primaryLedger is zeroed after rebuild_facility_ledger from handle_place_tile
-		// Now manually zero primaryLedger to simulate it being dirty
-		state.ledger.primaryLedger.fill(0);
+		// populationLedger is zeroed after rebuild_facility_ledger from handle_place_tile
+		// Now manually zero populationLedger to simulate it being dirty
+		state.ledger.populationLedger.fill(0);
 		// Run checkpoints from prev=0x0ef to curr=0x0f0 — should fire rebuild
 		run_checkpoints(state, 0x0ef, 0x0f0);
-		expect(state.ledger.primaryLedger[3]).toBe(1); // family code 3 = hotelSingle
+		expect(state.ledger.populationLedger[3]).toBe(1); // family code 3 = hotelSingle
 	});
 
 	it("does NOT fire 0x0f0 checkpoint when tick range excludes it", () => {
@@ -417,10 +417,10 @@ describe("checkpoint dispatcher", () => {
 			state.world,
 			state.ledger,
 		);
-		state.ledger.primaryLedger.fill(0);
+		state.ledger.populationLedger.fill(0);
 		// Range 0x0f1..0x0f2 should not include 0x0f0
 		run_checkpoints(state, 0x0f1, 0x0f2);
-		expect(state.ledger.primaryLedger[3]).toBe(0);
+		expect(state.ledger.populationLedger[3]).toBe(0);
 	});
 
 	it("fires checkpoint_ledger_rollover at tick 0x9e5 on a 3-day boundary", () => {
@@ -433,14 +433,14 @@ describe("checkpoint dispatcher", () => {
 			state.world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, GROUND_Y - 1, "restaurant", state.world, state.ledger);
 		const cashAfterBuild = state.ledger.cashBalance;
-		state.ledger.secondaryLedger.fill(5);
-		state.ledger.tertiaryLedger.fill(5);
+		state.ledger.incomeLedger.fill(5);
+		state.ledger.expenseLedger.fill(5);
 		run_checkpoints(state, 0x9e4, 0x9e5);
 		// Expense sweep should have fired → cash decreased
 		expect(state.ledger.cashBalance).toBeLessThan(cashAfterBuild);
 		// Rolling ledgers should be zeroed
-		expect(state.ledger.secondaryLedger.every((v) => v === 0)).toBe(true);
-		expect(state.ledger.tertiaryLedger.every((v) => v === 0)).toBe(true);
+		expect(state.ledger.incomeLedger.every((v) => v === 0)).toBe(true);
+		expect(state.ledger.expenseLedger.every((v) => v === 0)).toBe(true);
 		// cycle base saved
 		expect(state.ledger.cashBalanceCycleBase).toBe(state.ledger.cashBalance);
 	});
@@ -470,9 +470,9 @@ describe("checkpoint dispatcher", () => {
 		);
 
 		// Zero then run over 0x0f0
-		state.ledger.primaryLedger.fill(0);
+		state.ledger.populationLedger.fill(0);
 		run_checkpoints(state, 0x0ef, 0x0f1); // 0x0f0 in range once
-		expect(state.ledger.primaryLedger[3]).toBe(1);
+		expect(state.ledger.populationLedger[3]).toBe(1);
 	});
 
 	it("handles day wraparound: fires start-of-day checkpoint at tick 0", () => {
@@ -486,20 +486,20 @@ describe("checkpoint dispatcher", () => {
 			leftTileIndex: 0,
 			rightTileIndex: 3,
 			objectTypeCode: 3,
-			stayPhase: 0,
+			unitStatus: 0,
 			linkedRecordIndex: -1,
 			auxValueOrTimer: 0,
 			needsRefreshFlag: 1,
-			pairingStatus: -1,
-			pairingActiveFlag: 1,
+			evalLevel: -1,
+			evalActiveFlag: 1,
 			activationTickCount: 0,
-			variantIndex: 1,
+			rentLevel: 1,
 			vipFlag: false,
 		};
-		state.ledger.primaryLedger.fill(0);
+		state.ledger.populationLedger.fill(0);
 		// curr < prev ⟹ wrapped; 0x0f0 > 0x0ef so it qualifies via "tick > prev_tick"
 		run_checkpoints(state, 0x0ef, 0x0ee); // wrapped; 0x0f0 > 0x0ef → fires
-		expect(state.ledger.primaryLedger[3]).toBe(1);
+		expect(state.ledger.populationLedger[3]).toBe(1);
 	});
 
 	it("does not fire checkpoint in future tick when not wrapped and tick not in range", () => {
@@ -512,10 +512,10 @@ describe("checkpoint dispatcher", () => {
 			state.world,
 			state.ledger,
 		);
-		state.ledger.primaryLedger.fill(0);
+		state.ledger.populationLedger.fill(0);
 		// 0x0f0 is NOT in (0x100, 0x101]
 		run_checkpoints(state, 0x100, 0x101);
-		expect(state.ledger.primaryLedger[3]).toBe(0);
+		expect(state.ledger.populationLedger[3]).toBe(0);
 	});
 });
 
@@ -556,16 +556,16 @@ describe("ledger: add_cashflow_from_family_resource", () => {
 		expect(ledger.cashBalance).toBe(99_999_999);
 	});
 
-	it("updates secondaryLedger[family_code]", () => {
+	it("updates incomeLedger[family_code]", () => {
 		const ledger = makeLedger(0);
 		add_cashflow_from_family_resource(ledger, "hotelSingle", 0, 3);
-		expect(ledger.secondaryLedger[3]).toBe(30_000);
+		expect(ledger.incomeLedger[3]).toBe(30_000);
 	});
 
-	it("updates primaryLedger[family_code]", () => {
+	it("updates populationLedger[family_code]", () => {
 		const ledger = makeLedger(0);
 		add_cashflow_from_family_resource(ledger, "hotelSingle", 0, 3);
-		expect(ledger.primaryLedger[3]).toBe(30_000);
+		expect(ledger.populationLedger[3]).toBe(30_000);
 	});
 
 	it("ignores family_code out of [0,255]", () => {
@@ -588,14 +588,14 @@ describe("ledger: rebuild_facility_ledger", () => {
 			leftTileIndex: 0,
 			rightTileIndex: 0,
 			objectTypeCode: 3,
-			stayPhase: 0,
+			unitStatus: 0,
 			linkedRecordIndex: -1,
 			auxValueOrTimer: 0,
 			needsRefreshFlag: 1,
-			pairingStatus: -1,
-			pairingActiveFlag: 1,
+			evalLevel: -1,
+			evalActiveFlag: 1,
 			activationTickCount: 0,
-			variantIndex: 1,
+			rentLevel: 1,
 		};
 		world.placedObjects[`1,${y}`] = {
 			...world.placedObjects[`0,${y}`],
@@ -603,15 +603,15 @@ describe("ledger: rebuild_facility_ledger", () => {
 			rightTileIndex: 1,
 		};
 		rebuild_facility_ledger(ledger, world);
-		expect(ledger.primaryLedger[3]).toBe(2);
+		expect(ledger.populationLedger[3]).toBe(2);
 	});
 
-	it("zeroes primaryLedger before counting", () => {
+	it("zeroes populationLedger before counting", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		ledger.primaryLedger[3] = 99;
+		ledger.populationLedger[3] = 99;
 		rebuild_facility_ledger(ledger, world);
-		expect(ledger.primaryLedger[3]).toBe(0);
+		expect(ledger.populationLedger[3]).toBe(0);
 	});
 });
 
@@ -629,7 +629,7 @@ describe("ledger: do_expense_sweep", () => {
 		expect(cashAfterBuild - ledger.cashBalance).toBe(500_000);
 	});
 
-	it("updates tertiaryLedger for the charged type", () => {
+	it("updates expenseLedger for the charged type", () => {
 		const world = makeWorld();
 		const ledger = makeLedger(10_000_000);
 		const y = GROUND_Y - 1;
@@ -638,7 +638,7 @@ describe("ledger: do_expense_sweep", () => {
 		handle_place_tile(0, y, "restaurant", world, ledger);
 		const rec = world.placedObjects[`0,${y}`];
 		do_expense_sweep(ledger, world);
-		expect(ledger.tertiaryLedger[rec.objectTypeCode]).toBeGreaterThan(0);
+		expect(ledger.expenseLedger[rec.objectTypeCode]).toBeGreaterThan(0);
 	});
 
 	it("does not allow cashBalance to go below 0", () => {
@@ -651,14 +651,14 @@ describe("ledger: do_expense_sweep", () => {
 			leftTileIndex: 0,
 			rightTileIndex: 1,
 			objectTypeCode: 6, // restaurant
-			stayPhase: 0,
+			unitStatus: 0,
 			linkedRecordIndex: -1,
 			auxValueOrTimer: 0,
 			needsRefreshFlag: 1,
-			pairingStatus: -1,
-			pairingActiveFlag: 1,
+			evalLevel: -1,
+			evalActiveFlag: 1,
 			activationTickCount: 0,
-			variantIndex: 4, // family 6 (restaurant) → init = 4
+			rentLevel: 4, // family 6 (restaurant) → init = 4
 		};
 		do_expense_sweep(ledger, world);
 		expect(ledger.cashBalance).toBe(0);
@@ -688,13 +688,13 @@ describe("ledger: do_ledger_rollover", () => {
 		for (let x = 0; x < GRID_WIDTH; x++)
 			world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, y, "restaurant", world, ledger);
-		ledger.secondaryLedger[6] = 1000;
-		ledger.tertiaryLedger[6] = 500;
+		ledger.incomeLedger[6] = 1000;
+		ledger.expenseLedger[6] = 500;
 		const cashBefore = ledger.cashBalance;
 		do_ledger_rollover(ledger, world, 3); // day 3 → 3 % 3 === 0
 		expect(ledger.cashBalance).toBeLessThan(cashBefore); // expense fired
-		expect(ledger.secondaryLedger[6]).toBe(0);
-		expect(ledger.tertiaryLedger[6]).toBe(0);
+		expect(ledger.incomeLedger[6]).toBe(0);
+		expect(ledger.expenseLedger[6]).toBe(0);
 		expect(ledger.cashBalanceCycleBase).toBe(ledger.cashBalance);
 	});
 
@@ -702,10 +702,10 @@ describe("ledger: do_ledger_rollover", () => {
 		const world = makeWorld();
 		const ledger = makeLedger(10_000_000);
 		const cashBefore = ledger.cashBalance;
-		ledger.secondaryLedger[6] = 1000;
+		ledger.incomeLedger[6] = 1000;
 		do_ledger_rollover(ledger, world, 1);
 		expect(ledger.cashBalance).toBe(cashBefore);
-		expect(ledger.secondaryLedger[6]).toBe(1000);
+		expect(ledger.incomeLedger[6]).toBe(1000);
 	});
 
 	it("is a no-op on day 0 (dayCounter=0, 0%3===0) but expense sweep has nothing to charge", () => {
@@ -977,11 +977,11 @@ describe("handle_place_tile", () => {
 	it("runs global rebuilds (facility ledger updated) after placement", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		ledger.primaryLedger.fill(99);
+		ledger.populationLedger.fill(99);
 		for (let x = 0; x < 4; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, GROUND_Y - 1, "hotelSingle", world, ledger);
 		// rebuild_facility_ledger zeroes then counts → should be 1 hotelSingle
-		expect(ledger.primaryLedger[3]).toBe(1);
+		expect(ledger.populationLedger[3]).toBe(1);
 	});
 });
 
@@ -1052,14 +1052,14 @@ describe("handle_remove_tile", () => {
 			leftTileIndex: 0,
 			rightTileIndex: 0,
 			objectTypeCode: 3,
-			stayPhase: 0,
+			unitStatus: 0,
 			linkedRecordIndex: -1,
 			auxValueOrTimer: 0,
 			needsRefreshFlag: 1,
-			pairingStatus: -1,
-			pairingActiveFlag: 1,
+			evalLevel: -1,
+			evalActiveFlag: 1,
 			activationTickCount: 0,
-			variantIndex: 1,
+			rentLevel: 1,
 		};
 		// Place a floor tile directly above
 		world.cells[`0,${y - 1}`] = "floor";
@@ -1090,11 +1090,11 @@ describe("handle_remove_tile", () => {
 		const ledger = makeLedger();
 		for (let x = 0; x < 4; x++) world.cells[`${x},${GROUND_Y}`] = "floor";
 		handle_place_tile(0, GROUND_Y - 1, "hotelSingle", world, ledger);
-		// Now rebuild primaryLedger artificially
-		ledger.primaryLedger[3] = 99;
+		// Now rebuild populationLedger artificially
+		ledger.populationLedger[3] = 99;
 		handle_remove_tile(0, GROUND_Y - 1, world, ledger);
-		// After demolish, rebuild runs → primaryLedger[3] = 0
-		expect(ledger.primaryLedger[3]).toBe(0);
+		// After demolish, rebuild runs → populationLedger[3] = 0
+		expect(ledger.populationLedger[3]).toBe(0);
 	});
 });
 
@@ -1618,13 +1618,13 @@ describe("select_best_route_candidate", () => {
 			leftTileIndex: 0,
 			rightTileIndex: 4,
 			objectTypeCode: 24,
-			stayPhase: 0,
+			unitStatus: 0,
 			auxValueOrTimer: 0,
 			linkedRecordIndex: -1,
 			needsRefreshFlag: 1,
-			pairingActiveFlag: 1,
-			pairingStatus: -1,
-			variantIndex: 4,
+			evalActiveFlag: 1,
+			evalLevel: -1,
+			rentLevel: 4,
 			activationTickCount: 0,
 		};
 		world.carriers.push(make_carrier(0, 0, 1, 10, 20));
@@ -1647,26 +1647,26 @@ describe("select_best_route_candidate", () => {
 			leftTileIndex: 0,
 			rightTileIndex: 3,
 			objectTypeCode: 24,
-			stayPhase: 0,
+			unitStatus: 0,
 			auxValueOrTimer: 0,
 			linkedRecordIndex: -1,
 			needsRefreshFlag: 1,
-			pairingActiveFlag: 1,
-			pairingStatus: -1,
-			variantIndex: 4,
+			evalActiveFlag: 1,
+			evalLevel: -1,
+			rentLevel: 4,
 			activationTickCount: 0,
 		};
 		world.placedObjects[`20,${GROUND_Y}`] = {
 			leftTileIndex: 20,
 			rightTileIndex: 23,
 			objectTypeCode: 24,
-			stayPhase: 0,
+			unitStatus: 0,
 			auxValueOrTimer: 0,
 			linkedRecordIndex: -1,
 			needsRefreshFlag: 1,
-			pairingActiveFlag: 1,
-			pairingStatus: -1,
-			variantIndex: 4,
+			evalActiveFlag: 1,
+			evalLevel: -1,
+			rentLevel: 4,
 			activationTickCount: 0,
 		};
 		world.carriers.push(make_carrier(0, 0, 1, 10, 20));
@@ -2009,7 +2009,7 @@ describe("car state machine", () => {
 		expect(world.entities[0]?.selectedFloor).toBe(10);
 		expect(world.entities[0]?.stateCode).toBe(0x24);
 		expect(world.entities[0]?.routeCarrierOrSegment).toBe(0xff);
-		expect(hotel.stayPhase).toBe(0x28);
+		expect(hotel.unitStatus).toBe(0x28);
 		expect(ledger.cashBalance).toBeGreaterThan(cashBefore);
 	});
 });
@@ -2080,7 +2080,7 @@ describe("Phase 4 runtime entities", () => {
 		setupOccupiedFloor(world, ledger);
 
 		handle_place_tile(0, GROUND_Y - 1, "security", world, ledger);
-		ledger.primaryLedger[7] = 300;
+		ledger.populationLedger[7] = 300;
 		update_security_housekeeping_state(
 			world,
 			ledger,
@@ -2089,7 +2089,7 @@ describe("Phase 4 runtime entities", () => {
 		);
 
 		expect(world.gateFlags.securityAdequate).toBe(1);
-		expect(world.placedObjects[`0,${GROUND_Y - 1}`].stayPhase).toBe(1);
+		expect(world.placedObjects[`0,${GROUND_Y - 1}`].unitStatus).toBe(1);
 	});
 
 	it("sells condos through the entity refresh stride", () => {
@@ -2129,7 +2129,7 @@ describe("Phase 4 runtime entities", () => {
 			});
 		}
 		expect(ledger.cashBalance).toBeGreaterThan(condoBefore);
-		expect(world.placedObjects[`24,${GROUND_Y - 1}`].stayPhase).toBeLessThan(
+		expect(world.placedObjects[`24,${GROUND_Y - 1}`].unitStatus).toBeLessThan(
 			0x18,
 		);
 	});
@@ -2148,7 +2148,7 @@ describe("Phase 4 runtime entities", () => {
 			throw new Error("expected hotel runtime state");
 		firstEntity.accumulatedDelay = 10;
 		secondEntity.accumulatedDelay = 140;
-		hotel.pairingStatus = 1;
+		hotel.evalLevel = 1;
 
 		const state = create_entity_state_records(world);
 		expect(state).toHaveLength(2);
@@ -2355,6 +2355,7 @@ describe("Phase 4 runtime entities", () => {
 			auxState: 0,
 			queueTick: 0,
 			accumulatedDelay: 0,
+			routeRetryDelay: 0,
 			auxCounter: 0,
 			word0a: 0,
 			word0c: 0,
@@ -2393,6 +2394,7 @@ describe("Phase 4 runtime entities", () => {
 			auxState: 0,
 			queueTick: 0,
 			accumulatedDelay: 0,
+			routeRetryDelay: 0,
 			auxCounter: 0,
 			word0a: 0,
 			word0c: 0,

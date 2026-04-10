@@ -174,6 +174,39 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 
 	migrateSnakeToCamel(snapshot);
 
+	const legacyLedger = snapshot.ledger as unknown as Record<string, unknown>;
+	if (
+		!("populationLedger" in legacyLedger) &&
+		"primaryLedger" in legacyLedger
+	) {
+		legacyLedger.populationLedger = legacyLedger.primaryLedger;
+	}
+	if (!("incomeLedger" in legacyLedger) && "secondaryLedger" in legacyLedger) {
+		legacyLedger.incomeLedger = legacyLedger.secondaryLedger;
+	}
+	if (!("expenseLedger" in legacyLedger) && "tertiaryLedger" in legacyLedger) {
+		legacyLedger.expenseLedger = legacyLedger.tertiaryLedger;
+	}
+
+	for (const record of Object.values(snapshot.world.placedObjects)) {
+		const legacyRecord = record as unknown as Record<string, unknown>;
+		if (!("unitStatus" in legacyRecord) && "stayPhase" in legacyRecord) {
+			legacyRecord.unitStatus = legacyRecord.stayPhase;
+		}
+		if (
+			!("evalActiveFlag" in legacyRecord) &&
+			"pairingActiveFlag" in legacyRecord
+		) {
+			legacyRecord.evalActiveFlag = legacyRecord.pairingActiveFlag;
+		}
+		if (!("evalLevel" in legacyRecord) && "pairingStatus" in legacyRecord) {
+			legacyRecord.evalLevel = legacyRecord.pairingStatus;
+		}
+		if (!("rentLevel" in legacyRecord) && "variantIndex" in legacyRecord) {
+			legacyRecord.rentLevel = legacyRecord.variantIndex;
+		}
+	}
+
 	if (snapshot.world.height < GRID_HEIGHT) snapshot.world.height = GRID_HEIGHT;
 	if (!snapshot.world.width || snapshot.world.width < GRID_WIDTH)
 		snapshot.world.width = GRID_WIDTH;
@@ -198,6 +231,9 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 		snapshot.world.transferGroupCache = new Array(GRID_HEIGHT).fill(0);
 	}
 	snapshot.world.eventState ??= createEventState();
+	snapshot.ledger.populationLedger ??= new Array(256).fill(0);
+	snapshot.ledger.incomeLedger ??= new Array(256).fill(0);
+	snapshot.ledger.expenseLedger ??= new Array(256).fill(0);
 
 	const vipAnchors = new Set<string>();
 	for (const [key, tileType] of Object.entries(snapshot.world.cells)) {
@@ -220,7 +256,7 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	// Migrate carrier floorQueues from old flat format to RingBuffer instances
 	for (const carrier of snapshot.world.carriers) {
 		for (let i = 0; i < carrier.floorQueues.length; i++) {
-			const q = carrier.floorQueues[i] as Record<string, unknown>;
+			const q = carrier.floorQueues[i] as unknown as Record<string, unknown>;
 			if (q && !(q.up instanceof RingBuffer)) {
 				// Old format: {upCount, upHeadIndex, downCount, downHeadIndex, upQueueRouteIds, downQueueRouteIds}
 				// New format: {up: RingBuffer, down: RingBuffer}

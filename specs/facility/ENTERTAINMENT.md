@@ -28,7 +28,7 @@ Movie-theater-family payout is attendance-tiered at phase completion:
 
 Single-link entertainment uses a fixed payout of `$20,000` per completed phase.
 
-Primary-ledger contribution is tracked separately from realized cash payout.
+Population-ledger contribution is tracked separately from realized cash payout.
 
 ## Paired vs Single-Link
 

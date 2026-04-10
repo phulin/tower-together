@@ -260,7 +260,13 @@ export class TowerSim {
 				};
 			}
 			case "set_rent_level":
-				return handle_set_rent_level(cmd.x, cmd.y, cmd.rentLevel, this.world);
+				return handle_set_rent_level(
+					cmd.x,
+					cmd.y,
+					cmd.rentLevel,
+					this.world,
+					this.time,
+				);
 			case "add_elevator_car":
 				return handle_add_elevator_car(cmd.x, this.world);
 			case "remove_elevator_car":
@@ -277,9 +283,9 @@ export class TowerSim {
 		tileType: string;
 		objectInfo?: {
 			objectTypeCode: number;
-			variantIndex: number;
-			pairingStatus: number;
-			stayPhase: number;
+			rentLevel: number;
+			evalLevel: number;
+			unitStatus: number;
 			activationTickCount: number;
 		};
 		carrierInfo?: {
@@ -300,9 +306,9 @@ export class TowerSim {
 		const objectInfo = record
 			? {
 					objectTypeCode: record.objectTypeCode,
-					variantIndex: record.variantIndex,
-					pairingStatus: record.pairingStatus,
-					stayPhase: record.stayPhase,
+					rentLevel: record.rentLevel,
+					evalLevel: record.evalLevel,
+					unitStatus: record.unitStatus,
 					activationTickCount: record.activationTickCount,
 				}
 			: undefined;
@@ -406,9 +412,9 @@ export class TowerSim {
 	private cloneLedger(): LedgerState {
 		return {
 			cashBalance: this.ledger.cashBalance,
-			primaryLedger: [...this.ledger.primaryLedger],
-			secondaryLedger: [...this.ledger.secondaryLedger],
-			tertiaryLedger: [...this.ledger.tertiaryLedger],
+			populationLedger: [...this.ledger.populationLedger],
+			incomeLedger: [...this.ledger.incomeLedger],
+			expenseLedger: [...this.ledger.expenseLedger],
 			cashBalanceCycleBase: this.ledger.cashBalanceCycleBase,
 		};
 	}

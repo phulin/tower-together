@@ -55,10 +55,10 @@ Express-mode routing only considers express-branch special-link segments.
 
 Binary-confirmed object-type mapping:
 
-- placed-object type `0x16` is player-facing `Stairs`, but placement passes the express-branch flag
-- placed-object type `0x1b` is player-facing `Escalator`, but placement passes the local-branch flag
+- placed-object type `0x16` is player-facing `Stairs` and passes the local-branch flag (low bit `0`)
+- placed-object type `0x1b` is player-facing `Escalator` and passes the express-branch flag (low bit `1`)
 
-This is counterintuitive, but a faithful reimplementation should preserve the binary's actual type-code behavior rather than normalizing it.
+This is the intuitive mapping: stairs are local links, escalators are express links. An earlier version of this spec had the mapping inverted due to a decompilation misread; the binary confirms the intuitive assignment.
 
 ## Carrier Costs
 
@@ -95,6 +95,14 @@ Long-distance penalty (applied when `emit_distance_feedback` is set):
 
 ## Walkability Rules
 
+`g_floor_walkability_flags` is a 120-entry byte array (one per floor, indices 0–119).
+
+Bit semantics:
+- bit 0: local walkability (set by local-branch special-link segments, i.e. stairs)
+- bit 1: express walkability (set by express-branch special-link segments, i.e. escalators)
+
+Rebuild trigger: walkability flags are rebuilt whenever a special-link segment (stairs or escalator) is placed or demolished. The rebuild scans all 64 special-link slots and sets the appropriate bit on each floor covered by a live segment.
+
 Local walkability:
 
 - maximum span checked: 6 floors in each direction from center (i.e. `center ± 6`)
@@ -119,6 +127,21 @@ They are rebuilt from:
 - lobby/concourse transfer infrastructure
 - carrier served-floor coverage
 - sky-lobby transfer spans
+
+Recovered rebuild algorithm (`rebuild_transfer_group_cache`):
+
+1. clear all 16 transfer-group cache entries
+2. scan all floors for placed objects of type `0x18` (sky lobby / transit concourse)
+3. for each such object, determine which carriers serve that floor by scanning carriers `0..23` and building a carrier bitmask
+4. if an existing cache entry already has the same tagged floor, merge the new carrier bitmask into the existing entry via bitwise OR
+5. otherwise allocate the next free cache entry (up to 16), storing the tagged floor and carrier bitmask
+6. after the object scan, also merge in the derived transfer-zone records (lobby and sky-lobby walkable spans) — each zone contributes its own carrier reachability to overlapping cache entries
+7. entries are stored in discovery order; the 16-entry cap is a hard limit
+
+The cache is rebuilt:
+- at start-of-day (`0x000` checkpoint)
+- after any carrier edit or demolition that changes served-floor coverage
+- after placement or demolition of a sky lobby / transit concourse
 
 They feed:
 

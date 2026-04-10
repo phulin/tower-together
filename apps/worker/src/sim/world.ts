@@ -186,8 +186,8 @@ export interface PlacedObjectRecord {
 	rightTileIndex: number;
 	/** +0x0a byte: placement-time SimTower object-type code (e.g. 3 = hotelSingle, 6 = restaurant). */
 	objectTypeCode: number;
-	/** +0x0b byte: per-family lifecycle byte (stayPhase / open-close state). Init = 0. */
-	stayPhase: number;
+	/** +0x0b byte: per-family lifecycle byte (unit_status / open-close state). Init = 0. */
+	unitStatus: number;
 	/** +0x0c word: tool-counter rotation index at init; runtime cycle counter. Init = 0. */
 	auxValueOrTimer: number;
 	/** +0x12 byte: index into WorldState.sidecars; init = −1 (no sidecar). */
@@ -195,17 +195,17 @@ export interface PlacedObjectRecord {
 	/** +0x13 byte: dirty bit; init = 1 so the first refresh sweep picks it up. */
 	needsRefreshFlag: number;
 	/** +0x14 byte: first-activation latch; init = 1. */
-	pairingActiveFlag: number;
+	evalActiveFlag: number;
 	/**
 	 * +0x15 byte: operational rating — 0 = bad/refund-eligible, 1 = ok, 2 = good.
 	 * Init = −1 (invalid); first scoring sweep populates.
 	 */
-	pairingStatus: number;
+	evalLevel: number;
 	/**
 	 * +0x16 byte: pricing tier 0–3 (0 = best payout, 3 = worst).
 	 * Init = 1 for families 3/4/5/7/9/10; init = 4 (no payout) for all others.
 	 */
-	variantIndex: number;
+	rentLevel: number;
 	/** +0x17 byte: cumulative activation count; init = 0, capped at 0x78. */
 	activationTickCount: number;
 	/** Clean-room metadata: VIP suite flag normalized onto standard hotel room types. */
