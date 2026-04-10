@@ -167,7 +167,8 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	migrateSnakeToCamel(snapshot);
 
 	if (snapshot.world.height < GRID_HEIGHT) snapshot.world.height = GRID_HEIGHT;
-	snapshot.world.width ??= GRID_WIDTH;
+	if (!snapshot.world.width || snapshot.world.width < GRID_WIDTH)
+		snapshot.world.width = GRID_WIDTH;
 	snapshot.world.placedObjects ??= {};
 	snapshot.world.sidecars ??= [];
 	snapshot.world.entities ??= [];
