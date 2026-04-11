@@ -724,16 +724,16 @@ export class GameScene extends Phaser.Scene {
 		const bottomY = (gy + 1) * TILE_HEIGHT;
 		const topY = gy * TILE_HEIGHT - TILE_HEIGHT / 3;
 
-		// Parallelogram: bottom edge is at the left, top edge is shifted right
-		// The horizontal width of each edge is half the cell width, offset by half.
-		const edgeW = cellW / 2;
+		// Parallelogram: outside corners are bottom-left and top-right.
+		// edgeW controls thickness perpendicular to the diagonal.
+		const edgeW = cellW / 6;
 
-		g.fillStyle(0xffffff, 0.65);
+		g.fillStyle(0xffffff, 1);
 		g.beginPath();
 		g.moveTo(startX, bottomY); // bottom-left
 		g.lineTo(startX + edgeW, bottomY); // bottom-right
 		g.lineTo(startX + cellW, topY); // top-right
-		g.lineTo(startX + edgeW, topY); // top-left
+		g.lineTo(startX + cellW - edgeW, topY); // top-left
 		g.closePath();
 		g.fillPath();
 	}
