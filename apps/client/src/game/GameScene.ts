@@ -8,11 +8,10 @@ import {
 	UNDERGROUND_FLOORS,
 	UNDERGROUND_Y,
 } from "../types";
+import { CloudManager } from "./clouds";
 import {
 	CAR_COLOR,
-	COLOR_GRID_LINE,
 	COLOR_HOVER,
-	COLOR_SKY,
 	COLOR_UNDERGROUND,
 	DEFAULT_TICK_INTERVAL_MS,
 	ENTITY_STRESS_COLORS,
@@ -48,8 +47,9 @@ export class GameScene extends Phaser.Scene {
 	private cellGraphics!: Phaser.GameObjects.Graphics;
 	private entityGraphics!: Phaser.GameObjects.Graphics;
 	private carGraphics!: Phaser.GameObjects.Graphics;
-	private gridGraphics!: Phaser.GameObjects.Graphics;
+
 	private hoverGraphics!: Phaser.GameObjects.Graphics;
+	private cloudManager!: CloudManager;
 	private floorLabelBg!: Phaser.GameObjects.Rectangle;
 	private floorLabels: Phaser.GameObjects.Text[] = [];
 	private tileLabels: Phaser.GameObjects.Text[] = [];
@@ -244,22 +244,31 @@ export class GameScene extends Phaser.Scene {
 			(UNDERGROUND_Y - 8) * TILE_HEIGHT,
 		);
 
-		this.gridGraphics = this.add.graphics();
 		this.cellGraphics = this.add.graphics();
 		this.entityGraphics = this.add.graphics();
 		this.carGraphics = this.add.graphics();
 		this.hoverGraphics = this.add.graphics();
 
+		// Depth ordering: sky (0) -> clouds (1) -> cells (2) -> overlays (3-4)
+		this.cellGraphics.setDepth(2);
+		this.entityGraphics.setDepth(3);
+		this.carGraphics.setDepth(3);
+		this.hoverGraphics.setDepth(4);
+
 		this.arrowKeys =
 			this.input.keyboard?.createCursorKeys() as Phaser.Types.Input.Keyboard.CursorKeys;
 
-		this.drawGrid();
+		this.drawSky();
 		this.drawAllCells();
+
+		this.cloudManager = new CloudManager(this, 1);
+		this.cloudManager.loadTextures();
+
 		this.setupInput();
 		this.setupFloorLabels();
 	}
 
-	update(): void {
+	update(_time: number, delta: number): void {
 		const cam = this.cameras.main;
 		const PAN_SPEED = 6 / cam.zoom;
 		if (this.arrowKeys.left.isDown) cam.scrollX -= PAN_SPEED;
@@ -267,6 +276,7 @@ export class GameScene extends Phaser.Scene {
 		if (this.arrowKeys.up.isDown) cam.scrollY -= PAN_SPEED;
 		if (this.arrowKeys.down.isDown) cam.scrollY += PAN_SPEED;
 
+		this.cloudManager.update(delta);
 		this.updateFloorLabels();
 		this.drawDynamicOverlays();
 	}
@@ -329,26 +339,31 @@ export class GameScene extends Phaser.Scene {
 		}
 	}
 
-	private drawGrid(): void {
-		const g = this.gridGraphics;
-		g.clear();
-		g.lineStyle(1, COLOR_GRID_LINE, 0.5);
+	private drawSky(): void {
+		const skyW = GRID_WIDTH * TILE_WIDTH;
+		const skyH = UNDERGROUND_Y * TILE_HEIGHT;
 
-		const totalWidth = GRID_WIDTH * TILE_WIDTH;
-		const totalHeight = GRID_HEIGHT * TILE_HEIGHT;
+		// Build a 1-pixel-wide vertical gradient on an offscreen canvas.
+		const canvas = document.createElement("canvas");
+		canvas.width = 1;
+		canvas.height = skyH;
+		const ctx = canvas.getContext("2d")!;
+		const grad = ctx.createLinearGradient(0, 0, 0, skyH);
+		grad.addColorStop(0, "#1a3a6e"); // deep blue at top
+		grad.addColorStop(0.6, "#5ba8d4"); // mid sky
+		grad.addColorStop(1, "#b4ddf0"); // pale horizon
+		ctx.fillStyle = grad;
+		ctx.fillRect(0, 0, 1, skyH);
 
-		for (let x = 0; x <= GRID_WIDTH; x++) {
-			g.beginPath();
-			g.moveTo(x * TILE_WIDTH, 0);
-			g.lineTo(x * TILE_WIDTH, totalHeight);
-			g.strokePath();
+		// Create a Phaser texture from the canvas and stretch it across the sky.
+		if (this.textures.exists("skyGradient")) {
+			this.textures.remove("skyGradient");
 		}
-		for (let y = 0; y <= GRID_HEIGHT; y++) {
-			g.beginPath();
-			g.moveTo(0, y * TILE_HEIGHT);
-			g.lineTo(totalWidth, y * TILE_HEIGHT);
-			g.strokePath();
-		}
+		this.textures.addCanvas("skyGradient", canvas);
+		const sky = this.add.image(0, 0, "skyGradient");
+		sky.setOrigin(0, 0);
+		sky.setDisplaySize(skyW, skyH);
+		sky.setDepth(0);
 	}
 
 	private drawAllCells(): void {
@@ -356,9 +371,6 @@ export class GameScene extends Phaser.Scene {
 		g.clear();
 		this.clearTileLabels();
 
-		// Sky background (above ground)
-		g.fillStyle(COLOR_SKY, 1);
-		g.fillRect(0, 0, GRID_WIDTH * TILE_WIDTH, UNDERGROUND_Y * TILE_HEIGHT);
 		// Underground background
 		g.fillStyle(COLOR_UNDERGROUND, 1);
 		g.fillRect(
