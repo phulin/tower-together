@@ -68,7 +68,7 @@ export function rebuildSpecialLinks(world: WorldState): void {
 		const span = topFloor - entryFloor + 1;
 		world.specialLinks[segmentIndex++] = {
 			active: true,
-			flags: (span << 1) | (group.type === "escalator" ? 1 : 0),
+			flags: (span << 1) | (group.type === "stairs" ? 1 : 0),
 			heightMetric: span,
 			entryFloor,
 			reservedByte: 0,

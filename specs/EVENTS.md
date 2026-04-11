@@ -12,6 +12,7 @@ Behavior:
   - helper semantics from the binary: scan floors upward from the supplied lower bound, find the
     first non-empty floor, then the first empty floor after that contiguous occupied run; the bomb
     chooses uniformly from the inclusive range `[lower_bound, top_live_floor]`
+- the bomb starts floor selection at clone logical floor `lobby_height`, so multi-floor lobby floors are excluded
 - requires the selected floor width to be at least `4` tiles
 - chooses the bomb x-position uniformly from `[left_tile_index, right_tile_index - 4]`
 - computes ransom from the current star rating using startup-tuning values:
@@ -20,7 +21,7 @@ Behavior:
   - 4 stars: `$1,000,000`
 - shows the bomb prompt popup (`0x2713`)
 - if the player pays: deduct ransom, show notification `0x271f`, event ends
-- if the player refuses: arm the delayed bomb-resolution path that is checked later in the day (`day_tick == 0x04b0`) while security searches run
+- if the player does not pay: arm the delayed bomb-resolution path that is checked later in the day (`day_tick == 0x04b0`) while response helpers search
 
 Bomb resolution:
 
@@ -49,16 +50,16 @@ Behavior:
   `star_count > 2`, and no cathedral evaluation site is active
 - chooses a random fire-eligible floor through the same contiguous-live-floor helper used by the bomb event
 - requires the selected floor width to be at least `32` tiles
-- the helper excludes the lobby band by starting its candidate range at `g_lobby_height + 10`
+- the helper excludes multi-floor lobby floors by starting its candidate range at clone logical floor `lobby_height`
 - records the fire floor and seeds the initial fire x-position at `right_tile_index - 32`
 - shows the fire-rescue prompt family (`0x2716`), sets the fire-active bit in `game_state_flags`, and initializes the spread state
 
 Fire rescue follow-up:
 
 - two ticks after ignition, the game resolves the rescue choice prompt
-- accepting the rescue path charges `$500,000`, seeds the active fire core at `right_tile_index - 12`,
+- the branch that dispatches the rescue path charges `$500,000`, seeds the active fire core at `right_tile_index - 12`,
   and keeps the event running
-- declining it shows the loss dialog, idles the helper pool, and leaves the fire to run out through normal cleanup
+- the other branch shows the loss dialog, idles the helper pool, and leaves the fire to run out through normal cleanup
 
 Spread / follow-up:
 

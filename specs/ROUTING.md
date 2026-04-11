@@ -59,7 +59,7 @@ Resolver field writes:
 
 Passenger/local mode:
 
-1. direct local stair links when viable
+1. direct special links when viable
 2. lobby local access ranges
 3. elevator fallback
 
@@ -81,22 +81,22 @@ Selector behavior:
 
 ### Stair / Escalator Segments
 
-- local-walk segment: `abs(height_delta) * 8`
-- express-only segment: `abs(height_delta) * 8 + 640`
+- Escalator segment: `abs(height_delta) * 8`
+- Stairs segment: `abs(height_delta) * 8 + 640`
 
-Express-mode routing only considers express-only stairs/escalator segments.
+The express-mode route scorer only accepts Stairs segments.
 
 Behavioral branch mapping:
 
-- low-bit `0` selects the local-walk branch
-- low-bit `1` selects the express-only branch
+- low-bit `0` selects the Escalator branch
+- low-bit `1` is the stairs cost bit and selects the Stairs branch
 
-Original-EXE labeling quirk:
+Build-label / behavior mapping:
 
-- the EXE's build-object type labels appear swapped relative to routing behavior
-- type `0x16` (`Stairs` in resources/UI) creates the express-only / `+640` branch
-- type `0x1b` (`Escalator` in resources/UI) creates the local-walk branch
-- the clone should preserve the recovered routing behavior even if we choose saner public labels
+- the EXE build table labels type `0x16` as `Stairs  - $5000` and type `0x1b` as `Escalator - $20000`
+- type `0x16` (`Stairs` in resources/UI) creates the Stairs branch and sets the stairs cost bit
+- type `0x1b` (`Escalator` in resources/UI) creates the Escalator branch and leaves the stairs cost bit clear
+- the clone must preserve this routing behavior; replacement-UI labels may differ, but the EXE label-to-branch mapping is part of the compatibility reference
 
 ## Carrier Costs
 
@@ -119,8 +119,8 @@ Use these delays:
 - requeue-failure delay: `0`
 - no-route delay: `300`
 - invalid-venue delay: `0`
-- local-walk stairs/escalator per-stop delay: `16`
-- express-only stairs/escalator per-stop delay: `35`
+- Escalator-branch per-stop delay: `16`
+- Stairs-branch per-stop delay: `35`
 
 Long-distance penalty (applied when `emit_distance_feedback` is set):
 
@@ -136,8 +136,8 @@ Long-distance penalty (applied when `emit_distance_feedback` is set):
 `floor_walkability_flags` is a 120-entry byte array (one per floor, indices 0–119).
 
 Bit semantics:
-- bit 0: local walkability (set by local-walk stairs/escalator segments)
-- bit 1: express walkability (set by express-only stairs/escalator segments)
+- bit 0: Escalator-branch route support
+- bit 1: Stairs-branch route support
 
 Rebuild trigger: walkability flags are rebuilt whenever a stairs/escalator segment is placed or demolished. The rebuild scans all 64 segment slots and sets the appropriate bit on each floor covered by a live segment.
 
@@ -315,10 +315,10 @@ This cache affects repeated popup emission. It does not participate in route sco
 
 `select_best_route_candidate` applies these additional rules:
 
-- express mode checks express-only stairs/escalator segments first and immediately accepts the best one if any exists
-- local mode immediately accepts a direct local-walk stairs/escalator segment only when its cost is below `640`
+- express mode checks Stairs segments first and immediately accepts the best one if any exists
+- local mode immediately accepts a direct Escalator segment only when its cost is below `640`
 - otherwise local mode continues on to carrier fallback, but still preserves the best direct-segment candidate found so far
-- lobby local access ranges return only viability (`0` or `32767`); when one succeeds, the selector computes the first one-floor leg in the chosen direction and then requires a direct local-walk stairs/escalator segment for that first step
+- lobby local access ranges return only viability (`0` or `32767`); when one succeeds, the selector computes the first one-floor leg in the chosen direction and then requires a direct Escalator segment for that first step
 - direct carrier service and transfer-assisted carrier service are both folded into the same final carrier scan
 
 ## Stairs / Escalator Segment Flags
@@ -327,15 +327,15 @@ Each stairs/escalator segment carries a `mode_and_span` byte.
 
 Branch semantics:
 
-- local-walk segments are used for local routing
-- express-only segments are used for express routing
-- local route scoring accepts both branches, but adds the `+640` surcharge to express-only segments
-- express route scoring accepts only express-only segments
-- reachability rebuild writes local walkability for local-walk segments and express walkability for express-only segments
+- Escalator segments use the base cost
+- Stairs segments set the stairs cost bit and add the `+640` surcharge
+- local route scoring accepts both branches, but adds the `+640` surcharge to Stairs segments
+- express route scoring accepts only Stairs segments
+- reachability rebuild writes the route-support bit for the corresponding branch
 
 Bit layout:
 
-- bit `0`: branch selector
-  - `0` = local-walk branch
-  - `1` = express-only branch
+- bit `0`: stairs cost bit
+  - `0` = Escalator branch
+  - `1` = Stairs branch, with the `+640` routing-cost surcharge
 - bits `7:1`: encoded span; the walked floor delta for a direct leg is `((mode_and_span >> 1) + 1)`

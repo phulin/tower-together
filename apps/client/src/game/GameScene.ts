@@ -708,26 +708,34 @@ export class GameScene extends Phaser.Scene {
 		this.carLabels.push(label);
 	}
 
-	/** Draw stairs bridging the floor at (gx,gy) and the floor above (gy-1). */
+	/** Draw stairs bridging the floor at (gx,gy) and the floor above (gy-1).
+	 *  Rendered as a filled parallelogram starting at the bottom of the lower
+	 *  floor and ending 1/3 of the way up the upper floor. */
 	private drawStairs(
 		g: Phaser.GameObjects.Graphics,
 		gx: number,
 		gy: number,
 	): void {
-		const startX = gx * TILE_WIDTH + 1;
-		const startY = (gy + 1) * TILE_HEIGHT;
-		const numSteps = 8;
 		const stairWidth = TILE_WIDTHS.stairs ?? 1;
-		const sw = (TILE_WIDTH * stairWidth - 2) / numSteps;
-		const sh = (TILE_HEIGHT * 2) / numSteps;
+		const cellW = TILE_WIDTH * stairWidth - 2; // total pixel width with 1px margin
+		const startX = gx * TILE_WIDTH + 1;
+
+		// Bottom of lower floor (gy) to 1/3 up the upper floor (gy-1)
+		const bottomY = (gy + 1) * TILE_HEIGHT;
+		const topY = gy * TILE_HEIGHT - TILE_HEIGHT / 3;
+
+		// Parallelogram: bottom edge is at the left, top edge is shifted right
+		// The horizontal width of each edge is half the cell width, offset by half.
+		const edgeW = cellW / 2;
 
 		g.fillStyle(0xffffff, 0.65);
-		for (let i = 0; i < numSteps; i++) {
-			const sx = startX + i * sw;
-			const sy = startY - (i + 1) * sh;
-			g.fillRect(sx, sy, 2, sh); // riser (vertical)
-			g.fillRect(sx, sy, sw, 2); // tread (horizontal)
-		}
+		g.beginPath();
+		g.moveTo(startX, bottomY); // bottom-left
+		g.lineTo(startX + edgeW, bottomY); // bottom-right
+		g.lineTo(startX + cellW, topY); // top-right
+		g.lineTo(startX + edgeW, topY); // top-left
+		g.closePath();
+		g.fillPath();
 	}
 
 	private drawHover(): void {

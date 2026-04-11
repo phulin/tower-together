@@ -14,7 +14,7 @@ Binary-translation note:
 
 - The original `SIMTOWER.EX_` does not use the clone's logical floor IDs internally.
 - EXE floor index `0` corresponds to original-game logical floor `-10`.
-- EXE floor index `10` is the original game's lobby / logical floor `1`.
+- EXE floor index `10` is the original game's ground lobby floor (displayed as `1F`).
 - For the clone spec, we intentionally remap that same physical floor to logical floor `0`.
 - When this spec cites binary constants recovered from the EXE, translate them to clone logical floors with:
   - `clone_logical_floor = exe_floor_index - 10`

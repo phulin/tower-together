@@ -289,8 +289,8 @@ the first rollover/expense pass therefore occurs when `day_counter == 3`.
    - other types: `add_infrastructure_expense_by_type(type_code)`
    - carriers: remap carrier mode to expense type for express/standard/service, then charge the table value times `unit_record_count`
    - concrete carrier costs per 3-day pass: express `$20,000` per car, standard `$10,000` per car, service `$10,000` per car
-   - special links: local stair branch charges `$5,000` per scaled unit and express escalator branch charges `$0`; both are scaled by `(unit_count >> 1) + 1`
-   - the raw branch-to-type remap is inverted relative to player-facing type codes: low-bit-`0` local links use the stair expense rate, low-bit-`1` express links use the escalator expense rate
+   - special links: Escalator-branch links charge `$5,000` per scaled unit, while Stairs-branch links charge `$0`; both are scaled by `(unit_count >> 1) + 1`
+   - `mode_and_span & 1` is the stairs cost bit: `0` means Escalator branch, `1` means Stairs branch with the routing-cost surcharge
 4. rebuild all entity tile spans (same as checkpoint 2500 step 1)
 5. reset runtime entity state (same as checkpoint 2500 step 2)
 

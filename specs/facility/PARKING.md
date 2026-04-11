@@ -14,16 +14,20 @@ Parking expense is charged on the same 3-day periodic sweep as other operating c
 
 Formula:
 
-- expense = `(right_tile_index - left_tile_index) * tier_rate / 10`
-- `tier_rate` is chosen from three startup tuning values by current tower tier
-- the recovered rates are `0`, `30`, and `100` in `$100` units for stars `< 3`, `3`, and `>= 4`
+- expense in cash units = `(right_tile_index - left_tile_index) * tier_rate / 10`
+- `tier_rate` is chosen by current tower tier:
+  - stars `< 3`: `0`
+  - star `3`: `30`
+  - stars `>= 4`: `100`
+- cash units convert to dollars at `1` cash unit = `$100`
+- effective per-tile charges are therefore `$0`, `$300`, and `$1,000`
 - the expense is recorded under the parking expense ledger bucket
 
 Expense gate:
 
-- the parking-expense helper skips floors in the lower-atrium band above the lobby, not an underground band
-  - EXE floor indices: `11 <= floor < 10 + g_lobby_height`
-  - clone logical floors: `1 <= floor < g_lobby_height`
+- the parking-expense helper skips the upper floors of a multi-floor lobby, not an underground band
+  - clone logical floors: `1 <= floor < lobby_height`
+- this is an operating-expense gate only; it does not create or suppress parking demand
 - parking variants swept by this path share the same expense math; their remaining distinction is visual/depth classification rather than operating-cost behavior
 
 ## Service Request Entries

@@ -2,7 +2,11 @@
 
 ## Units
 
-All values in the tables below are denominated in `$100` units.
+Represent money internally as integer cash units, where `1` cash unit = `$100`.
+All stored cash balances, income ledgers, expense ledgers, and table values in this
+document use cash units unless explicitly labeled as dollars.
+
+User-facing dollar amounts are `cash_units * 100`.
 
 ## Ledgers
 
@@ -60,8 +64,8 @@ Construction costs are indexed by placed-object type:
 ## Floor Construction Premium
 
 - `lobby_height` is a saved tower parameter (1, 2, or 3) that defaults to `0` in `new_game_initializer` and is locked in to one of `{1, 2, 3}` on the player's first construction click; see `COMMANDS.md` for the selector and snap-back rules
-- the lobby occupies floor 0, with `lobby_height - 1` additional atrium floors directly above it; the predicate `0 < floor < lobby_height` identifies the atrium floors above the lobby base
-- floors strictly inside that atrium band use a premium floor-construction base cost instead of the normal floor-tile base cost
+- the lobby occupies floor 0 plus `lobby_height - 1` additional floors directly above it; floors `0 < floor < lobby_height` are the upper floors of the multi-floor lobby
+- those upper lobby floors use a premium floor-construction base cost instead of the normal floor-tile base cost — this reflects the taller lobby, not a separate mechanic
 - the premium path multiplies the recovered high-band base rate by `lobby_height`, so a 2-floor lobby charges `premium_rate * 2` per tile on floor 1 and a 3-floor lobby charges `premium_rate * 3` per tile on floors 1 and 2
 - the same parameter also affects special-link placement, fire ignition floors, the per-click commit count for lobby drag, and at least one family floor-class validator; see `COMMANDS.md` and `EVENTS.md`
 
@@ -108,8 +112,8 @@ Confirmed per-unit infrastructure expenses:
 - Security office: `$20,000`
 - Housekeeping: `$10,000`
 - Recycling Center: `$50,000`
-- local-branch special-link unit: `$5,000`
-- express-branch special-link unit: `$0`
+- Escalator-branch special-link unit: `$5,000`
+- Stairs-branch special-link unit: `$0`
 - Metro Station: `$100,000`
 - Express Elevator unit: `$20,000`
 - Service Elevator unit: `$10,000`
@@ -119,7 +123,7 @@ Expense lookup rules:
 
 - placed-object infrastructure expenses are indexed directly by placed-object type from a tuning table
 - carrier sweeps remap carrier mode to the appropriate expense type, then multiply by carrier unit_record_count
-- special-link sweeps charge either stair type or escalator type, scaled by (unit_count / 2 + 1)
+- special-link sweeps charge the branch's mapped infrastructure-expense type, scaled by (unit_count / 2 + 1)
 - parking uses a separate parking-expense routine
 
 Carrier expense values:
@@ -130,22 +134,24 @@ Carrier expense values:
 
 Special-link branch mapping:
 
-- local-branch special links (stairs) charge $5,000 per scaled unit on each 3-day expense pass
-- express-branch special links (escalators) charge $0
-- note: the internal type-to-expense mapping is inverted relative to player-facing type codes — this is a real behavior inversion, not a spec error
+- the EXE build-label table maps type `0x16` to `Stairs  - $5000` and type `0x1b` to `Escalator - $20000`
+- type `0x16` creates the Stairs branch and sets the stairs cost bit; type `0x1b` creates the Escalator branch and leaves the stairs cost bit clear
+- Escalator-branch links charge `$5,000` per scaled unit on each 3-day expense pass
+- Stairs-branch links charge `$0`
 
 Parking expense formula:
 
-- periodic parking expense is `(right_tile_index - left_tile_index) * tier_rate / 10`
-- `tier_rate` is selected from three startup tuning globals by current tower tier:
+- periodic parking expense in cash units is `(right_tile_index - left_tile_index) * tier_rate / 10`
+- `tier_rate` is selected by current tower tier:
   - stars `< 3`: `0`
   - star `3`: `30`
   - stars `>= 4`: `100`
-- these are `$100` units before the `/ 10` scaling step
+- these rates are cash units before the `/ 10` scaling step
+- effective per-tile charges are therefore `$0`, `$300`, and `$1,000`
 - the resulting expense is recorded under the parking expense ledger bucket
-- the charge is skipped for floors inside the lower-atrium band directly above the lobby:
-  - EXE floor indices `11 <= floor < 10 + g_lobby_height`
-  - clone logical floors `1 <= floor < g_lobby_height`
+- the charge is skipped for the upper floors of a multi-floor lobby:
+  - clone logical floors `1 <= floor < lobby_height`
+- this skip applies only to parking operating expense, not to parking demand generation
 
 This naming-to-behavior inversion is strange, but it is no longer unresolved.
 

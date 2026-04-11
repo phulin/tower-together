@@ -1206,9 +1206,9 @@ export function resolveEntityRouteBetweenFloors(
 		return 3;
 	}
 
-	// Always prefer local/stair routing for now; the original game used a
-	// per-object flag to switch to express mode, but the exact semantics
-	// remain unresolved so we hard-code the local-mode branch.
+	// Always prefer Escalator-branch (local) routing for now; the original
+	// game used a per-object flag to switch to express mode, but the exact
+	// semantics remain unresolved so we hard-code the local-mode branch.
 	const preferLocalMode = true;
 
 	const route = selectRouteForFamily(
@@ -1232,11 +1232,11 @@ export function resolveEntityRouteBetweenFloors(
 		};
 		entity.queueTick = time?.dayTick ?? entity.queueTick;
 		entity.destinationFloor = destinationFloor;
-		// Per-stop transit delay: local stair branch = 16 ticks/floor,
-		// express escalator branch = 35 ticks/floor.
+		// Per-stop transit delay: Escalator branch = 16 ticks/floor,
+		// Stairs branch = 35 ticks/floor.
 		const segment = world.specialLinks[route.id];
-		const isExpressBranch = segment ? (segment.flags & 1) !== 0 : false;
-		const perStopDelay = isExpressBranch ? 35 : 16;
+		const isStairsBranch = segment ? (segment.flags & 1) !== 0 : false;
+		const perStopDelay = isStairsBranch ? 35 : 16;
 		entity.transitTicksRemaining =
 			Math.abs(destinationFloor - sourceFloor) * perStopDelay;
 		return 1;

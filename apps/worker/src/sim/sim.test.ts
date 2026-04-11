@@ -844,7 +844,7 @@ describe("handlePlaceTile", () => {
 		expect(world.overlays[`0,${GROUND_Y}`]).toBe("stairs");
 		expect(world.overlayToAnchor[`7,${GROUND_Y}`]).toBe(`0,${GROUND_Y}`);
 		expect(world.specialLinks.some((segment) => segment.active)).toBe(true);
-		expect(world.floorWalkabilityFlags[10] & 1).toBe(1);
+		expect(world.floorWalkabilityFlags[10] & 2).toBe(2); // Stairs-branch walkability
 	});
 
 	it("stairs rejected when base tile missing", () => {
@@ -1383,7 +1383,7 @@ describe("rebuildCarrierList", () => {
 		expect(active).toHaveLength(1);
 		expect(active[0].entryFloor).toBe(10);
 		expect(active[0].heightMetric).toBe(2); // floors 10 and 11 inclusive
-		expect(active[0].flags & 1).toBe(1); // escalator = express branch
+		expect(active[0].flags & 1).toBe(0); // escalator overlay = Escalator branch, stairs cost bit clear
 	});
 
 	it("preserves car position when carrier range extends", () => {
@@ -1424,12 +1424,12 @@ describe("rebuild_specialLinks", () => {
 		expect(active).toHaveLength(1);
 		expect(active[0].entryFloor).toBe(10);
 		expect(active[0].heightMetric).toBe(11);
-		expect(active[0].flags & 1).toBe(0); // stairs = local branch
+		expect(active[0].flags & 1).toBe(1); // stairs overlay = Stairs branch, stairs cost bit set
 	});
 });
 
 describe("rebuildWalkabilityFlags", () => {
-	it("sets bit 0 (local) for floors covered by a stairs span", () => {
+	it("sets bit 1 (Stairs-branch) for floors covered by a stairs span", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		for (let floor = 10; floor <= 15; floor++) {
@@ -1438,9 +1438,9 @@ describe("rebuildWalkabilityFlags", () => {
 		}
 		runGlobalRebuilds(world, ledger);
 		for (let f = 10; f <= 15; f++) {
-			expect(world.floorWalkabilityFlags[f] & 1).toBe(1);
+			expect(world.floorWalkabilityFlags[f] & 2).toBe(2);
 		}
-		expect(world.floorWalkabilityFlags[9] & 1).toBe(0);
+		expect(world.floorWalkabilityFlags[9] & 2).toBe(0);
 		expect(world.floorWalkabilityFlags[16] & 2).toBe(0);
 	});
 });
@@ -1479,12 +1479,12 @@ describe("selectBestRouteCandidate", () => {
 		expect(selectBestRouteCandidate(world, 10, 10)).toBeNull();
 	});
 
-	it("finds local route via special link with cost |Δ|*8", () => {
+	it("finds local route via Escalator-branch special link with cost |Δ|*8", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		for (let floor = 10; floor <= 20; floor++) {
 			world.cells[`0,${GRID_HEIGHT - 1 - floor}`] = "floor";
-			world.overlays[`0,${GRID_HEIGHT - 1 - floor}`] = "stairs";
+			world.overlays[`0,${GRID_HEIGHT - 1 - floor}`] = "escalator";
 		}
 		runGlobalRebuilds(world, ledger);
 		const route = selectBestRouteCandidate(world, 10, 15);
@@ -1497,7 +1497,7 @@ describe("selectBestRouteCandidate", () => {
 		const ledger = makeLedger();
 		for (let floor = 10; floor <= 20; floor++) {
 			world.cells[`0,${GRID_HEIGHT - 1 - floor}`] = "floor";
-			world.overlays[`0,${GRID_HEIGHT - 1 - floor}`] = "stairs";
+			world.overlays[`0,${GRID_HEIGHT - 1 - floor}`] = "escalator";
 		}
 		runGlobalRebuilds(world, ledger);
 		const route = selectBestRouteCandidate(world, 12, 15);
@@ -2352,7 +2352,7 @@ describe("Phase 4 runtime entities", () => {
 		const entity = world.entities[0];
 		if (!entity) throw new Error("expected entity");
 		// Entity is now in-transit on the segment route with per-stop delay
-		// 4 floors × 16 ticks (local branch, flag bit 0 = 0) = 64; one tick decremented = 63
+		// 4 floors × 16 ticks (Escalator branch, stairs cost bit = 0) = 64; one tick decremented = 63
 		expect(entity.route.mode).toBe("segment");
 		expect(entity.transitTicksRemaining).toBe(63);
 	});

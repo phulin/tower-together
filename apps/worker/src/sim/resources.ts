@@ -184,5 +184,5 @@ export const DELAY_WAITING = 5; // carrier floor-slot status 0x28 (at-capacity)
 export const DELAY_REQUEUE_FAIL = 0; // assign_request_to_runtime_route finds no transfer floor
 export const DELAY_ROUTE_FAIL = 300; // select_best_route_candidate returns < 0
 export const DELAY_VENUE_UNAVAIL = 0; // target venue slot invalid / no path-seed entry
-export const DELAY_STOP_EVEN = 16; // per-stop, even-parity segments
-export const DELAY_STOP_ODD = 35; // per-stop, odd-parity segments
+export const DELAY_STOP_ESCALATOR = 16; // Escalator-branch per-stop delay
+export const DELAY_STOP_STAIRS = 35; // Stairs-branch per-stop delay

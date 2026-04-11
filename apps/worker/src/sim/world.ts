@@ -153,7 +153,7 @@ export const MAX_TRANSFER_GROUPS = 16;
 
 export interface SpecialLinkSegment {
 	active: boolean;
-	/** bit 0 = express/escalator flag; bits 7:1 = inclusive span length in floors. */
+	/** bit 0 = stairs cost bit (0 = Escalator branch, 1 = Stairs branch); bits 7:1 = inclusive span length in floors. */
 	flags: number;
 	/** Height-based cost metric used by the routing pathfinder. */
 	heightMetric: number;
@@ -411,7 +411,7 @@ export interface WorldState {
 	specialLinks: SpecialLinkSegment[];
 	/** Special-link record table (max MAX_SPECIAL_LINK_RECORDS entries). */
 	specialLinkRecords: SpecialLinkRecord[];
-	/** Per-floor walkability bitmask (bit 0 = local, bit 1 = express). Size = GRID_HEIGHT. */
+	/** Per-floor walkability bitmask (bit 0 = Escalator-branch, bit 1 = Stairs-branch). Size = GRID_HEIGHT. */
 	floorWalkabilityFlags: number[];
 	/** Tagged transfer-concourse entries (max MAX_TRANSFER_GROUPS entries). */
 	transferGroupEntries: TransferGroupEntry[];

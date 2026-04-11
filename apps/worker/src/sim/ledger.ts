@@ -98,7 +98,7 @@ export function doExpenseSweep(
 		// Parking: star-dependent rate × width / 10
 		if (code === 0x18) {
 			if (parkingRate > 0) {
-				// Skip lower-atrium band directly above the lobby
+				// Skip upper floors of multi-floor lobby
 				const [, y] = key.split(",").map(Number);
 				const floor = yToFloor(y);
 				if (floor >= lobbyFloor + 1 && floor < lobbyFloor + lobbyHeight) {
@@ -159,6 +159,8 @@ export function doExpenseSweep(
 			1,
 			((Math.max(1, segment.heightMetric) >> 1) + 1) | 0,
 		);
+		// Escalator branch (bit 0 clear) → "stairs" expense key ($5,000);
+		// Stairs branch (bit 0 set) → "escalator" expense key ($0).
 		const expenseKey = (segment.flags & 1) === 0 ? "stairs" : "escalator";
 		const typeCode = (segment.flags & 1) === 0 ? 0x1b : 0x16;
 		const rate = YEN_1002[expenseKey];

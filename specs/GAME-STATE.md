@@ -64,10 +64,11 @@ The Tower-grade promotion uses a separate cathedral/evaluation path rather than 
 ## Gate Meanings
 
 - `route_viable`: exact binary behavior is narrower than the old wording implied
-  - new game and `reset_star_gate_state()` clear it to `0`
+  - new game initialization clears it to `0`
   - start-of-day `rebuild_path_seed_bucket_table()` sets it to `1` whenever `star_count > 2`
+  - the reviewed `reset_star_gate_state()` path resets the other star-gate flags but did not show a write to this flag
   - no later route-scoring helper was found writing a more selective predicate in the reviewed binary pass
-  - practical parity consequence: after reaching 3 stars, the gate stays false until the next day-start rebuild, then latches true until the next star-gate reset
+  - practical parity consequence: after reaching 3 stars, the gate stays false until the next day-start rebuild, then latches true until a full gate initialization path clears it again
 - `office-service-ok`: set by the office-service evaluation system (see below)
 
 ## Office Service Evaluation
@@ -83,7 +84,7 @@ condition.
 | `eval_target_entity` | Identity of the office entity under evaluation. Null sentinel = none, cleared sentinel after resolution. |
 | `eval_in_progress` | 0 = idle, 1 = evaluation in progress. |
 
-All three are reset to their initial values at new game start and on each star advancement.
+The office-service fields are reset to their initial values at new game start and on each star advancement.
 
 ### Trigger
 

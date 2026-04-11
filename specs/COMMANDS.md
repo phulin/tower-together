@@ -78,11 +78,12 @@ Special-link placement rules:
 - both top and bottom landing validators require the overlapping underlay object to be one of: empty, restaurant, retail, fast food, party hall (forward), party hall (reverse), lobby, cinema (forward), cinema (reverse), single hotel room
 - top landing footprint requires the destination floor to exist and the requested 8-tile footprint to fit within an existing object span with a 2-tile left inset
 - bottom landing footprint requires the source floor to exist and the requested 8-tile footprint to fit within an existing object span without that extra left inset
-- express-branch placement skips the allowlist object-type dispatch once the raw 8-tile footprint fit checks succeed
-- narrow geometry uses a stepped 2-floor shape: one full 8-tile bounding rectangle plus two 4-tile half-rectangles, and rejects if that shape intersects carrier clearance rectangles, any express-style special link, or either half of an existing local-style special link
+- the EXE `Escalator` tool creates the Escalator branch and leaves the stairs cost bit clear; the EXE `Stairs` tool creates the Stairs branch and sets the stairs cost bit
+- Stairs-branch placement skips the allowlist object-type dispatch once the raw 8-tile footprint fit checks succeed
+- narrow geometry uses a stepped 2-floor shape: one full 8-tile bounding rectangle plus two 4-tile half-rectangles, and rejects if that shape intersects carrier clearance rectangles, any active Stairs-branch special link, or either half of an existing Escalator-branch special link
 - wide geometry uses one continuous rectangle whose vertical span grows with `(stored_span >> 1)` and rejects if it intersects any carrier clearance rectangle or any existing special link
 - carrier-clearance rectangles used by these geometry checks reserve width `6` for carrier mode `0` and width `4` for other carrier modes, expanded vertically from `bottom_floor - 2` through `top_floor + 1`
-- escalators are therefore overlays on a narrow set of commercial/public footprints, not free-standing structures
+- `Escalator` links are overlays on a narrow set of commercial/public footprints, not free-standing structures; `Stairs` links use the broader Stairs-branch footprint path
 - the special-link placement behavior itself is now resolved; only UI-side drag acceptance remains outside the core sim model
 
 Command-dispatch limits:
