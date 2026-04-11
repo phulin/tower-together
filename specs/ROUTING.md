@@ -35,7 +35,7 @@ Express/helper mode:
 1. express-capable stair/escalator links when viable
 2. express-compatible elevator fallback
 
-Recovered selector behavior:
+Selector behavior:
 
 - the selector scans direct raw special-link segments in ascending index order `0..63`
 - in local mode, any direct local-segment hit suppresses later special-transfer-zone scoring entirely
@@ -49,22 +49,20 @@ Recovered selector behavior:
 ### Stair / Escalator Segments
 
 - local-branch special-link segment: `abs(height_delta) * 8`
-- express-branch special-link segment: `abs(height_delta) * 8 + 0x280`
+- express-branch special-link segment: `abs(height_delta) * 8 + 640`
 
 Express-mode routing only considers express-branch special-link segments.
 
-Binary-confirmed object-type mapping:
+Object-type mapping:
 
-- placed-object type `0x16` is player-facing `Stairs` and passes the local-branch flag (low bit `0`)
-- placed-object type `0x1b` is player-facing `Escalator` and passes the express-branch flag (low bit `1`)
-
-This is the intuitive mapping: stairs are local links, escalators are express links. An earlier version of this spec had the mapping inverted due to a decompilation misread; the binary confirms the intuitive assignment.
+- Stairs (type 0x16) are local-branch special links
+- Escalators (type 0x1b) are express-branch special links
 
 ## Carrier Costs
 
 If a carrier directly serves both source and target floors:
 
-- normal direct ride: `abs(height_delta) * 8 + 0x280`
+- normal direct ride: `abs(height_delta) * 8 + 640`
 - full queue at source floor: use `abs(height_delta) * 8 + 1000`
 
 If a carrier serves the source floor and the target is reachable through transfers:
@@ -87,15 +85,15 @@ Use these delays:
 Long-distance penalty (applied when `emit_distance_feedback` is set):
 
 - computed from `abs(height_metric_delta)` between the segment/carrier and entity
-- `<= 0x4f` (79): no penalty
-- `> 0x4f` (79) and `< 0x7d` (125): add `0x1e` (30 ticks) delay
-- `>= 0x7d` (125): add `0x3c` (60 ticks) delay
+- `<= 79`: no penalty
+- `> 79` and `< 125`: add `30` ticks delay
+- `>= 125`: add `60` ticks delay
 - for carriers, this penalty applies only when `carrier_mode != 0` (standard/service)
 - for special-link segments, it applies to all branches
 
 ## Walkability Rules
 
-`g_floor_walkability_flags` is a 120-entry byte array (one per floor, indices 0–119).
+`floor_walkability_flags` is a 120-entry byte array (one per floor, indices 0–119).
 
 Bit semantics:
 - bit 0: local walkability (set by local-branch special-link segments, i.e. stairs)
@@ -128,7 +126,7 @@ They are rebuilt from:
 - carrier served-floor coverage
 - sky-lobby transfer spans
 
-Recovered rebuild algorithm (`rebuild_transfer_group_cache`):
+Rebuild algorithm:
 
 1. clear all 16 transfer-group cache entries
 2. scan all floors for placed objects of type `0x18` (sky lobby / transit concourse)
@@ -143,9 +141,9 @@ The cache is rebuilt:
 - after any carrier edit or demolition that changes served-floor coverage
 - after placement or demolition of a sky lobby / transit concourse
 
-Recovered invalidation rule for the visible route-failure suppression cache:
+Invalidation rule for the visible route-failure suppression cache:
 
-- `rebuild_route_reachability_tables()` begins by calling `clear_visible_route_history_cache()`
+- the route reachability rebuild begins by clearing the visible route history cache
 - the one-popup-per-source-floor suppression is therefore reset on new game and on any route-topology rebuild that refreshes reachability
 - successful routes and ordinary time passage do not clear the suppression bytes
 
@@ -155,7 +153,7 @@ They feed:
 - special-link reachability
 - transfer-floor selection during queue drain
 
-Recovered transfer-reachability behavior:
+Transfer-reachability behavior:
 
 - carrier and special-link transfer tests both scan the 16 transfer-group cache entries in ascending index order `0..15`
 - entries whose tagged floor equals the current floor are skipped
@@ -163,7 +161,7 @@ Recovered transfer-reachability behavior:
 - the emitted direction flag is derived from whether the current floor is below that entry's tagged floor
 - no weighted comparison exists inside these helpers; they are first-match scans over the cache
 
-Recovered transfer-floor selection behavior during queue drain:
+Transfer-floor selection behavior during queue drain:
 
 - if a carrier directly serves the target floor, the chosen transfer floor is just the target floor
 - otherwise the queue-drain path reads that carrier's `reachability_masks_by_floor[target_floor]`
@@ -179,16 +177,16 @@ Recovered transfer-floor selection behavior during queue drain:
 
 The lobby / sky-lobby transfer zones are derived records, not placed objects.
 
-Recovered record set:
+Record set:
 
 - up to 8 records in `special_link_record_table`
-- one centered around floor `10`
+- one centered around floor `0` (lobby)
 - one each centered around floors `24`, `39`, `54`, `69`, `84`, and `99`
 - at most 7 of those records are typically live at once
 
-Recovered zone-building rule (`scan_special_link_span_bound`):
+Zone-building rule:
 
-- each record scans outward from its center using `g_floor_walkability_flags`
+- each record scans outward from its center using `floor_walkability_flags`
 - upward scan (`dir != 0`):
   - start at `center`, iterate `floor` from `center` to `center + 5`
   - if `walkability[floor] == 0`: return `floor` (exclusive upper bound)
@@ -204,7 +202,7 @@ Recovered zone-building rule (`scan_special_link_span_bound`):
 - the span stored in the record is `[downward_bound, upward_bound)` (lower inclusive, upper exclusive)
 - `is_floor_within_special_link_span` tests `bottom_floor <= floor <= top_floor`
 
-Recovered route-use rule for these zones:
+Route-use rule for these zones:
 
 - they are considered only in local mode
 - they are scanned only when no direct local special-link candidate exists
@@ -212,10 +210,10 @@ Recovered route-use rule for these zones:
   - active record required
   - source floor must lie inside the derived span
   - target floor must either lie inside the same span or be reachable through the record's per-floor transfer mask cache
-- a viable zone contributes cost `0`; an invalid one contributes `0x7fff`
+- a viable zone contributes cost `0`; an invalid one contributes `32767`
 - once a zone is chosen, the router computes the first one-floor leg in the emitted direction and requires that first step to be covered by a direct local special-link segment
 
-Recovered per-floor cache format:
+Per-floor cache format:
 
 - `0`: unreachable
 - `1..16`: direct transfer-group index + 1 for a tagged floor inside the record's own span
@@ -252,7 +250,7 @@ These are simulation state.
 
 Separately, the executable keeps a visible route-failure suppression cache for notifications:
 
-- one byte per source floor, starting at floor-table offset `0x7fae`
+- one byte per source floor in the route-failure suppression cache
 - when route resolution fails with feedback enabled, the cache is checked by source floor
 - if the byte is clear, a route-failure notification is built and shown, then that source-floor byte is set to `1`
 - this cache is cleared in bulk on new-game initialization
@@ -264,19 +262,19 @@ This cache affects repeated popup emission. It does not participate in route sco
 `select_best_route_candidate` applies these additional rules:
 
 - express mode checks raw express-branch segments first and immediately accepts the best one if any exists
-- local mode immediately accepts a direct local-branch segment only when its cost is below `0x280`
+- local mode immediately accepts a direct local-branch segment only when its cost is below `640`
 - otherwise local mode continues on to carrier fallback, but still preserves the best direct-segment candidate found so far
-- special transfer-zone records return only viability (`0` or `0x7fff`); when one succeeds, the selector computes the first one-floor leg in the chosen direction and then requires a direct local-branch segment for that first step
+- special transfer-zone records return only viability (`0` or `32767`); when one succeeds, the selector computes the first one-floor leg in the chosen direction and then requires a direct local-branch segment for that first step
 - direct carrier service and transfer-assisted carrier service are both folded into the same final carrier scan
 
 ## Raw Special-Link Flags
 
 Raw special-link records carry a `mode_and_span` byte.
 
-Recovered branch semantics:
+Branch semantics:
 
-- low bit `0`: local-branch special link
-- low bit `1`: express-branch special link
-- local route scoring accepts both branches, but adds the `+0x280` surcharge to the low-bit-`1` branch
-- express route scoring accepts only the low-bit-`1` branch
-- reachability rebuild writes local walkability for the low-bit-`0` branch and express walkability for the low-bit-`1` branch
+- local-branch special links are used for local routing
+- express-branch special links are used for express routing
+- local route scoring accepts both branches, but adds the +640 surcharge to express-branch links
+- express route scoring accepts only express-branch links
+- reachability rebuild writes local walkability for local-branch links and express walkability for express-branch links

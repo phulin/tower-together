@@ -28,8 +28,8 @@ export const TILE_WIDTHS: Record<string, number> = {
 	cinema: 24,
 	entertainment: 24,
 	// Services
-	security: 2, // family 0x14; SPEC.md marks this as a resource-icon-derived width
-	housekeeping: 2, // family 0x15; inherits security width in SPEC.md
+	recyclingCenterUpper: 2, // family 0x14 upper slice
+	recyclingCenterLower: 2, // family 0x15 lower slice
 	parking: 4, // family 0x18
 	metro: 4, // family 0x0e; SPEC.md marks this as a resource-icon-derived width
 	fireSuppressor: 28, // family 0x28
@@ -54,8 +54,8 @@ export const TILE_COSTS: Record<string, number> = {
 	condo: 80_000,
 	cinema: 500_000,
 	entertainment: 100_000,
-	security: 500_000,
-	housekeeping: 50_000,
+	recyclingCenterUpper: 500_000,
+	recyclingCenterLower: 50_000,
 	parking: 5_000,
 	metro: 1_000_000,
 	fireSuppressor: 500_000,
@@ -77,8 +77,8 @@ export const FAMILY_RETAIL = 10;
 export const FAMILY_FAST_FOOD = 12;
 export const FAMILY_METRO = 14;
 export const FAMILY_CINEMA = 18;
-export const FAMILY_SECURITY = 20;
-export const FAMILY_HOUSEKEEPING = 21;
+export const FAMILY_RECYCLING_CENTER_UPPER = 20;
+export const FAMILY_RECYCLING_CENTER_LOWER = 21;
 export const FAMILY_PARKING = 24;
 export const FAMILY_ENTERTAINMENT = 29;
 export const FAMILY_FIRE_SUPPRESSOR = 40;
@@ -99,8 +99,8 @@ export const FAMILY_CODE_TO_TILE: Record<number, string> = {
 	[FAMILY_RETAIL]: "retail",
 	[FAMILY_METRO]: "metro",
 	[FAMILY_CINEMA]: "cinema",
-	[FAMILY_SECURITY]: "security",
-	[FAMILY_HOUSEKEEPING]: "housekeeping",
+	[FAMILY_RECYCLING_CENTER_UPPER]: "recyclingCenterUpper",
+	[FAMILY_RECYCLING_CENTER_LOWER]: "recyclingCenterLower",
 	[FAMILY_PARKING]: "parking",
 	[FAMILY_ENTERTAINMENT]: "entertainment",
 	[FAMILY_FIRE_SUPPRESSOR]: "fireSuppressor",
@@ -110,6 +110,11 @@ export const LEGACY_VIP_TILE_TO_STANDARD: Record<string, string> = {
 	vipSingle: "hotelSingle",
 	vipTwin: "hotelTwin",
 	vipSuite: "hotelSuite",
+};
+
+export const LEGACY_TILE_ALIASES: Record<string, string> = {
+	security: "recyclingCenterUpper",
+	housekeeping: "recyclingCenterLower",
 };
 
 export const TILE_TO_FAMILY_CODE: Record<string, number> = Object.fromEntries(
@@ -135,8 +140,8 @@ export const YEN_1002: Record<string, number> = {
 	restaurant: 500,
 	fastFood: 50,
 	retail: 1000,
-	security: 200,
-	housekeeping: 100,
+	recyclingCenterUpper: 200,
+	recyclingCenterLower: 100,
 	elevatorLocal: 100, // per unit per 3-day period
 	elevatorExpress: 200,
 	elevatorService: 100,

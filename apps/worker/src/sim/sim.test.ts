@@ -32,7 +32,7 @@ import {
 	rebuild_runtime_entities,
 	reconcile_entity_transport,
 	resetCommercialVenueCycle,
-	update_security_housekeeping_state,
+	update_recycling_center_state,
 } from "./entities";
 import { handlePromptResponse, tickBombEvent } from "./events";
 import { TowerSim } from "./index";
@@ -342,11 +342,11 @@ describe("sidecar allocation", () => {
 		if (sidecar.kind === "commercial_venue") expect(sidecar.capacity).toBe(3);
 	});
 
-	it("allocates ServiceRequestEntry for security", () => {
+	it("allocates ServiceRequestEntry for recycling center upper slice", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		setupSupport(world);
-		handle_place_tile(0, GROUND_Y - 1, "security", world, ledger);
+		handle_place_tile(0, GROUND_Y - 1, "recyclingCenterUpper", world, ledger);
 		const rec = world.placedObjects[`0,${GROUND_Y - 1}`];
 		const sidecar = world.sidecars[rec.linkedRecordIndex];
 		expect(sidecar.kind).toBe("service_request");
@@ -1162,8 +1162,8 @@ describe("YEN tables", () => {
 		expect(TILE_COSTS.condo).toBe(80_000);
 		expect(TILE_COSTS.cinema).toBe(500_000);
 		expect(TILE_COSTS.entertainment).toBe(100_000);
-		expect(TILE_COSTS.security).toBe(500_000);
-		expect(TILE_COSTS.housekeeping).toBe(50_000);
+		expect(TILE_COSTS.recyclingCenterUpper).toBe(500_000);
+		expect(TILE_COSTS.recyclingCenterLower).toBe(50_000);
 		expect(TILE_COSTS.parking).toBe(5_000);
 		expect(TILE_COSTS.metro).toBe(1_000_000);
 	});
@@ -1196,12 +1196,12 @@ describe("YEN tables", () => {
 		expect(YEN_1002.retail).toBe(1000);
 	});
 
-	it("YEN_1002 security expense = 200", () => {
-		expect(YEN_1002.security).toBe(200);
+	it("YEN_1002 recycling-center upper expense = 200", () => {
+		expect(YEN_1002.recyclingCenterUpper).toBe(200);
 	});
 
-	it("YEN_1002 housekeeping expense = 100", () => {
-		expect(YEN_1002.housekeeping).toBe(100);
+	it("YEN_1002 recycling-center lower expense = 100", () => {
+		expect(YEN_1002.recyclingCenterLower).toBe(100);
 	});
 
 	it("YEN_1002 elevatorLocal expense = 100", () => {
@@ -2079,22 +2079,17 @@ describe("Phase 4 runtime entities", () => {
 		expect(venue.availabilityState).toBe(1);
 	});
 
-	it("marks security adequate when the checkpoint tier meets the scaled requirement", () => {
+	it("marks recycling adequate when the checkpoint tier meets the scaled requirement", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		const time = createTimeState();
 		setupOccupiedFloor(world, ledger);
 
-		handle_place_tile(0, GROUND_Y - 1, "security", world, ledger);
+		handle_place_tile(0, GROUND_Y - 1, "recyclingCenterUpper", world, ledger);
 		ledger.populationLedger[7] = 300;
-		update_security_housekeeping_state(
-			world,
-			ledger,
-			{ ...time, starCount: 4 },
-			5,
-		);
+		update_recycling_center_state(world, ledger, { ...time, starCount: 4 }, 5);
 
-		expect(world.gateFlags.securityAdequate).toBe(1);
+		expect(world.gateFlags.recyclingAdequate).toBe(1);
 		expect(world.placedObjects[`0,${GROUND_Y - 1}`].unitStatus).toBe(1);
 	});
 
@@ -2309,19 +2304,20 @@ describe("Phase 4 runtime entities", () => {
 		expect(carrier.primaryRouteStatusByFloor[requestSlot]).toBeGreaterThan(0);
 	});
 
-	it("queues newly sold condos from the lobby to their condo floor", () => {
+	it("sells a condo only after a commercial trip is reserved", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		setupOccupiedFloor(world, ledger);
 
+		handle_place_tile(24, GROUND_Y - 1, "restaurant", world, ledger);
 		handle_place_tile(0, GROUND_Y - 1, "condo", world, ledger);
-		placeElevatorShaft(world, ledger, 0, 10, 15);
 		rebuild_runtime_entities(world);
 
 		const entity = world.entities.find(
 			(candidate) => candidate.familyCode === 9,
 		);
 		if (!entity) throw new Error("expected condo entity");
+		const cashBefore = ledger.cashBalance;
 
 		const activeTime = {
 			...createTimeState(),
@@ -2331,16 +2327,9 @@ describe("Phase 4 runtime entities", () => {
 			starCount: 4,
 		};
 		advance_entity_refresh_stride(world, ledger, activeTime);
-		expect(entity.stateCode).toBe(0x22);
-		expect(entity.selectedFloor).toBe(10);
-		expect(entity.destinationFloor).toBe(entity.floorAnchor);
-
-		populate_carrier_requests(world, activeTime);
-		const carrier = world.carriers[0];
-		if (!carrier) throw new Error("expected carrier");
-		const requestSlot = floor_to_slot(carrier, 10);
-		expect(requestSlot).toBeGreaterThanOrEqual(0);
-		expect(carrier.primaryRouteStatusByFloor[requestSlot]).toBeGreaterThan(0);
+		expect(ledger.cashBalance).toBeGreaterThan(cashBefore);
+		expect(world.placedObjects[`0,${GROUND_Y - 1}`].unitStatus).toBe(0x08);
+		expect(entity.stateCode).toBe(0x62);
 	});
 
 	it("dispatches segment routes without waiting for the next entity stride", () => {
@@ -2487,7 +2476,7 @@ describe("Phase 4 runtime entities", () => {
 		]);
 	});
 
-	it("advances bomb search automatically when security exists", () => {
+	it("advances bomb search automatically when emergency coverage exists", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		const floor = 25;
@@ -2505,7 +2494,7 @@ describe("Phase 4 runtime entities", () => {
 			activationTickCount: 0,
 			rentLevel: 1,
 		};
-		world.gateFlags.securityLedgerScale = 1;
+		world.gateFlags.recyclingCenterCount = 1;
 		world.eventState.gameStateFlags = 1;
 		world.eventState.bombFloor = floor;
 		world.eventState.bombTile = 10;

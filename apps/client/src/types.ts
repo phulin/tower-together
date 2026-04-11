@@ -45,8 +45,8 @@ export type TileType =
 	| "cinema"
 	| "entertainment"
 	// Services
-	| "security"
-	| "housekeeping"
+	| "recyclingCenterUpper"
+	| "recyclingCenterLower"
 	| "parking"
 	| "metro"
 	| "fireSuppressor";

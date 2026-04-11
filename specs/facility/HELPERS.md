@@ -6,10 +6,7 @@ This document covers helper-style families and hotel guest behavior.
 
 This family is a helper that targets hotel rooms rather than behaving like a hotel occupant.
 
-Binary clarification:
-
-- raw placed-object family/type `0x0f` (Housekeeping) initializes its runtime entities through `initialize_runtime_entities_for_type_0f` -> `initialize_runtime_entities_for_object_span`, so the room-claim helper is object-span-backed rather than allocated from the shared 10-slot event-response pool
-- the separate shared 10-slot helper pool belongs to bomb/fire service-response handling and also uses family code `0x0f` at runtime
+The housekeeping helper spawns entities tied to the placed housekeeping object, not from the shared emergency-response pool (which handles bomb/fire events separately).
 
 These are related runtime handlers, but they are not the same allocation path.
 
@@ -27,47 +24,47 @@ Key properties:
 - writes directly into the selected room object
 - is a separate helper flow, not the hotel-room family itself
 
-Recovered state machine:
+State machine:
 
 - state `0`: initial search
-  - records the current floor into `entity[+7]` on first entry
+  - records the current floor into `spawn_floor` on first entry
   - calls the vacant-room search helper
-  - writes `0x58` to `entity[+6]` as a searching sentinel
-- states `1` and `4`: route toward the candidate floor stored in `entity[+7]`
+  - writes a searching sentinel to `target_room_floor`
+- states `1` and `4`: route toward the candidate floor stored in `spawn_floor`
   - queued or en-route results move to `4`
   - same-floor arrival or no-route failure resets to `0`
-- state `3`: route toward the selected room floor stored in `entity[+6]`
+- state `3`: route toward the selected room floor stored in `target_room_floor`
   - queued or en-route results stay in `3`
-  - same-floor arrival while `g_day_tick < 0x05dc` activates the selected vacant unit, moves to `2`, and writes a 3-tick pending countdown
+  - same-floor arrival while `day_tick < 1500` activates the selected vacant unit, moves to `2`, and writes a 3-tick pending countdown
   - same-floor arrival outside the window, or no-route failure, resets to `0`
 - state `2`: pending countdown
-  - decrements `entity[+0xa]` from `3` down to `0`
+  - decrements `post_claim_countdown` from `3` down to `0`
   - once the counter reaches `0`, flags the selected unit unavailable again and resets to `0`
 
-Recovered entity-field meanings:
+Entity-field meanings:
 
-- `entity[+6]`: target room floor, with `0x58` used as the searching sentinel
-- `entity[+7]`: spawn / candidate floor, initialized from the current floor on first use
-- `entity[+0xa]`: 3-tick post-claim countdown
-- `entity[+0xc]`: encoded target floor `(0 - floor) * 0x400`
+- `target_room_floor`: target room floor, with a searching sentinel used during the search phase
+- `spawn_floor`: spawn / candidate floor, initialized from the current floor on first use
+- `post_claim_countdown`: 3-tick post-claim countdown
+- `encoded_target_floor`: encoded target floor `(0 - floor) * 0x400`
 
 Claim-completion writes:
 
 - stores the guest entity reference into the room's service-request sidecar
-- writes the encoded target floor into `entity[+0xc]`
+- writes the encoded target floor into `encoded_target_floor`
 - sets the room's `unit_status` to a randomized value in `2..14`
 - sets the room occupancy flag so later room logic treats it as taken
 
 Additional recovered constraints:
 
 - the vacant-room search is limited to rentable units whose floor satisfies `floor % 6 == claimant_floor_class`; this is a modulo remainder class, not `floor / 6`
-- the helper seeds its upward-first search from the recorded spawn floor in `entity[+7]`, but the modulo filter itself is a `% 6` equality check
-- successful claim promotion only occurs while the clock is still before tick `0x05dc`; there is no separate lower bound beyond normal state dispatch reaching the same-floor arrival path
+- the helper seeds its upward-first search from the recorded spawn floor in `spawn_floor`, but the modulo filter itself is a `% 6` equality check
+- successful claim promotion only occurs while the clock is still before tick 1500; there is no separate lower bound beyond normal state dispatch reaching the same-floor arrival path
 - the search starts at the claimant's recorded spawn floor, scans upward first to the top of the tower, then scans downward from the floor just below the spawn floor
 - only families `3`, `4`, and `5` are eligible
 - a slot qualifies only when the room `unit_status` is `0x28` or `0x30`
 - within each eligible floor, room slots are scanned in ascending subtype/slot order and the first qualifying slot wins
-- the chosen slot's subtype byte is stored into runtime offset `+0xc`, and the selected floor is returned in `entity[+6]`
+- the chosen slot's subtype byte is stored into `encoded_target_floor`, and the selected floor is returned in `target_room_floor`
 - if no candidate is found in either direction, the finder returns `-1`
 
 Failure/reset detail:
@@ -88,13 +85,13 @@ Loop:
 6. repeat during active dayparts
 7. park at night
 
-Recovered gate / dispatch behavior:
+Gate / dispatch behavior:
 
-- state `0x01` dispatches only in dayparts `0..3`, after `day_tick > 0x0f1`, on a `1/36` random chance
+- state `0x01` dispatches only in dayparts `0..3`, after `day_tick > 241`, on a `1/36` random chance
 - state `0x41` is the in-transit alias while routing to the selected venue
-- state `0x22` waits until `release_commercial_venue_slot` reports that the minimum stay has elapsed
+- state `0x22` waits until the commercial venue slot release reports that the minimum stay has elapsed
 - state `0x62` is the in-transit alias for the return leg
-- state `0x27` parks for the night and resets to `0x01` once `day_tick >= 0x08fd`
+- state `0x27` parks for the night and resets to `0x01` once `day_tick >= 2301`
 
 Venue selection algorithm:
 
@@ -118,12 +115,12 @@ Routing / venue semantics:
 
 Return behavior:
 
-- leaving the venue uses `entity[+7]` as the saved venue floor and the hotel floor as the destination
+- leaving the venue uses `spawn_floor` as the saved venue floor and the hotel floor as the destination
 - queued or en-route results move to `0x62`
 - same-floor arrival resets to `0x01` and starts the next daytime cycle
 - no-route failure parks the guest in `0x27`
 
 Minimum venue stay:
 
-- `release_commercial_venue_slot` compares `g_day_tick - entity[+0x0a]` against `get_commercial_venue_service_duration_ticks(facility_type_code)`
-- restaurant (`6`), fast food (`0x0c`), and retail (`10`) all use the same recovered minimum dwell: `60` ticks
+- the commercial venue slot release compares `day_tick - visit_start_tick` against the venue service duration for the facility type
+- restaurant (`6`), fast food (`12`), and retail (`10`) all use the same recovered minimum dwell: `60` ticks

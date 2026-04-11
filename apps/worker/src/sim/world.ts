@@ -213,7 +213,7 @@ export interface PlacedObjectRecord {
 
 /**
  * Global simulation gate flags. These drive the per-star qualitative
- * advancement conditions and security state.
+ * advancement conditions and recycling-center adequacy state.
  */
 export interface GateFlags {
 	/** Purpose unresolved; initialized to all-ones. */
@@ -224,16 +224,16 @@ export interface GateFlags {
 	officePlaced: number;
 	/** Updated by office-service evaluation every 9th day. */
 	officeServiceOk: number;
-	/** Set by update_security_housekeeping_state. */
-	securityAdequate: number;
+	/** Set by update_recycling_center_state. */
+	recyclingAdequate: number;
 	/** Set by the facility rebuild pipeline once enough routes exist. */
 	routesViable: number;
 	/** Floor index of placed VIP suite; 0xffff = none. */
 	vipSuiteFloor: number;
 	/** Runtime index of evaluation entity; 0xffff = none. */
 	evalEntityIndex: number;
-	/** Incremented each time a security guard is placed. */
-	securityLedgerScale: number;
+	/** Number of placed recycling-center upper slices. */
+	recyclingCenterCount: number;
 	/** Set every 8 days while the tower is below 5-star rank. */
 	facilityProgressOverride: number;
 	/** Daily hotel sale counter, reset at the morning sale checkpoint. */
@@ -248,11 +248,11 @@ export function createGateFlags(): GateFlags {
 		metroPlaced: 0,
 		officePlaced: 0,
 		officeServiceOk: 0,
-		securityAdequate: 0,
+		recyclingAdequate: 0,
 		routesViable: 0,
 		vipSuiteFloor: 0xffff, // −1: no VIP suite
 		evalEntityIndex: 0xffff, // −1: no evaluation in progress
-		securityLedgerScale: 0,
+		recyclingCenterCount: 0,
 		facilityProgressOverride: 0,
 		family345SaleCount: 0,
 		newspaperTrigger: 0,
@@ -334,7 +334,7 @@ export interface EventState {
 	fireLeftPos: number[];
 	/** Per-floor right-spreading fire front position (120 entries, 0xffff = inactive). */
 	fireRightPos: number[];
-	/** Rescue countdown (with security); 0 = no countdown active. */
+	/** Rescue countdown (with emergency coverage); 0 = no countdown active. */
 	rescueCountdown: number;
 	/** Helicopter extinguish position; 0 = not active. */
 	helicopterExtinguishPos: number;
@@ -379,7 +379,7 @@ export interface WorldState {
 	name: string;
 	width: number;
 	height: number;
-	/** Global simulation gate flags (star advancement, security, etc.). */
+	/** Global simulation gate flags (star advancement, recycling adequacy, etc.). */
 	gateFlags: GateFlags;
 	/** "x,y" → tileType for every occupied cell (anchors and extensions alike). */
 	cells: Record<string, string>;

@@ -6,7 +6,7 @@ React + Phaser frontend source.
 
 - **main.tsx** — ReactDOM entry point; mounts `<App />` into `#root`.
 - **App.tsx** — Top-level screen router and app-flow controller. Reads stored player identity, owns the singleton `TowerSocket` instance for the current browser tab, centralizes URL slug resolution plus enter/leave tower transitions, and decides whether to show GuestScreen, LobbyScreen, or GameScreen.
-- **types.ts** — Client-side wire types plus re-exported simulation constants (`GRID_*`, `UNDERGROUND_*`, `TILE_WIDTHS`, `TILE_COSTS`) sourced from the worker sim modules so placement UI uses the same facility widths and costs as the server. VIP room variants are no longer player-facing tool types.
+- **types.ts** — Client-side wire types plus re-exported simulation constants (`GRID_*`, `UNDERGROUND_*`, `TILE_WIDTHS`, `TILE_COSTS`) sourced from the worker sim modules so placement UI uses the same facility widths and costs as the server. VIP room variants are no longer player-facing tool types, and the service-stack tool IDs now expose the paired recycling-center slices instead of the older security/housekeeping names.
 
 ## Subpackages
 

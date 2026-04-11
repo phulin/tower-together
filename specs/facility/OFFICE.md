@@ -62,8 +62,8 @@ Exact open/closed bands:
 Activation cadence:
 
 - `recompute_object_operational_status` runs every day
-- office activation and deactivation cashflow changes only run on the `g_day_counter % 3 == 0` cadence at the `0x09e5` sweep. Because `0x09e5` runs after the `0x08fc` day-counter increment, a fresh game first hits this cadence at `g_day_counter == 3`, not day 0.
-- activation increments `activation_tick_count` (record `+0x17`) up to a cap of `120` (0x78). This is cumulative, not per-day — it saturates at 120 and resets to 0 only on deactivation. It feeds into readiness scoring but is not consumed by any discrete trigger.
+- office activation and deactivation cashflow changes only run on the `day_counter % 3 == 0` cadence at the daily sweep. Because the sweep runs after the day-counter increment, a fresh game first hits this cadence at `day_counter == 3`, not day 0.
+- activation increments `activation_tick_count` up to a cap of 120. This is cumulative, not per-day — it saturates at 120 and resets to 0 only on deactivation. It feeds into readiness scoring but is not consumed by any discrete trigger.
 - fresh reopen after a close resets `unit_status` to `0`, adds `+6` to the population ledger, and refreshes the 6-tile span
 
 Deactivation trigger:
@@ -85,16 +85,16 @@ Workers alternate between:
 - dwelling at the venue
 - routing back
 
-Workers are staggered by `base_offset`, which is the worker's 1-based slot index within the 6-tile office span (values `1..6`). Assigned by `reinitialize_entity_slot_family_fields` from the slot index at entity initialization.
+Workers are staggered by `occupant_index`, which is the worker's zero-based slot index within the 6-worker office runtime group (values `0..5`).
 
-Recovered worker-cycle timing:
+Worker-cycle timing:
 
 - idle state dispatches probabilistically in early dayparts, then more aggressively through the workday
 - support-trip states stop dispatching once late-day cutoff handling begins
 - venue dwell uses a fixed 16-tick hold before the return leg can start
 - workers use the shared route queue / commercial-slot pipeline, with `0x4x` as in-transit aliases and `0x6x` as at-work aliases
 
-Recovered gate table:
+Gate table:
 
 - `0x00`: dayparts `1..3` dispatch; daypart `0` dispatches on a `1/12` chance; daypart `>= 4` gives up and switches to `0x05`
 - `0x01` and `0x02`: dayparts `2..3` dispatch; daypart `1` dispatches on a `1/12` chance; daypart `0` waits; daypart `>= 4` switches to `0x05`
@@ -104,7 +104,7 @@ Recovered gate table:
 - `0x22` and `0x23`: dayparts `2..3` dispatch; daypart `>= 4` forces `0x27` and releases the service request
 - `0x25`, `0x26`, and `0x27`: remain parked until `day_tick > 2300`, then return to `0x20`
 
-Recovered dispatch table:
+Dispatch table:
 
 - `0x00` / `0x40`: route from lobby floor `0` to the assigned office floor; queued or en-route results stay in `0x40`, same-floor arrival becomes `0x21`, and failure becomes `0x26`
 - `0x01` / `0x41`: route from office to a commercial venue; failure returns to `0x26` and releases the service request
@@ -113,15 +113,6 @@ Recovered dispatch table:
 - `0x20` / `0x60`: assign a service request destination on first entry, then route to the assigned floor; queued or en-route results continue through `0x40`, same-floor arrival becomes `0x21`
 - `0x21` / `0x61`: route either to lobby or the saved floor, then advance the worker trip counter on same-floor arrival
 - `0x22` / `0x62`: release the commercial slot, route home, and advance the trip counter on same-floor arrival
-- `0x23` / `0x63`: enforce the 16-tick dwell, then route to the saved target; on same-floor arrival the next state is `0x00` for `base_offset == 1`, otherwise `0x05`
+- `0x23` / `0x63`: enforce the 16-tick dwell, then route to the saved target; on same-floor arrival the next state is `0x00` for `occupant_index == 1`, otherwise `0x05`
 
 The office workers use the same shared service-request entry mechanism as hotel guests.
-
-## Binary Notes
-
-Recovered evidence used for this spec section:
-
-- `recompute_object_operational_status` (`0x11380704`) writes `pairing_state` from the computed operational score using the shared thresholds: `< threshold_1 -> 2`, `< threshold_2 -> 1`, otherwise `0`
-- `attempt_pairing_with_floor_neighbor` (`0x11380f79`) shows the same-floor same-family scan for a neighbor with `pairing_state == 2`, then promotes both slots to `1` and sets `pairing_active_flag`
-- `deactivate_family_cashflow_if_unpaired` (`0x11380a00`) shows that office deactivation happens only on the `pairing_state == 0` path, after which the same-floor pairing scan may immediately relink the office
-- `activate_family_cashflow_if_operational` (`0x11380bad`) shows the shared activation gate for families `7`, `9`, and `10`; office worker routing does not branch on `pairing_state`

@@ -15,7 +15,7 @@ Terminology used in this spec:
 - **carrier** = the shaft/header-level record: mode, served-floor span, schedule tables, queue tables, transfer reachability, and up to 8 moving units
 - **car** = one moving cab inside a carrier
 
-The binary uses data from both levels during dispatch, so older notes sometimes used
+The simulation uses data from both levels during dispatch, so older notes sometimes used
 "carrier" and "car" interchangeably. This spec does not: queueing and reachability are
 carrier-level; motion, doors, dwell, and assignments are car-level.
 
@@ -33,25 +33,23 @@ A carrier needs:
 
 ### Schedule Tables
 
-Each carrier has two 14-byte schedule arrays in the carrier header:
+Each carrier has two 14-entry schedule arrays in the carrier header:
 
-| Offset | Name | Meaning |
-|--------|------|---------|
-| `+0x20` | `schedule_mode_table[14]` | per-slot operational mode / dwell multiplier (reloaded into car's `schedule_flag` at terminal floors) |
-| `+0x2e` | `enable_table[14]` | per-slot enable flag (0 = disabled, nonzero = enabled) |
+| Field | Meaning |
+|-------|---------|
+| `schedule_mode_table[14]` | per-slot operational mode / dwell multiplier (reloaded into car's `schedule_flag` at terminal floors) |
+| `enable_table[14]` | per-slot enable flag (0 = disabled, nonzero = enabled) |
 
 The current schedule slot index is computed as:
 
 ```
-schedule_index = g_daypart_index + g_calendar_phase_flag * 7
+schedule_index = daypart_index + calendar_phase_flag * 7
 ```
 
-This produces 14 values: 7 dayparts × 2 calendar phases. `g_daypart_index` ranges 0–6,
-`g_calendar_phase_flag` is 0 or 1.
+This produces 14 values: 7 dayparts × 2 calendar phases. `daypart_index` ranges 0–6,
+`calendar_phase_flag` is 0 or 1.
 
-The same index is also used to read the idle-home vs moving-car comparison threshold
-from carrier header byte `+0x12` (via `served_floor_flags[schedule_index - 0x30]` in
-the decompilation, which resolves to the same carrier-header region).
+The same index is also used to read the idle-home vs moving-car comparison threshold from the carrier's `dispatch_threshold` field.
 
 ### Schedule Modes
 
@@ -65,8 +63,6 @@ The `schedule_mode_table` value controls both the car's operational mode (in
 | nonzero | 2 | Express down | 60 ticks | Scans upward for assignments; fallback target = `bottom_served_floor` |
 | nonzero | other | Normal | `value * 30` ticks | Bidirectional sweep: scan current direction, wrap at endpoints |
 
-Binary-verified from `select_next_target_floor` at `1098:1553`:
-
 - **Express up** (`schedule_flag == 1`): car prioritizes ascending. When it has no
   assignments in the downward scan, it returns to `top_served_floor`. This is the
   morning rush mode — shuttles passengers from lobby to upper floors.
@@ -79,9 +75,9 @@ Binary-verified from `select_next_target_floor` at `1098:1553`:
 
 Assignment capacities:
 
-- Express Elevator: `0x2a` logical assignment slots
-- Standard Elevator: `0x15` logical assignment slots
-- Service Elevator: `0x15` logical assignment slots
+- Express Elevator: 42 logical assignment slots
+- Standard Elevator: 21 logical assignment slots
+- Service Elevator: 21 logical assignment slots
 
 ## Car Record
 
@@ -115,7 +111,7 @@ For each active car:
    - increment the per-destination request counter
 7. if transfer-floor resolution fails, apply the requeue-failure delay and force the actor back to its family dispatch path
 
-Recovered transfer-floor chooser:
+Transfer-floor chooser:
 
 - if the carrier serves the actor's target floor directly, use that floor
 - otherwise read `reachability_masks_by_floor[target_floor]`
@@ -123,14 +119,14 @@ Recovered transfer-floor chooser:
 - accept the first live entry whose tagged floor is not the current floor, whose carrier mask overlaps the target-floor reachability mask, and whose tagged floor lies in the requested travel direction
 - if none match, fail the assignment
 
-Queue records are literal ring buffers:
+Queue records are ring buffers:
 
-- upward queue: count at `+0x00`, head at `+0x01`, 40 request refs at `+0x04..+0x0a3`
-- downward queue: count at `+0x02`, head at `+0x03`, 40 request refs at `+0x0a4..+0x143`
-- enqueue writes at `(head + count) % 40`
-- dequeue reads `head`, then advances `head = (head + 1) % 40` and decrements count
+- Each floor has an upward queue and a downward queue.
+- Each queue has a count, a head index, and 40 request-reference slots.
+- Enqueue writes at (head + count) % 40.
+- Dequeue reads head, then advances head = (head + 1) % 40 and decrements count.
 
-Per-car active-route storage has 42 physical slots, but standard and service cars only consume the first 21 because `assignment_capacity = 0x15`.
+Per-car active-route storage has 42 physical slots, but standard and service cars only consume the first 21 because `assignment_capacity = 21`.
 
 Active-slot behavior:
 
@@ -163,13 +159,13 @@ Behavior:
 - if in transit, the motion timer counts down and the car reevaluates its target when the timer expires
 - if idle, the car either begins a departure sequence at the current floor or moves one step toward its next target
 
-Recovered idle-floor behavior:
+Idle-floor behavior:
 
 - at target floor, if passengers are waiting there or the car is still below assignment capacity:
   - reload `schedule_flag` at terminal floors from the 14-entry dwell table
   - clear stale floor-request assignments for the current floor
   - set `speed_counter = 5`
-  - if `departure_flag == 0`, stamp `departure_timestamp = g_day_tick`
+  - if `departure_flag == 0`, stamp `departure_timestamp = day_tick`
   - set `departure_flag = 1`
 - otherwise:
   - clear stale assignments for the current floor
@@ -215,9 +211,9 @@ Otherwise it can continue waiting at the floor for more passengers.
 
 At top and bottom served floors, the current dwell/schedule flag is reloaded from the carrier's 14-entry daypart/calendar schedule table.
 
-Recovered dwell-threshold rule:
+Dwell-threshold rule:
 
-- depart when `abs(g_day_tick - departure_timestamp) > schedule_flag * 30`
+- depart when `abs(day_tick - departure_timestamp) > schedule_flag * 30`
 - `departure_timestamp` is set when `departure_flag` transitions from 0 to 1 (first boarding event at a floor)
 - `departure_flag` is cleared when the car begins moving away from the floor
 - a car that arrives at a floor with no waiting passengers and no pending assignments does not set `departure_flag` — it either moves toward its next target or idles
@@ -231,13 +227,13 @@ When a floor request is raised:
 - prefer an immediately available car at the floor when possible
 - otherwise compare moving-car cost against idle-home-car cost
 
-Recovered candidate classes:
+Candidate classes:
 
 - idle-home candidate: active, no pending assignments, no active destination load, doors closed, current floor at home floor
 - same-direction forward candidate: already moving in the requested direction and the request lies ahead
 - reversal / wrap candidate: fallback that would need retargeting behind the current sweep
 
-Recovered cost formulas:
+Cost formulas:
 
 - idle-home cost: `abs(request_floor - current_floor)`
 - same-direction forward cost:
@@ -250,10 +246,10 @@ Recovered cost formulas:
   - if the request lies before the next turn floor in the requested direction, use direct distance from current floor to request floor
   - otherwise use distance to the next turn floor plus distance back from that turn floor to the request floor
 
-Recovered tie-break rules:
+Tie-break rules:
 
 - immediate early-accept: if a car is already at the requested floor with doors closed and either its schedule byte is nonzero or its direction already matches the request, select it immediately
-- otherwise compare the best moving-car cost against the best idle-home cost using carrier-header byte `+0x12` as a threshold
+- otherwise compare the best moving-car cost against the best idle-home cost using the carrier's `dispatch_threshold` as a threshold
 - if `moving_cost - idle_home_cost < threshold`, choose the moving candidate
 - if `moving_cost - idle_home_cost >= threshold`, choose the idle-home candidate
 - exact equality breaks toward the idle-home candidate
@@ -265,32 +261,20 @@ Observed selector ordering:
 - if a forward candidate exists, it is compared against the idle-home candidate first
 - otherwise the best wrap/reversal candidate is compared against the idle-home candidate
 
-Residual note:
+Edge case note:
 
-- the raw selector tail has a degenerate fallback: if no forward or wrap/reversal moving candidate class is populated, it writes car index `0` instead of the tracked best idle-home candidate
-- this looks like a genuine binary quirk, not a decompiler inference artifact, because the final instruction path writes the literal `0`
-- a faithful reimplementation should preserve that behavior unless direct parity testing proves a control-flow reconstruction mistake
+- If no forward or wrap/reversal moving candidate is available, the selector falls back to car index 0 rather than the best idle-home candidate. This appears intentional and should be preserved for parity.
 
 ## Home Floor
 
-The per-car byte at `car[-0x51]` is **not** the home floor. It is the
-`nearest_work_floor` / next-turn marker written by `find_nearest_work_floor`.
+Each car has a per-car home floor value (`home_floor_by_car[car_index]`).
 
-The actual home-floor value used by `select_next_target_floor` and
-`should_car_depart` comes from the carrier header tail slot:
+- First car in a shaft: home floor = the floor where the player started the shaft.
+- Later cars: home floor = the floor the player clicked when placing that car.
 
-```
-carrier->reachability_masks_by_floor[car_index - 8]   // semantic alias: home_floor_by_car[car_index]
-```
+When a car has no pending assignments and no special flag, it returns to its home floor.
 
-This slot is per-car (not a shared per-carrier floor). The runtime read path is
-recovered. Parity note for initialization:
-
-- first car in a shaft: home floor = the floor where the player started the shaft
-- later cars in that shaft: home floor = the floor the player clicked when placing that
-  car
-
-Target-floor selection (`select_next_target_floor` at `1098:1553`):
+Target-floor selection:
 
 - if a car has no pending assignments (`pending_assignment_count == 0`) and no special
   flag, it returns to its home floor
@@ -313,35 +297,26 @@ Target-floor selection (`select_next_target_floor` at `1098:1553`):
   from the opposite endpoint back toward the current floor
 - if still nothing found, returns -1 (no target)
 
-`find_nearest_work_floor` uses that same `home_floor_by_car[car_index]` slot as its
-final fallback when no pending work exists in the current travel direction, and stores
-that result into `car[-0x51]`.
+The nearest-work-floor helper uses the same home_floor_by_car slot as its final fallback when no pending work exists in the current travel direction.
 
 ## Door And Boarding Counters
 
-The elevator tick loop uses two separate countdown bytes:
+Each car has two countdown fields:
 
-- `car[-0x5d]`: `door_wait_counter`
-- `car[-0x5c]`: boarding / departure-sequence countdown (`speed_counter` in older notes)
+- `door_wait_counter`: counts down while doors are open
+- `boarding_countdown`: tracks the boarding/departure sequence
 
-Recovered behavior:
+Behavior:
 
-- `advance_car_position_one_step` seeds `door_wait_counter = 5` for a full stop
-  (`compute_car_motion_mode == 0`) and `door_wait_counter = 2` for a slow stop
-  (`compute_car_motion_mode == 1`)
-- while `door_wait_counter > 0`, `advance_carrier_car_state` re-runs
-  `compute_car_motion_mode`
-- if the motion mode is still `0`, it decrements `door_wait_counter`
-- if the motion mode becomes nonzero, it clears `door_wait_counter` immediately
-- when an idle car starts boarding at its current target floor, the code sets the
-  boarding marker `car[-0x5c] = 5`
-- `dispatch_carrier_car_arrivals` keys off **exactly** `car[-0x5c] == 5` before running
-  unload/arrival effects
-- after that, `advance_carrier_car_state` decrements `car[-0x5c]` once per tick
-- when `car[-0x5c]` reaches `0`, the car snapshots `prev_floor`, recomputes target and
-  direction, and runs `should_car_depart`
-- if `should_car_depart` says "not yet", the code reloads `car[-0x5c] = 1`, which
-  creates a one-tick retry loop instead of immediate departure
+- A full stop (motion mode 0) sets door_wait_counter = 5; a slow stop (motion mode 1) sets it to 2.
+- While door_wait_counter > 0, the car re-evaluates its motion mode each tick.
+- If motion mode remains 0, door_wait_counter decrements.
+- If motion mode becomes nonzero, door_wait_counter clears immediately.
+- When a car starts boarding at its target floor, boarding_countdown is set to 5.
+- Arrival/unload effects fire exactly when boarding_countdown == 5.
+- After that, boarding_countdown decrements once per tick.
+- When boarding_countdown reaches 0, the car snapshots prev_floor, recomputes target and direction, and checks departure conditions.
+- If departure conditions are not met, boarding_countdown reloads to 1, creating a one-tick retry loop.
 
 ## Queue-Full Retry Behavior
 

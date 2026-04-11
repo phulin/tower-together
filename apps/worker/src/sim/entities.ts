@@ -3,7 +3,11 @@ import {
 	checkEvalCompletionAndAward,
 	processCathedralEntity,
 } from "./cathedral";
-import { add_cashflow_from_family_resource, type LedgerState } from "./ledger";
+import {
+	add_cashflow_from_family_resource,
+	type LedgerState,
+	remove_cashflow_from_family_resource,
+} from "./ledger";
 import {
 	FAMILY_CINEMA,
 	FAMILY_CONDO,
@@ -12,14 +16,13 @@ import {
 	FAMILY_HOTEL_SINGLE,
 	FAMILY_HOTEL_SUITE,
 	FAMILY_HOTEL_TWIN,
-	FAMILY_HOUSEKEEPING,
 	FAMILY_OFFICE,
 	FAMILY_PARKING,
+	FAMILY_RECYCLING_CENTER_LOWER,
+	FAMILY_RECYCLING_CENTER_UPPER,
 	FAMILY_RESTAURANT,
 	FAMILY_RETAIL,
-	FAMILY_SECURITY,
 	OP_SCORE_THRESHOLDS,
-	YEN_1001,
 } from "./resources";
 import { type RouteCandidate, select_best_route_candidate } from "./routing";
 import type { TimeState } from "./time";
@@ -63,6 +66,7 @@ export const STATE_EVAL_OUTBOUND = 0x60; // cathedral eval outbound transit
 const UNIT_STATUS_OFFICE_OCCUPIED = 0x0f;
 const UNIT_STATUS_CONDO_OCCUPIED = 0x17;
 const UNIT_STATUS_CONDO_VACANT = 0x18;
+const UNIT_STATUS_CONDO_VACANT_EVENING = 0x20;
 const UNIT_STATUS_HOTEL_CHECKOUT = 0x28;
 const UNIT_STATUS_HOTEL_SOLD_OUT = 0x37;
 
@@ -862,34 +866,6 @@ function processCondoEntity(
 	const object = findObjectForEntity(world, entity);
 	if (!object) return;
 
-	if (object.unitStatus >= UNIT_STATUS_CONDO_VACANT) {
-		if (hasViableRouteBetweenFloors(world, LOBBY_FLOOR, entity.floorAnchor)) {
-			object.unitStatus = time.daypartIndex < 4 ? 0 : 8;
-			if (entity.baseOffset === 0) {
-				add_cashflow_from_family_resource(
-					ledger,
-					"condo",
-					object.rentLevel,
-					object.objectTypeCode,
-				);
-			}
-			for (const sibling of findSiblingEntities(world, entity)) {
-				if (sibling.floorAnchor === LOBBY_FLOOR) {
-					sibling.stateCode = STATE_ACTIVE;
-					continue;
-				}
-				sibling.destinationFloor = sibling.floorAnchor;
-				sibling.selectedFloor = LOBBY_FLOOR;
-				sibling.stateCode = STATE_VENUE_TRIP;
-			}
-			object.needsRefreshFlag = 1;
-			lowerStress(entity, 10);
-		} else {
-			raiseStress(entity, 24);
-		}
-		return;
-	}
-
 	if (entity.stateCode === STATE_PARKED) entity.stateCode = STATE_ACTIVE;
 	if (finishCommercialVenueDwell(entity, time, STATE_ACTIVE)) return;
 	if (entity.stateCode === STATE_ACTIVE) {
@@ -901,6 +877,18 @@ function processCondoEntity(
 			returnState: STATE_ACTIVE,
 			successStressDelta: 10,
 			failureStressDelta: 7,
+			onVenueReserved: () => {
+				if (object.unitStatus < UNIT_STATUS_CONDO_VACANT) return;
+				object.unitStatus = time.daypartIndex < 4 ? 0x08 : 0x00;
+				object.needsRefreshFlag = 1;
+				if (entity.baseOffset !== 0) return;
+				add_cashflow_from_family_resource(
+					ledger,
+					"condo",
+					object.rentLevel,
+					object.objectTypeCode,
+				);
+			},
 		});
 	} else if (entity.stateCode === STATE_VENUE_TRIP) {
 		finishCommercialVenueTrip(entity, STATE_ACTIVE);
@@ -1550,10 +1538,10 @@ export function closeCommercialVenues(world: WorldState): void {
 	}
 }
 
-export function resetHousekeepingDutyTier(world: WorldState): void {
+export function resetRecyclingCenterDutyTier(world: WorldState): void {
 	for (const object of Object.values(world.placedObjects)) {
 		if (
-			object.objectTypeCode === FAMILY_HOUSEKEEPING &&
+			object.objectTypeCode === FAMILY_RECYCLING_CENTER_LOWER &&
 			object.unitStatus === 6
 		) {
 			object.unitStatus = 0;
@@ -1562,24 +1550,24 @@ export function resetHousekeepingDutyTier(world: WorldState): void {
 	}
 }
 
-export function update_security_housekeeping_state(
+export function update_recycling_center_state(
 	world: WorldState,
 	ledger: LedgerState,
 	time: TimeState,
 	param: number,
 ): void {
 	if (time.starCount <= 2) {
-		world.gateFlags.securityAdequate = 0;
+		world.gateFlags.recyclingAdequate = 0;
 		return;
 	}
 
 	if (param === 0) {
-		world.gateFlags.securityAdequate = 0;
-		if (world.gateFlags.securityLedgerScale === 0) return;
+		world.gateFlags.recyclingAdequate = 0;
+		if (world.gateFlags.recyclingCenterCount === 0) return;
 		for (const object of Object.values(world.placedObjects)) {
 			if (
-				object.objectTypeCode === FAMILY_SECURITY ||
-				object.objectTypeCode === FAMILY_HOUSEKEEPING
+				object.objectTypeCode === FAMILY_RECYCLING_CENTER_UPPER ||
+				object.objectTypeCode === FAMILY_RECYCLING_CENTER_LOWER
 			) {
 				if (object.unitStatus === 5) continue;
 				object.unitStatus = 0;
@@ -1589,9 +1577,9 @@ export function update_security_housekeeping_state(
 		return;
 	}
 
-	const scale = Math.max(0, world.gateFlags.securityLedgerScale);
+	const scale = Math.max(0, world.gateFlags.recyclingCenterCount);
 	if (scale === 0) {
-		world.gateFlags.securityAdequate = 0;
+		world.gateFlags.recyclingAdequate = 0;
 		return;
 	}
 
@@ -1615,11 +1603,11 @@ export function update_security_housekeeping_state(
 	const adequate = param >= requiredTier ? 1 : 0;
 	const dutyTier = adequate ? Math.min(requiredTier, param) : param;
 
-	world.gateFlags.securityAdequate = adequate;
+	world.gateFlags.recyclingAdequate = adequate;
 	for (const object of Object.values(world.placedObjects)) {
 		if (
-			object.objectTypeCode === FAMILY_SECURITY ||
-			object.objectTypeCode === FAMILY_HOUSEKEEPING
+			object.objectTypeCode === FAMILY_RECYCLING_CENTER_UPPER ||
+			object.objectTypeCode === FAMILY_RECYCLING_CENTER_LOWER
 		) {
 			if (!adequate && object.unitStatus === 5) continue;
 			object.unitStatus = dutyTier;
@@ -1652,20 +1640,33 @@ export function runOfficeServiceEvaluation(
 export function refund_unhappy_condos(
 	world: WorldState,
 	ledger: LedgerState,
+	time: TimeState,
 ): void {
 	for (const [key, object] of Object.entries(world.placedObjects)) {
 		if (object.objectTypeCode !== FAMILY_CONDO) continue;
 		if (object.evalLevel !== 0) continue;
 		if (object.unitStatus >= UNIT_STATUS_CONDO_VACANT) continue;
-		const tileName = "condo";
-		const payout = YEN_1001[tileName]?.[Math.min(object.rentLevel, 3)] ?? 0;
-		ledger.cashBalance = Math.max(0, ledger.cashBalance - payout * 1000);
-		object.unitStatus = UNIT_STATUS_CONDO_VACANT;
+		remove_cashflow_from_family_resource(
+			ledger,
+			"condo",
+			object.rentLevel,
+			object.objectTypeCode,
+		);
+		object.unitStatus =
+			time.daypartIndex < 4
+				? UNIT_STATUS_CONDO_VACANT
+				: UNIT_STATUS_CONDO_VACANT_EVENING;
+		object.evalActiveFlag = 0;
+		object.activationTickCount = 0;
 		object.needsRefreshFlag = 1;
 		const [x, y] = key.split(",").map(Number);
 		for (const entity of world.entities) {
 			if (entity.subtypeIndex === x && entity.floorAnchor === yToFloor(y)) {
 				entity.stateCode = STATE_PARKED;
+				entity.selectedFloor = entity.floorAnchor;
+				entity.destinationFloor = -1;
+				entity.venueReturnState = 0;
+				clear_entity_route(entity);
 			}
 		}
 	}

@@ -13,8 +13,8 @@ import {
 	refund_unhappy_condos,
 	reset_entity_runtime_state,
 	resetCommercialVenueCycle,
-	resetHousekeepingDutyTier,
-	update_security_housekeeping_state,
+	resetRecyclingCenterDutyTier,
+	update_recycling_center_state,
 } from "./entities";
 import { checkDailyEvents } from "./events";
 import {
@@ -40,8 +40,8 @@ function checkpoint_start_of_day(_s: SimState): void {
 	activateEvalEntities(_s.world, _s.time);
 }
 
-function checkpoint_housekeeping_reset(_s: SimState): void {
-	resetHousekeepingDutyTier(_s.world);
+function checkpoint_recycling_reset(_s: SimState): void {
+	resetRecyclingCenterDutyTier(_s.world);
 }
 
 function checkpoint_facility_ledger_rebuild(s: SimState): void {
@@ -73,7 +73,7 @@ function checkpoint_entertainment_phase1(_s: SimState): void {
 function checkpoint_midday(_s: SimState): void {
 	resetCommercialVenueCycle(_s.world);
 	advanceEntertainmentReversePhaseAndAccrue(_s.world, _s.ledger);
-	update_security_housekeeping_state(_s.world, _s.ledger, _s.time, 0);
+	update_recycling_center_state(_s.world, _s.ledger, _s.time, 0);
 }
 
 function checkpoint_afternoon_notification(_s: SimState): void {
@@ -81,7 +81,7 @@ function checkpoint_afternoon_notification(_s: SimState): void {
 }
 
 function checkpoint_noop(_s: SimState): void {
-	// Intentional no-op (previously mislabeled as security update in the spec)
+	// Intentional no-op (previously mislabeled in the spec)
 }
 
 function checkpoint_entertainment_phase2(_s: SimState): void {
@@ -89,7 +89,7 @@ function checkpoint_entertainment_phase2(_s: SimState): void {
 }
 
 function checkpoint_late_facility(_s: SimState): void {
-	update_security_housekeeping_state(_s.world, _s.ledger, _s.time, 2);
+	update_recycling_center_state(_s.world, _s.ledger, _s.time, 2);
 }
 
 function checkpoint_type6_advance(_s: SimState): void {
@@ -109,7 +109,9 @@ function checkpoint_runtime_refresh(_s: SimState): void {
 
 function checkpoint_ledger_rollover(s: SimState): void {
 	do_ledger_rollover(s.ledger, s.world, s.time.dayCounter, s.time.starCount);
-	refund_unhappy_condos(s.world, s.ledger);
+	if (s.time.dayCounter % 3 === 0) {
+		refund_unhappy_condos(s.world, s.ledger, s.time);
+	}
 }
 
 function checkpoint_end_of_day(_s: SimState): void {
@@ -117,15 +119,15 @@ function checkpoint_end_of_day(_s: SimState): void {
 	_s.world.pendingNotifications.push({ kind: "end_of_day" });
 }
 
-function checkpoint_security_final(_s: SimState): void {
-	update_security_housekeeping_state(_s.world, _s.ledger, _s.time, 5);
+function checkpoint_recycling_final(_s: SimState): void {
+	update_recycling_center_state(_s.world, _s.ledger, _s.time, 5);
 }
 
 // ─── Checkpoint table ─────────────────────────────────────────────────────────
 
 const CHECKPOINTS: Array<[number, (s: SimState) => void]> = [
 	[0x000, checkpoint_start_of_day],
-	[0x020, checkpoint_housekeeping_reset],
+	[0x020, checkpoint_recycling_reset],
 	[0x0f0, checkpoint_facility_ledger_rebuild],
 	[0x3e8, checkpoint_entertainment_half1],
 	[0x4b0, checkpoint_hotel_sale_reset],
@@ -141,7 +143,7 @@ const CHECKPOINTS: Array<[number, (s: SimState) => void]> = [
 	[0x9c4, checkpoint_runtime_refresh],
 	[0x9e5, checkpoint_ledger_rollover],
 	[0x9f6, checkpoint_end_of_day],
-	[0x0a06, checkpoint_security_final],
+	[0x0a06, checkpoint_recycling_final],
 ];
 
 // ─── Dispatcher ───────────────────────────────────────────────────────────────

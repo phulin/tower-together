@@ -43,7 +43,7 @@ Default placement tier is `1`.
 - routing to lobby
 - pre-night preparation
 
-Recovered runtime-state bands:
+Runtime-state bands:
 
 - `0x20` / `0x60`: route to room
 - `0x01` / `0x41`: rest in room, then route to commercial support
@@ -69,7 +69,7 @@ Newly assigned guests initialize the room trip counter to `rand() % 13 + 2`, giv
 
 ### Occupancy Flag
 
-The room's occupancy latch is record field `+0x14` (`pairing_pending_flag`). It is set to `1` by the family-0x0f claimant at successful claim promotion and cleared at checkout by the deactivation path.
+The room's occupancy latch is `pairing_pending_flag`. It is set to `1` by the housekeeping helper (family 0x0f) claimant at successful claim promotion and cleared at checkout by the deactivation path.
 
 If the room is in a vacant band (`unit_status > 0x17`) when routing begins:
 
@@ -94,7 +94,7 @@ Morning/evening behavior:
 - successful outbound trips decrement the counter
 - failures and bounces increment it
 - checkout does **not** fire directly from the initial `0x00` / `0x08` activation values
-- instead, the room first reaches the sibling-sync sentinel `0x10`; `dispatch_hotel_345_state_10_set_checkout_counter` then rewrites that sentinel to `1` for family `3` or `2` for families `4` and `5`
+- instead, the room first reaches the sibling-sync sentinel `0x10`; the checkout-counter dispatch then rewrites that sentinel to `1` for family `3` or `2` for families `4` and `5`
 - the checkout-route handler decrements from that rewritten countdown, so the final checkout trigger is reached from `1 -> 0` (single room) or `2 -> 1 -> 0` (twin/suite)
 - therefore the `unit_status & 7 == 0` test is consistent: it is checked only after the sync-sentinel rewrite has put the room into the explicit final countdown
 
@@ -102,7 +102,7 @@ Morning/evening behavior:
 
 Multi-occupant rooms do not check out independently. They synchronize before the final checkout phase so a single room object yields one coherent stay lifecycle.
 
-`sync_stay_phase_if_all_siblings_ready_345` fires `unit_status = 0x10` (sync sentinel) when:
+The sibling sync check fires `unit_status = 0x10` (sync sentinel) when:
 - `unit_status & 7 == 1` (one-round shortcut — no sibling scan needed), OR
 - all sibling entities are in entity state `0x10`
 
@@ -110,7 +110,7 @@ The one-round shortcut means: when the trip countdown reaches `1` in the low 3 b
 
 ### Sibling Reset Values
 
-When the sync sentinel `0x10` is consumed by `dispatch_hotel_345_state_10_set_checkout_counter`:
+When the sync sentinel `0x10` is consumed by the checkout-counter dispatch:
 - family `3` (single room): `unit_status = 1`
 - family `4` (twin room): `unit_status = 2`
 - family `5` (suite): `unit_status = 2`
@@ -129,9 +129,9 @@ Checkout-ready sync:
 Detailed dispatch windows:
 
 - room-rest state dispatches on a `1/6` cadence in daypart `4`, then always in later dayparts
-- sibling-sync wait dispatches only when `daypart > 4` and either `day_tick > 0x960` or the `12`-day reset condition is active
-- checkout-ready dispatches while `daypart < 5`, or after `day_tick > 0x0a06` on the `12`-day reset cadence
-- pre-night preparation only resolves after `day_tick > 0x08fc`
+- sibling-sync wait dispatches only when `daypart > 4` and either `day_tick > 2400` or the `12`-day reset condition is active
+- checkout-ready dispatches while `daypart < 5`, or after `day_tick > 2566` on the `12`-day reset cadence
+- pre-night preparation only resolves after `day_tick > 2300`
 
 Lobby routing window:
 
@@ -142,9 +142,9 @@ Lobby routing window:
 Checkout effects:
 
 - payout is realized exactly once by the room object, using the family payout table and `rent_level`
-- `collect_hotel_checkout_income` increments `g_family345_sale_count` once per completed checkout
-- that counter is cumulative only within the current day: checkpoint `0x04b0` resets it to `0`
-- checkout milestones set `g_newspaper_trigger = 1` on every 2nd checkout while `g_family345_sale_count < 20`, then on every 8th checkout thereafter
+- the checkout income handler increments `family345_sale_count` once per completed checkout
+- that counter is cumulative only within the current day: checkpoint 1200 resets it to `0`
+- checkout milestones set `newspaper_trigger = 1` on every 2nd checkout while `family345_sale_count < 20`, then on every 8th checkout thereafter
 - morning checkout moves the room to `0x28`
 - evening checkout moves the room to `0x30`
 - the occupancy latch and activation counter are cleared so the room can be reassigned on a later cycle

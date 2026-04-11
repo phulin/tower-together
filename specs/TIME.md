@@ -4,26 +4,26 @@
 
 Maintain:
 
-- `day_tick`: `0..0x0a27`
+- `day_tick`: 0..2599
 - `daypart_index = day_tick / 400`, giving `0..6`
 - `day_counter`: increments once per day
 - `calendar_phase_flag = ((day_counter % 12) % 3) >= 2`
 
-`pre_day_4()` means `daypart_index < 4`.
+`daypart_index < 4` selects the morning period.
 
 ### Daypart Boundaries
 
 | Daypart | `day_tick` range | Label |
 |---------|-----------------|-------|
-| 0 | 0x000..0x18f (0–399) | early morning |
-| 1 | 0x190..0x31f (400–799) | morning |
-| 2 | 0x320..0x4af (800–1199) | late morning |
-| 3 | 0x4b0..0x63f (1200–1599) | midday |
-| 4 | 0x640..0x7cf (1600–1999) | afternoon |
-| 5 | 0x7d0..0x95f (2000–2399) | evening |
-| 6 | 0x960..0xa27 (2400–2599) | night |
+| 0 | 0–399 | early morning |
+| 1 | 400–799 | morning |
+| 2 | 800–1199 | late morning |
+| 3 | 1200–1599 | midday |
+| 4 | 1600–1999 | afternoon |
+| 5 | 2000–2399 | evening |
+| 6 | 2400–2599 | night |
 
-**Morning vs evening period**: `pre_day_4()` (i.e. `daypart_index < 4`) selects the
+**Morning vs evening period**: `daypart_index < 4` selects the
 "morning" behavioral period. When false (`daypart_index >= 4`), the game is in the
 "evening" period. This distinction controls:
 
@@ -33,55 +33,50 @@ Maintain:
 - hotel vacancy band: morning → `0x18`, evening → `0x20`
 
 New game initializes `day_tick = 2533` which gives `daypart_index = 6` (night).
-The first full `0x000..0xa27` cycle begins on the second sim day.
+The first full 0–2599 cycle begins on the second sim day.
 
 ## RNG
 
-Recovered generator:
+RNG algorithm:
 
 - 32-bit linear congruential generator
 - state update: `state = state * 0x015a4e35 + 1` modulo `2^32`
 - returned value: `(state >> 16) & 0x7fff`
 
-Recovered state storage:
-
-- low word at `0x0fe0`
-- high word at `0x0fe2`
-
-Recovered seed flow:
+Seed behavior:
 
 - image-initialized seed is `1`
-- the game has a small seed-setter helper, but no call sites to it have been recovered
-- no reseed sites have been recovered in new-game initialization or normal simulation flow
+- the game has a seed-setter helper, but no callers have been identified
+- no reseed occurs during new-game initialization or normal simulation flow
 
 Clean-room rule:
 
 - initialize the RNG state to `1`
-- advance it exactly once per recovered call site
+- advance it exactly once per RNG consumption point
 - if exact replay across save/load is required, persist the 32-bit RNG state
 
-Recovered scheduler-level RNG order:
+Scheduler-level RNG order:
 
 - command handlers may consume RNG immediately during command application, before the next scheduler tick begins
-- within `run_simulation_day_scheduler()`, recovered per-tick RNG consumers run in this top-level order:
+- within `run_simulation_day_scheduler()`, per-tick RNG consumers run in this top-level order:
   1. increment `day_tick` and recompute `daypart_index`
-  2. if `day_tick > 0x0f0` and `daypart_index < 6`: run `trigger_random_news_event()` first
-  3. if `day_tick > 0x0f0` and `daypart_index < 4`: run `trigger_vip_special_visitor()` second
+  2. if `day_tick > 240` and `daypart_index < 6`: run `trigger_random_news_event()` first
+  3. if `day_tick > 240` and `daypart_index < 4`: run `trigger_vip_special_visitor()` second
   4. run the matching checkpoint body for the new tick value
   5. after the scheduler body returns, run the entity refresh stride in raw runtime-table order
   6. after entity refresh, run carrier ticks
-- recovered checkpoint-local ordering matters at `0x0f0`: `trigger_fire_event()` is called before `trigger_bomb_event()`
+- checkpoint-local ordering matters at `240`: `trigger_fire_event()` is called before `trigger_bomb_event()`
 - the entity refresh stride is deterministic: start index `day_tick % 16`, then `start, start + 16, ...`; any family handler RNG calls therefore occur in raw runtime-entity order, not grouped by subsystem
-- no carrier-tick RNG consumer has been recovered
+- no carrier-tick step consumes RNG
 
 Practical replay rule:
 
 - for deterministic replay, preserve RNG consumption order across:
   - command application
   - scheduler per-tick event hooks (`news` before `VIP`)
-  - checkpoint body order (`fire` before `bomb` at `0x0f0`)
+  - checkpoint body order (`fire` before `bomb` at `240`)
   - entity refresh visitation order
-- the exact RNG count inside a family handler is specified by that family's own rules; the scheduler-level ordering above is the global sequencing boundary proven from the binary
+- the exact RNG count inside a family handler is specified by that family's own rules; the scheduler-level ordering above is the global sequencing boundary
 
 ## Top-Level Tick Order
 
@@ -104,7 +99,7 @@ see state that was already modified by any checkpoint that fired on this tick.
 
 The simulation does not update every actor every tick. It processes one sixteenth of the runtime-actor table per tick. Every actor therefore gets serviced once per 16-tick window.
 
-Recovered visitation order:
+Visitation order:
 
 - stride start index = `day_tick % 16`
 - visit entity indices `start, start + 16, start + 32, ...` while the index is still `< runtime_entity_count`
@@ -116,65 +111,65 @@ Recovered visitation order:
 
 Important checkpoints:
 
-- `0x000`: start-of-day reset and reachability rebuild
-- `0x020`: daily housekeeping reset
-- `0x050`: conditional progress notification
-- `0x078`: conditional progress notification
-- `0x0a0`: morning notification
-- `0x0f0`: facility-ledger rebuild and bomb/fire trigger checks
-- `0x03e8`: entertainment half-runtime activation pass 1
-- `0x04b0`: hotel sale reset, entertainment phase change, evaluation midday return
-- `0x0578`: entertainment half-runtime activation pass 2
-- `0x05dc`: entertainment phase advance pass 1
-- `0x0640`: midday sweep, request flush, stay-phase advance, support/security reset, progress-override clear
-- `0x06a4`: afternoon notification
-- `0x0708`: no-op
-- `0x076c`: entertainment phase advance pass 2
-- `0x07d0`: linked-facility advance, security tier-2 check, periodic event trigger
-- `0x0898`: type-6 facility advance
-- `0x08fc`: increment day counter
-- `0x0960`: no-op
-- `0x09c4`: runtime refresh/reset sweep
-- `0x09e5`: ledger rollover, cashflow activation, periodic expenses
-- `0x09f6`: end-of-day notification
-- `0x0a06`: final security check
+- `0`: start-of-day reset and reachability rebuild
+- `32`: daily recycling center reset
+- `80`: conditional progress notification
+- `120`: conditional progress notification
+- `160`: morning notification
+- `240`: facility-ledger rebuild and bomb/fire trigger checks
+- `1000`: entertainment half-runtime activation pass 1
+- `1200`: hotel sale reset, entertainment phase change, evaluation midday return
+- `1400`: entertainment half-runtime activation pass 2
+- `1500`: entertainment phase advance pass 1
+- `1600`: midday sweep, request flush, stay-phase advance, support/recycling reset, progress-override clear
+- `1700`: afternoon notification
+- `1800`: no-op
+- `1900`: entertainment phase advance pass 2
+- `2000`: linked-facility advance, recycling tier-2 check, periodic event trigger
+- `2200`: type-6 facility advance
+- `2300`: increment day counter
+- `2400`: no-op
+- `2500`: runtime refresh/reset sweep
+- `2533`: ledger rollover, cashflow activation, periodic expenses
+- `2550`: end-of-day notification
+- `2566`: final recycling adequacy check
 
 ## Composite Checkpoint Order
 
-Recovered internal order for all multi-step checkpoints. Single-step checkpoints
+Internal order for all multi-step checkpoints. Single-step checkpoints
 are listed inline; multi-step checkpoints are expanded below.
 
-### `0x000` — Start of Day
+### 0 — Start of Day
 
-1. clear `g_facility_progress_override` to 0
+1. clear `facility_progress_override` to 0
 2. **normalize object state bytes** (sweep all floors, exact-value matches only —
    values not listed below are left unchanged):
    - hotel (3/4/5): map `unit_status` 0x20→0x18, 0x30→0x28, 0x40→0x38 (step down one tier)
    - elevator (type 7): 0x18→0x10; any other nonzero → 0 (if `calendar_phase_flag == 0`) or 8 (if != 0)
    - escalator (type 9): 0x20→0x18
-   - families 0x1f..0x21, 0x24..0x28: clear `object[+0xc]` and `object[+0xd]` to 0
+   - families 0x1f..0x21, 0x24..0x28: clear `special_visitor_flag` and `special_visitor_counter` to 0
    - mark each modified object dirty
-3. **rebuild demand history table**: clear log, sweep 0x200-slot source table dropping invalid entries (an entry is **invalid** when its subtype byte equals `0xff` — the demolished-object tombstone), append live entries where the owning parking-space object's coverage flag is not `1`, recompute summary totals
+3. **rebuild demand history table**: clear log, sweep 512-slot source table dropping invalid entries (an entry is **invalid** when its subtype byte equals `0xff` — the demolished-object tombstone), append live entries where the owning parking-space object's coverage flag is not `1`, recompute summary totals
 4. **rebuild path-seed bucket table**: clear seed list, sweep the 10 service-link (type 0x0d) tracking slots, drop invalid entries, rebuild zone bucket tables for retail/restaurant/fast-food. Zone assignment: `bucket_index = max(0, (floor - 9) / 15)`, dividing the tower into 7 fifteen-floor bands. If `star_count > 2`, set flag enabling upper-tower entity activation
-5. **refresh security/housekeeping states**: if `star_count <= 2` → fire low-star notification. Otherwise refresh the live security/housekeeping service-stack state for the new day, then fire the start-of-day notification
-6. **activate upper-tower runtime group**: gated on `g_eval_entity_index >= 0` and `star_count > 2`. Sweep floors 100–104 for types 0x24..0x28; force 8 consecutive runtime entity slots per object to state `0x20` (yielding 40 eval entities total)
+5. **refresh recycling center states**: if `star_count <= 2` → fire low-star notification. Otherwise refresh the live recycling center state (types `0x14/0x15`) for the new day, then fire the start-of-day notification
+6. **activate upper-tower runtime group**: gated on `eval_entity_index >= 0` and `star_count > 2`. Sweep floors 100–104 for types 0x24..0x28; force 8 consecutive runtime entity slots per object to state `0x20` (yielding 40 eval entities total)
 7. **update facility progress override**: if `day_counter % 8 == 4` AND `star_count < 5` → set `facility_progress_override = 1`
 
-### `0x020` — Housekeeping Daily Reset
+### 32 — Recycling Center Daily Reset
 
-1. sweep live type-`0x15` service-stack objects: reset `stay_phase` `6 -> 0`, mark dirty
+1. sweep live type-`0x15` recycling center (lower floor) objects: reset `stay_phase` `6 -> 0`, mark dirty
 
-### `0x050`, `0x078` — Conditional Progress Notification
+### 80, 120 — Conditional Progress Notification
 
 1. if progress-override gate bit is set, fire notification (no state change)
 
-### `0x0a0` — Morning Notification
+### 160 — Morning Notification
 
 1. fire morning notification popup (no state change)
 
-### `0x0f0` — Facility Ledger Rebuild
+### 240 — Facility Ledger Rebuild
 
-1. **rebuild linked facility records**: clear family-0xc and family-0xa population ledger buckets; sweep 0x200-entry commercial-venue record table:
+1. **rebuild linked facility records**: clear family-0xc and family-0xa population ledger buckets; sweep 512-entry commercial-venue record table:
    - `floor_index == -1` → skip
    - `subtype_index == -1` → mark invalid, decrement active venue count
    - else if object is not type 6 → `recompute_facility_runtime_state(floor, subtype, record_index)`
@@ -189,131 +184,131 @@ are listed inline; multi-step checkpoints are expanded below.
    - if `day_counter % 84 == 83` → `trigger_fire_event()`
    - if `day_counter % 60 == 59` → `trigger_bomb_event()`
 
-### `0x3e8` — Entertainment Half-Runtime Activation Pass 1
+### 1000 — Entertainment Half-Runtime Activation Pass 1
 
 1. for paired-link records (`family_selector >= 0`) with `link_phase_state == 0`: set forward-half entity slots to state `0x20`, advance `link_phase_state` to 1
 
-### `0x04b0` — Hotel Sale Reset / Entertainment Ready / Eval Midday Return
+### 1200 — Hotel Sale Reset / Entertainment Ready / Eval Midday Return
 
-1. reset `g_family345_sale_count = 0`
+1. reset `family345_sale_count = 0`
    - this is the same counter incremented by hotel-room checkout income; it is not a global lifetime statistic
 2. promote paired entertainment links with `link_phase_state >= 2` to ready phase (state 3)
 3. activate reverse-half runtime slots for single-link records with `link_phase_state == 0`: set slots to state `0x20`, advance to phase 1
-4. **evaluation midday return**: if `g_eval_entity_index >= 0`: sweep floors 100–104 for types 0x24–0x28; clear `object[+0xc]` to 0, mark dirty; advance associated entities in state `0x03` to state `0x05`; if `game_state_flags bit 2` set → clear it
+4. **evaluation midday return**: if `eval_entity_index >= 0`: sweep floors 100–104 for types 0x24–0x28; clear `special_visitor_flag` to 0, mark dirty; advance associated entities in state `0x03` to state `0x05`; if `game_state_flags bit 2` set → clear it
 
-### `0x0578` — Entertainment Half-Runtime Activation Pass 2
+### 1400 — Entertainment Half-Runtime Activation Pass 2
 
 1. for paired-link records with `link_phase_state == 1`: set reverse-half entity slots to state `0x20`
 
-### `0x05dc` — Entertainment Phase Advance Pass 1
+### 1500 — Entertainment Phase Advance Pass 1
 
 1. for paired-link records: process forward-half entities in state `0x03`:
-   - if family is `0x1d` OR `pre_day_4() == false` → entity state `0x05`
+   - if family is `0x1d` OR `daypart_index >= 4` → entity state `0x05`
    - else → entity state `0x01`
    - decrement `active_runtime_count`
    - set `link_phase_state`: 1 (if count reaches 0) or 2 (if entities remain)
 
-### `0x0640` — Midday Sweep
+### 1600 — Midday Sweep
 
 1. **rebuild type-6 facility records**: clear family-6 population ledger bucket; sweep venue table: for type-6 entries call `recompute_facility_runtime_state`
 2. **hotel pair-state update**: for hotel rooms (3/4/5) with `state >= 0x38`: check adjacent same-floor objects; if neighbor is hotel with state < 0x38: set neighbor's state to `0x40` (pre-day-4) or `0x38` (post); reset neighbor pairing fields
 3. **hotel operational update**: for each hotel room: `recompute_object_operational_status`; `handle_extended_vacancy_expiry`. Then for each: `attempt_pairing_with_floor_neighbor`
 4. **clear periodic vacancy slot**: if `day_counter % 9 != 3` → clear
-5. **flush hotel requests**: sweep `g_active_request_table`, remove entries for families 3/4/5
+5. **flush hotel requests**: sweep `active_request_table`, remove entries for families 3/4/5
 6. **advance stay-phase tiers** (sweep all placed objects, exact-value matches only —
    values not listed are left unchanged):
    - hotel (3/4/5): 0x18→0x20, 0x28→0x30, 0x38→0x40; mark dirty
    - elevator (7): 0x10→0x18, 0x00→0x08; mark dirty
    - escalator (9): 0x18→0x20; if `state & 0xf8 == 0` → `state = (state & 7) | 0x08`
    - sky/transfer lobby (0xd): mark dirty
-   - families 0x1f..0x21, 0x24..0x28: set `object[+0xc] = 1`, `object[+0xd] = 0`; mark dirty
+   - families 0x1f..0x21, 0x24..0x28: set `special_visitor_flag = 1`, `special_visitor_counter = 0`; mark dirty
 7. **entertainment midday cycle**:
    - promote paired-link reverse-half `link_phase_state` 2→3
    - advance reverse phase for all links: single-link entities in `0x03` → `0x05`/`0x01`, accrue income (family 0x1d), reset `link_phase_state = 0`. Paired-link: same, accrue income (family 0x12), reset phase
-8. **security housekeeping reset**: `update_security_housekeeping_state(0)`. Guarded by `star_count > 2`. If `g_security_ledger_scale == 0` → fire popup `3`, clear `g_security_adequate_flag`, do not sweep objects. Otherwise compute `required_tier = compute_security_required_tier()`, clamp the applied tier to `0`, clear `g_security_adequate_flag`, and sweep live type-`0x14/0x15` service-stack objects: write `stay_phase = 0` and `dirty = 1`, except that objects already at `stay_phase == 5` are left unchanged
+8. **recycling center reset**: `update_recycling_center_state(0)`. Guarded by `star_count > 2`. If `g_recycling_center_count == 0` → fire popup `3`, clear `g_recycling_adequate_flag`, do not sweep objects. Otherwise compute `required_tier = compute_recycling_required_tier()`, clamp the applied tier to `0`, clear `g_recycling_adequate_flag`, and sweep live recycling center objects (types `0x14`/`0x15`): write `stay_phase = 0` and `dirty = 1`, except that objects already at `stay_phase == 5` are left unchanged
 9. **clear progress override**: clear `facility_progress_override` gate bit
 
-### `0x06a4` — Afternoon Notification
+### 1700 — Afternoon Notification
 
 1. fire afternoon notification popup (no state change)
 
-### `0x0708` — No-Op
+### 1800 — No-Op
 
-### `0x076c` — Entertainment Phase Advance Pass 2
+### 1900 — Entertainment Phase Advance Pass 2
 
 1. advance reverse-half phase for paired-link records (same logic as midday reverse-phase advance for any link whose midday pass did not complete)
 
-### `0x07d0` — Late Facility Cycle
+### 2000 — Late Facility Cycle
 
 1. **advance non-type-6 facility records**: sweep venue table; for non-type-6 entries call `seed_facility_runtime_link_state(floor, subtype, record_index)` (sets `availability_state = 3`, accrues income, derives state code)
-2. **security tier-2 check**: `update_security_housekeeping_state(2)`. Guarded by `star_count > 2`. If `g_security_ledger_scale == 0` → fire popup `3` ("security insufficient"), clear `g_security_adequate_flag`, do not sweep objects. Otherwise compute `required_tier = compute_security_required_tier()`: if `required_tier <= 2` → set `g_security_adequate_flag = 1` and assign the exact required tier; else → clear the flag and clamp the applied tier to `2`. Sweep live type-`0x14/0x15` service-stack objects, writing `stay_phase = applied_tier` and `dirty = 1`, except that an inadequate pass leaves any stack already at `stay_phase == 5` unchanged
+2. **recycling tier-2 check**: `update_recycling_center_state(2)`. Guarded by `star_count > 2`. If `g_recycling_center_count == 0` → fire popup `3` ("recycling insufficient"), clear `g_recycling_adequate_flag`, do not sweep objects. Otherwise compute `required_tier = compute_recycling_required_tier()`: if `required_tier <= 2` → set `g_recycling_adequate_flag = 1` and assign the exact required tier; else → clear the flag and clamp the applied tier to `2`. Sweep live recycling center objects (types `0x14`/`0x15`), writing `stay_phase = applied_tier` and `dirty = 1`, except that an inadequate pass leaves any stack already at `stay_phase == 5` unchanged
 3. if `day_counter % 12 == 11` → set gate byte, fire periodic maintenance notification
 
-### `0x0898` — Type-6 Facility Advance
+### 2200 — Type-6 Facility Advance
 
 1. sweep venue table; for type-6 entries call `seed_facility_runtime_link_state`
 
-### `0x08fc` — Day Counter Increment
+### 2300 — Day Counter Increment
 
-1. increment `g_day_counter` (wrap to 0 at 0x2ed4)
-2. recompute `g_calendar_phase_flag`
-   - the wrap is immediate and consistent: when the incremented counter reaches `0x2ed4`, the scheduler first writes `g_day_counter = 0` and then calls `compute_calendar_phase_flag()`
+1. increment `day_counter` (wrap to 0 at 11988)
+2. recompute `calendar_phase_flag`
+   - the wrap is immediate and consistent: when the incremented counter reaches 11988, the scheduler first writes `day_counter = 0` and then calls `compute_calendar_phase_flag()`
    - the wrapped day therefore starts a fresh 12-day cycle with `calendar_phase_flag = 0`; no stale pre-wrap phase survives the rollover tick
 3. palette update (display only)
 
-### `0x0960` — No-Op
+### 2400 — No-Op
 
-### `0x09c4` — Runtime Refresh Sweep
+### 2500 — Runtime Refresh Sweep
 
 1. **rebuild all entity tile spans**: sweep all floors, call `update_entity_tile_span` per object
 2. **reset runtime entity state** (sweep entity table, normalize by family):
-   - 3/4/5 (hotel): state-word == 0 → `0x24`; unit_status ≤ 0x17 → `0x10`; else → `0x20`. Clear `[+7]`, `[+8]`
+   - 3/4/5 (hotel): state-word == 0 → `0x24`; unit_status ≤ 0x17 → `0x10`; else → `0x20`. Clear `spawn_floor`, `route_carrier`
    - 6/10/12 (commercial): → `0x20`
-   - 7 (office): → `0x20`. Clear `[+7]`, `[+8]`, word `[+0xc]`
-   - 9 (condo): unit_status < 0x18 → `0x10`; else → `0x20`. Clear `[+7]`, `[+8]`
+   - 7 (office): → `0x20`. Clear `spawn_floor`, `route_carrier`, `target_floor_packed`
+   - 9 (condo): unit_status < 0x18 → `0x10`; else → `0x20`. Clear `spawn_floor`, `route_carrier`
    - 14/33 (0xe/0x21 — security/hotel guest): → `0x01`
-   - 15 (0xf — VIP claimant): → `0x00`, `[+7] = 0xff`
-   - 18/29/36 (0x12/0x1d/0x24 — entertainment/eval): → `0x27`. Clear `[+7..+0x0e]`
-3. **active-request dispatch**: sweep `g_active_request_table`, dispatch each entry through family handler
+   - 15 (0xf — VIP claimant): → `0x00`, `spawn_floor = 0xff` (null sentinel)
+   - 18/29/36 (0x12/0x1d/0x24 — entertainment/eval): → `0x27`. Clear all aux fields
+3. **active-request dispatch**: sweep `active_request_table`, dispatch each entry through family handler
 4. **object-state floor pass**: sweep placed objects, enforce minimums:
    - hotel (3/4/5): state < 0x18 → set 0x10
    - elevator (7): state < 0x10 → set 0x08
    - escalator (9): state < 0x18 → set 0x10
 
-### `0x09e5` — Ledger Rollover And Expenses
+### 2533 — Ledger Rollover And Expenses
 
-This checkpoint runs after `0x08fc`, so it tests the already-incremented `g_day_counter`
+This checkpoint runs after checkpoint 2300, so it tests the already-incremented `day_counter`
 value. It is physically late in the day, but it starts the accounting cycle for the new
-day number. On a fresh game, the first live `0x09e5` checkpoint sees `g_day_counter == 1`;
-the first rollover/expense pass therefore occurs when `g_day_counter == 3`.
+day number. On a fresh game, the first live checkpoint 2533 sees `day_counter == 1`;
+the first rollover/expense pass therefore occurs when `day_counter == 3`.
 
-1. if `day_counter % 3 == 0`: roll income/expense ledgers first — save `g_cash_balance` into cycle base, clear 11 bucket slots each
+1. if `day_counter % 3 == 0`: roll income/expense ledgers first — save `cash_balance` into cycle base, clear 11 bucket slots each
 2. for all objects: `recompute_object_operational_status`. If `day_counter % 3 == 0`: then `deactivate_family_cashflow_if_unpaired`, then `activate_family_cashflow_if_operational`
 3. if `day_counter % 3 == 0`: after that object sweep, run `apply_periodic_operating_expenses` — sweep floors, carriers, special links:
    - parking (0x18/0x19/0x1a): `add_parking_operating_expense`
    - other types: `add_infrastructure_expense_by_type(type_code)`
-   - carriers: remap carrier mode to YEN `#1002` type `0x2a/0x01/0x2b` for express/standard/service, then charge the table value times `unit_record_count`
+   - carriers: remap carrier mode to expense type for express/standard/service, then charge the table value times `unit_record_count`
    - concrete carrier costs per 3-day pass: express `$20,000` per car, standard `$10,000` per car, service `$10,000` per car
-   - special links: local stair branch uses YEN `#1002` row `0x1b = 50` (`$5,000`) and express escalator branch uses row `0x16 = 0`; both are scaled by `(unit_count >> 1) + 1`
-   - the raw branch-to-type remap is inverted relative to player-facing type codes: low-bit-`0` local links charge as type `0x1b`, low-bit-`1` express links charge as type `0x16`
-4. rebuild all entity tile spans (same as 0x09c4 step 1)
-5. reset runtime entity state (same as 0x09c4 step 2)
+   - special links: local stair branch charges `$5,000` per scaled unit and express escalator branch charges `$0`; both are scaled by `(unit_count >> 1) + 1`
+   - the raw branch-to-type remap is inverted relative to player-facing type codes: low-bit-`0` local links use the stair expense rate, low-bit-`1` express links use the escalator expense rate
+4. rebuild all entity tile spans (same as checkpoint 2500 step 1)
+5. reset runtime entity state (same as checkpoint 2500 step 2)
 
-### `0x09f6` — End-of-Day Notification
+### 2550 — End-of-Day Notification
 
 1. fire end-of-day notification popup (no state change)
 
-### `0x0a06` — Final Security Check
+### 2566 — Final Recycling Adequacy Check
 
-1. `update_security_housekeeping_state(5)` — guarded by `star_count > 2`. If `g_security_ledger_scale == 0` → fire popup `3`, clear `g_security_adequate_flag`, do not sweep objects. Otherwise compute `required_tier`: if `required_tier <= 5` → set adequate flag and assign the exact tier; if `required_tier > 5` → fire popup `4`, clear adequate flag, clamp the applied tier to `5`. Sweep live type-`0x14/0x15` service-stack objects, writing `stay_phase = applied_tier` and `dirty = 1`, except that an inadequate pass leaves any stack already at `stay_phase == 5` unchanged
+1. `update_recycling_center_state(5)` — guarded by `star_count > 2`. If `g_recycling_center_count == 0` → fire popup `3`, clear `g_recycling_adequate_flag`, do not sweep objects. Otherwise compute `required_tier`: if `required_tier <= 5` → set adequate flag and assign the exact tier; if `required_tier > 5` → fire popup `4`, clear adequate flag, clamp the applied tier to `5`. Sweep live recycling center objects (types `0x14`/`0x15`), writing `stay_phase = applied_tier` and `dirty = 1`, except that an inadequate pass leaves any stack already at `stay_phase == 5` unchanged
 
-### Per-Tick Work (when `day_tick > 0x0f0`)
+### Per-Tick Work (when `day_tick > 240`)
 
-In addition to the checkpoints above, every tick when `day_tick > 0x0f0`:
-- if `daypart_index < 6`: `trigger_random_news_event()` runs when notifications are enabled and no bomb/fire event is active (`game_state_flags & 9 == 0`); it rolls `rand() % 16`, and on `0` samples one of six fixed screen buckets (`x = 1/4, 1/2, 3/4` of visible width; `y = 1/2 or 3/4` of visible height) before mapping the sampled object to a news notification family
-- if `daypart_index < 4` and `g_metro_station_floor_index >= 0` and not paused: `trigger_vip_special_visitor()` runs with extra guards `game_state_flags & 9 == 0` and `g_vip_system_eligibility >= 0`; on `rand() % 100 == 0`, it sweeps metro-stack types `0x1f/0x20/0x21`, toggles `object[+0xc]` between `0` and `2`, marks each touched object dirty, and fires notification `0x271a` if any object flipped from `0` to `2`
+In addition to the checkpoints above, every tick when `day_tick > 240`:
+- if `daypart_index < 6`: `trigger_random_news_event()` runs when notifications are enabled and no bomb/fire event is active; it rolls `rand() % 16`, and on `0` samples one of six fixed screen buckets (`x = 1/4, 1/2, 3/4` of visible width; `y = 1/2 or 3/4` of visible height) before mapping the sampled object to a news notification family
+- if `daypart_index < 4` and `metro_station_floor_index >= 0` and not paused: `trigger_vip_special_visitor()` runs with extra guards that no bomb/fire event is active and `vip_system_eligibility >= 0`; on `rand() % 100 == 0`, it sweeps metro-stack types `0x1f/0x20/0x21`, toggles `special_visitor_flag` between `0` and `2`, marks each touched object dirty, and fires notification `0x271a` if any object flipped from `0` to `2`
 
-Recovered ordering note:
+Ordering note:
 
 - these per-tick hooks run before the checkpoint body for the same tick value, not after it
 
@@ -327,12 +322,10 @@ This value affects:
 - 4-star to 5-star advancement eligibility
 - placement bounds for some vertical infrastructure; when present, some placement checks reject anchors below `metro_floor - 1`
 
-Recovered distinction:
-
 - progression and placement use the global metro presence/floor state, not the per-object aux word
-- the random VIP/special-visitor event only mutates metro-stack `object[+0xc]` and dirty flags
-- no routing, economy, or progression gate has been recovered that reads metro `object[+0xc]`
-- clean-room implementations can therefore treat metro `object[+0xc]` as a display-variant flag
+- the random VIP/special-visitor event only mutates metro-stack `special_visitor_flag` and dirty flags
+- no routing, economy, or progression gate reads metro `special_visitor_flag`
+- clean-room implementations can therefore treat metro `special_visitor_flag` as a display-variant flag
 
 ## New Game Initialization
 
@@ -348,25 +341,27 @@ New game state should initialize:
 - all progression gates cleared
 - empty ledgers, queues, caches, sidecars, and runtime actors
 
-## Security/Housekeeping Tier Check
+## Recycling Center Adequacy Check
 
 The tower computes a required duty tier from total population-ledger activity divided by
-the security scaling factor.
+`g_recycling_center_count` (the number of placed recycling center stacks).
 
 Two daily checkpoints use this:
 
-- a tier-2 midday check
-- a tier-5 end-of-day check
+- a tier-2 midday check (tick 2000)
+- a tier-5 end-of-day check (tick 2566)
 
-`update_security_housekeeping_state(0)` at checkpoint `0x0640` uses the same machinery
-but always clears adequacy by clamping the applied tier to `0` whenever the scale is
+`update_recycling_center_state(0)` at checkpoint 1600 uses the same machinery
+but always clears adequacy by clamping the applied tier to `0` whenever the count is
 nonzero.
 
 If the required tier is above the allowed checkpoint tier, the tower is considered
-security-inadequate for that phase of the day.
+recycling-inadequate for that phase of the day. This matches the manual: "When your
+building attains a certain size, it will require a recycling center to process its
+trash; larger buildings will require additional centers."
 
-The checker only runs when `star_count > 2`. Live sweeps operate on placed-object types
-`0x14/0x15` from the service-stack table.
+The checker only runs when `star_count > 2`. Live sweeps operate on
+recycling center types (`0x14` upper floor / `0x15` lower floor).
 
 Required duty tier maps from total population-ledger activity using these thresholds:
 

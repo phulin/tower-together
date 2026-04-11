@@ -82,16 +82,16 @@ const TOOLS: ToolDef[] = [
 	{ id: "condo", label: "Condo", color: "#e7cf6b", cost: TILE_COSTS.condo },
 	{ id: "cinema", label: "Cinema", color: "#c040a0", cost: TILE_COSTS.cinema },
 	{
-		id: "security",
-		label: "Security",
+		id: "recyclingCenterUpper",
+		label: "Recycle Up",
 		color: "#c04040",
-		cost: TILE_COSTS.security,
+		cost: TILE_COSTS.recyclingCenterUpper,
 	},
 	{
-		id: "housekeeping",
-		label: "Housekeeping",
+		id: "recyclingCenterLower",
+		label: "Recycle Low",
 		color: "#8cb0c0",
-		cost: TILE_COSTS.housekeeping,
+		cost: TILE_COSTS.recyclingCenterLower,
 	},
 	{ id: "metro", label: "Metro", color: "#60c0c0", cost: TILE_COSTS.metro },
 	{

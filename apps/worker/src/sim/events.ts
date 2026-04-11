@@ -72,8 +72,8 @@ function seedBombSearchCursor(world: WorldState, floor: number): void {
 	world.eventState.bombSearchScanTile = bounds ? bounds.right - 2 : -1;
 }
 
-function hasSecurityGuard(world: WorldState): boolean {
-	return world.gateFlags.securityLedgerScale > 0;
+function hasEmergencyResponseCoverage(world: WorldState): boolean {
+	return world.gateFlags.recyclingCenterCount > 0;
 }
 
 function objectNewsCode(objectTypeCode: number): string | null {
@@ -179,7 +179,7 @@ export function tryTriggerBombEvent(
 	es.bombDeadline = BOMB_DEADLINE_TICKS;
 	es.bombSearchLowerBound = selectedFloor - 1;
 	es.bombSearchUpperBound = selectedFloor;
-	if (hasSecurityGuard(world)) {
+	if (hasEmergencyResponseCoverage(world)) {
 		seedBombSearchCursor(world, selectedFloor);
 	} else {
 		es.bombSearchCurrentFloor = -1;
@@ -208,7 +208,7 @@ export function tickBombEvent(
 		return;
 	}
 	// Check active search deadline → detonation
-	if ((es.gameStateFlags & 1) !== 0 && hasSecurityGuard(world)) {
+	if ((es.gameStateFlags & 1) !== 0 && hasEmergencyResponseCoverage(world)) {
 		advanceBombSearch(world, time);
 	}
 	if ((es.gameStateFlags & 1) !== 0 && time.dayTick >= es.bombDeadline) {
@@ -380,7 +380,7 @@ export function tryTriggerFireEvent(
 	es.fireLeftPos.fill(0xffff);
 	es.fireRightPos.fill(0xffff);
 
-	if (hasSecurityGuard(world)) {
+	if (hasEmergencyResponseCoverage(world)) {
 		es.rescueCountdown = RESCUE_COUNTDOWN_WITH_SECURITY;
 	} else {
 		es.rescueCountdown = 0;

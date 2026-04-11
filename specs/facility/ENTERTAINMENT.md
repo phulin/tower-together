@@ -7,7 +7,7 @@ Party hall (`0x12`) and cinema (`0x1d`) are the entertainment families.
 Entertainment runs as a checkpoint-driven venue-cycle system built on a 16-slot sidecar table.
 
 - Each entertainment placement allocates one venue record that points at one or two placed-object halves.
-- At the daily `0x0f0` rebuild, the game reseeds each record's per-half runtime budgets, increments venue age, and clears the active/attendance counters.
+- At the daily checkpoint 240 rebuild, the game reseeds each record's per-half runtime budgets, increments venue age, and clears the active/attendance counters.
 - Midday checkpoints activate one half of each venue by pushing the linked runtime actors into the entertainment family state machine.
 - Successful arrivals increment both the active-attendee count and the total attendance count for that venue.
 - Later checkpoints promote the venue into a ready phase, then drain the currently active attendees back out of the venue.
@@ -22,12 +22,7 @@ The two entertainment families share that same loop but differ in how they seed 
 
 Entertainment facilities use a 16-slot sidecar table of entertainment venue records rather than simple per-object cashflow.
 
-Binary-facing notes:
-
-- existing analysis and code artifacts often call these records `entertainment links`
-- `venue record` is the more accurate implementation-facing term because one record can represent either:
-  - a paired venue with forward/reverse halves
-  - a single-venue family entry with only the reverse half populated
+Venue records represent either a paired venue with forward/reverse halves, or a single-venue entry with only the reverse half populated.
 
 ## Shared Behavior
 
@@ -63,7 +58,7 @@ Population-ledger contribution is tracked separately from realized cash payout.
 
 Both participate in the same broad phase-driven attendance and payout cycle.
 
-Recovered link roles:
+Link roles:
 
 - party hall (`0x12`): paired venue records, with forward and reverse halves both active each day
 - cinema (`0x1d`): single-venue records, with `forward_runtime_phase = 0` and `reverse_runtime_phase = 50`
@@ -78,12 +73,12 @@ Recovered link roles:
 
 Checkpoint-driven flow:
 
-- `0x0f0`: rebuild family ledger, reseed forward/reverse runtime budgets, increment venue age, clear pending/active/attendance counters
-- `0x03e8`: activate paired-link forward-half entities
-- `0x04b0`: promote paired links to ready phase and activate single-link reverse-half entities
-- `0x0578`: activate paired-link reverse-half entities that are still in phase `1`
-- `0x05dc`: advance paired-link forward phase
-- `0x0640`: advance reverse phase for both families, accrue cash income, then reset the link phase back to `0`
+- checkpoint 240: rebuild family ledger, reseed forward/reverse runtime budgets, increment venue age, clear pending/active/attendance counters
+- checkpoint 1000: activate paired-link forward-half entities
+- checkpoint 1200: promote paired links to ready phase and activate single-link reverse-half entities
+- checkpoint 1400: activate paired-link reverse-half entities that are still in phase `1`
+- checkpoint 1500: advance paired-link forward phase
+- checkpoint 1600: advance reverse phase for both families, accrue cash income, then reset the link phase back to `0`
 
 ## Record Initialization
 
@@ -99,18 +94,18 @@ Fresh allocation zeroes the live cycle fields:
 
 Paired venues also roll a selector bucket at placement:
 
-- if the placed object subtype is family `0x22` or `0x23`, `family_selector_or_single_link_flag = rand() % 14`
-- otherwise `family_selector_or_single_link_flag = 0xff`
+- if the placed object subtype is family `0x22` or `0x23`, `venue_selector = rand() % 14`
+- otherwise `venue_selector` is set to a sentinel value treated as negative at runtime
 
-Single-venue records store `family_selector_or_single_link_flag = 0xff`, which the runtime treats as negative.
+Single-venue records store `venue_selector` as that same sentinel, which the runtime treats as negative.
 
 ## Runtime Budget Rules
 
-Party hall (`0x12`) does not use a 14-step age table. The binary applies two selectors:
+Party hall (`0x12`) does not use a 14-step age table. The runtime applies two selectors:
 
 - first, the paired-venue selector bucket:
-  - `family_selector_or_single_link_flag < 7`: use the low-selector table `40, 40, 40, 20`
-  - `family_selector_or_single_link_flag >= 7`: use the high-selector table `60, 60, 40, 20`
+  - `venue_selector < 7`: use the low-selector table `40, 40, 40, 20`
+  - `venue_selector >= 7`: use the high-selector table `60, 60, 40, 20`
 - second, the age tier:
   - `link_age_counter / 3 == 0`: use tier 0
   - `link_age_counter / 3 == 1`: use tier 1
@@ -129,7 +124,7 @@ Cinema (`0x1d`) always rebuilds to:
 - `forward_runtime_phase = 0`
 - `reverse_runtime_phase = 50`
 
-`link_age_counter` starts at `0` on allocation and increments once per `0x0f0` rebuild while `< 0x7f`. It saturates at `127`; it does not wrap.
+`link_age_counter` starts at `0` on allocation and increments once per checkpoint 240 rebuild while `< 127`. It saturates at 127; it does not wrap.
 
 `link_phase_state` meanings:
 
@@ -144,7 +139,7 @@ Attendance is tracked directly on the venue record:
 
 - each successful arrival into the entertainment destination increments both `active_runtime_count` and `attendance_counter`
 - the first arrival also promotes `link_phase_state` from `1` to `2`
-- the daily `0x0f0` rebuild clears both counters back to `0`
+- the daily checkpoint 240 rebuild clears both counters back to `0`
 
 Party hall (`0x12`) cash income uses attendance thresholds:
 

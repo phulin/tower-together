@@ -1,6 +1,6 @@
 # Parking
 
-Families `0x0b` and `0x2c` cover parking spaces and parking ramps.
+Families `0x0b` (parking space) and `0x2c` (parking ramp) cover parking spaces and parking ramps.
 
 ## Roles
 
@@ -12,12 +12,12 @@ Families `0x0b` and `0x2c` cover parking spaces and parking ramps.
 
 Parking expense is charged on the same 3-day periodic sweep as other operating costs.
 
-Recovered formula:
+Formula:
 
 - expense = `(right_tile_index - left_tile_index) * tier_rate / 10`
 - `tier_rate` is chosen from three startup tuning values by current tower tier
 - the recovered rates are `0`, `30`, and `100` in `$100` units for stars `< 3`, `3`, and `>= 4`
-- the expense is recorded under family-ledger bucket `0x18`
+- the expense is recorded under the parking expense ledger bucket
 
 Expense gate:
 
@@ -38,31 +38,28 @@ Entry lifecycle:
 - an entry is allocated at parking-space placement, writing floor_index and subtype_index
 - `release_service_request_entry` (called at teardown) clears only the backlink handle field — the entry stays live
 - the entry's subtype byte is set to `0xff` (tombstone) by the demolition dispatch path
-- the entry is actually freed (floor byte → `0xff`, count decremented) only during `rebuild_demand_history_table` at checkpoint `0x000`, when it detects subtype == `0xff`
+- the entry is actually freed (floor byte set invalid, count decremented) only during the demand history rebuild at checkpoint 0, when it detects the tombstone subtype
 
 An entry is **stale** when its subtype byte equals `0xff` — this is the demolished-object tombstone.
 
 ### Coverage Initialization
 
-Parking-space objects have no coverage byte set at placement. The coverage byte (`+0xb`) defaults to `0` (uncovered), so newly placed spaces appear in the demand log immediately. Coverage is not applied until the first `rebuild_parking_ramp_coverage_and_demand_history` runs — either at demolition of a parking object or at the next start-of-day checkpoint `0x000`.
+Parking-space objects have no coverage byte set at placement. The coverage byte defaults to `0` (uncovered), so newly placed spaces appear in the demand log immediately. Coverage is not applied until the first parking ramp coverage rebuild runs — either at demolition of a parking object or at the next start-of-day checkpoint 0.
 
 ### Demand Families
 
 Parking demand is emitted by family `0x0b` parking spaces (and type-code variants `0x18`/`0x19`/`0x1a`). Consumers that route to parking include hotel suites (family `0x05`), condos (family `0x09`), and office workers (family `0x07`).
 
-Binary-backed confirmation:
+Parking demand routing:
 
-- parking-space emitters populate the service-request table at `0xc1cc`/`0xc1ce` through `allocate_service_request_entry` during `recompute_object_runtime_links_by_type` (type/family `0x0b`)
-- the random picker `select_random_service_request_entry` (`11a0:0621`) selects from this table; returns `0xffff` when the table is empty
-- `assign_service_venue_to_entity` (`11a0:031a`) is the shared assignment function that calls the picker; it serves both hotel suite guests (family `0x05`) and office workers (family `0x07`)
-- `check_service_venue_assignment_eligibility` (`11a0:06e7`) gates entry:
-  - family `0x05` (hotel suite): any non-zero entity state word
-  - family `0x07` (office): `(floor + slot) % 4 == 1` AND entity state word == 2
-  - requires star level > 2 (`g_bc40 > 2`)
-- on assignment failure, `display_status_bar_notification(5)` shows "Office workers demand Parking" via NE custom resource type `0xff06`, ID 1010, string index 5
-- the notification string was previously reported as orphaned; the "zero xrefs" was a false negative because Ghidra's static xref analysis cannot trace Windows `FindResource`/`LoadResource` API loads for custom resource types
+- Parking spaces populate the service-request table.
+- A random picker selects from available entries; returns invalid when the table is empty.
+- Hotel suite guests (family 5) require any non-zero entity state.
+- Office workers (family 7) require (floor + slot) % 4 == 1 and entity state == 2.
+- Requires star level > 2.
+- On assignment failure, the status bar shows "Office workers demand Parking".
 
-Note: offices are **consumers** of parking demand, not producers. They do not call `allocate_service_request_entry`. Parking spaces populate the service-request table; office workers pull from it.
+Note: offices are **consumers** of parking demand, not producers. They do not allocate service-request entries. Parking spaces populate the service-request table; office workers pull from it.
 
 ## Demand History
 
@@ -75,28 +72,23 @@ It:
 - keeps only uncovered parking-space demand
 - feeds random selection for consumers that pull from parking/service demand
 
-Recovered structure:
+Structure:
 
-- a flat array of up to `0x200` service-request indices, not a ring buffer
+- a flat array of up to 512 service-request indices, not a ring buffer
 - one leading entry-count field
 - append order matches the sweep order of the service-request table
 
-Recovered rebuild rules:
+Rebuild rules:
 
 - skip free entries where `floor == -1`
 - skip entries where `subtype_index == -1`
 - stale entries are actively invalidated during the rebuild
 - valid entries are appended only when the owning parking-space object's coverage flag is not `1`
 
-The queue/log helpers themselves are shared:
-
-- `select_random_service_request_entry` (`11a0:0621`) is the random picker over the current `0xc1cc`/`0xc1ce` log
-- `assign_service_venue_to_entity` (`11a0:031a`) calls that picker for both hotel suite guests (family `0x05`) and office workers (family `0x07`)
-
 Random selection:
 
-- `select_random_service_request_entry` returns `log[abs(rng()) % count]`
-- returns `0xffff` when the log is empty
+- the random picker returns `log[abs(rng()) % count]`
+- returns an invalid marker when the log is empty
 
 Summary table:
 
@@ -119,9 +111,9 @@ Uncovered parking spaces:
 - remain active demand sources
 - are collected into the demand log
 
-Recovered rebuild order:
+Rebuild order:
 
-- `rebuild_parking_ramp_coverage_and_demand_history` scans floors from `9` down to `0`
+- the coverage rebuild scans floors from `9` down to `0`
 - on each floor it searches for parking-ramp segments (`0x2c`)
 - if an anchor exists, it clears the anchor state byte first, then checks the floor below for a same-x continuation
 - anchor stack-state values:
@@ -131,7 +123,7 @@ Recovered rebuild order:
 - if no anchor exists on a floor, propagation still runs in disabled mode so previously covered spaces are reset
 - after all floors are processed, the demand-history table is rebuilt from the resulting coverage flags
 
-Recovered same-floor propagation shape:
+Same-floor propagation shape:
 
 - propagation starts from the anchor x position
 - it walks left, then right, across the floor

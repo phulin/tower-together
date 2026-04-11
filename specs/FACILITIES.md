@@ -5,15 +5,15 @@ This document covers shared facility logic. Family-specific state machines are i
 ## Facility Evaluation Model
 
 Facilities that depend on nearby support compute an operational score and map it into a
-readiness grade (`eval_level` at placed-object offset `+0x15`):
+readiness grade (`eval_level`):
 
 - `2`: excellent — well-serviced, income active
 - `1`: acceptable — marginal
 - `0`: poor — deactivation-eligible or refund-eligible
 - `0xff`: not yet scorable (early lifecycle or transitional guard)
 
-The scoring pipeline (`compute_object_operational_score` at `1138:040f`, called from
-`recompute_object_operational_status` at `1138:0704`) runs for families 3, 4, 5, 7,
+The scoring pipeline (`compute_object_operational_score`, called from
+`recompute_object_operational_status`) runs for families 3, 4, 5, 7,
 and 9 only. Other families use family-specific dispatch handlers within the same
 caller. Early-exit guards per family:
 
@@ -26,8 +26,7 @@ caller. Early-exit guards per family:
 The shared scoring pipeline is:
 
 1. compute a per-tile runtime metric as `0x1000 / sample_count`, returning `0` when
-   `sample_count == 0`. Here `sample_count` is the runtime entity byte at offset
-   `+0x09` — it counts the number of times `advance_entity_demand_counters` has been
+   `sample_count == 0`. Here `sample_count` is the runtime entity field — it counts the number of times `advance_entity_demand_counters` has been
    called for this entity (once per service-visit arrival or route-resolution event).
    The metric is therefore **inverse visit frequency**: a tile visited 10 times scores
    `4096 / 10 = 409`; a tile visited 50 times scores `4096 / 50 = 81`. Lower score
@@ -38,7 +37,7 @@ The shared scoring pipeline is:
    - family 5 (suite): 2
    - family 7 (office): 6
    - family 9 (condo): 3
-3. apply the pricing-tier modifier (keyed to `rent_level` at object offset `+0x16`):
+3. apply the pricing-tier modifier (keyed to `rent_level`):
    - tier `0` (highest price): `+30`
    - tier `1` (default): `+0`
    - tier `2` (lower price): `-30`
@@ -54,21 +53,21 @@ The shared scoring pipeline is:
 
 Each runtime entity maintains demand counters used to compute the per-tile metric:
 
-| Offset | Size | Field | Meaning |
-|--------|------|-------|---------|
-| `+0x09` | byte | `sample_count` | number of service-visit samples taken |
-| `+0x0a` | word | `last_sample_tick` | `g_day_tick` snapshot at last rebase |
-| `+0x0c` | word | packed: low 10 bits = elapsed ticks since last sample, high 6 bits = flags | |
-| `+0x0e` | word | `accumulated_elapsed` | running sum of all per-sample elapsed values |
+| Field | Meaning |
+|-------|---------|
+| `sample_count` | number of service-visit samples taken |
+| `last_sample_tick` | `day_tick` snapshot at last rebase |
+| `elapsed_packed` | low 10 bits = elapsed ticks since last sample, high 6 bits = flags |
+| `accumulated_elapsed` | running sum of all per-sample elapsed values |
 
 The pipeline runs in two steps, called from entity dispatch and route resolution:
 
-1. **`rebase_entity_elapsed_from_clock`**: `elapsed = (word_0xc & 0x3ff) + g_day_tick - word_0xa`, clamped to 300, stored in low 10 bits of `word_0xc`, saves `g_day_tick` to `word_0xa`.
-2. **`advance_entity_demand_counters`**: drains `word_0xc & 0x3ff` into `word_0xe` (accumulated), increments `byte_0x9` (`sample_count`), clears drained bits.
+1. **`rebase_entity_elapsed_from_clock`**: `elapsed = (elapsed_packed & 0x3ff) + day_tick - last_sample_tick`, clamped to 300, stored in low 10 bits of `elapsed_packed`, saves `day_tick` to `last_sample_tick`.
+2. **`advance_entity_demand_counters`**: drains `elapsed_packed & 0x3ff` into `accumulated_elapsed`, increments `sample_count`, clears drained bits.
 
 The 300-tick clamp prevents a single long gap from dominating the running average.
-`word_0xe / byte_0x9` gives average inter-visit interval (lower = better), but the
-scoring function reads only `byte_0x9` via `0x1000 / sample_count`.
+`accumulated_elapsed / sample_count` gives average inter-visit interval (lower = better), but the
+scoring function reads only `sample_count` via `0x1000 / sample_count`.
 
 ## Support Search
 
@@ -82,7 +81,7 @@ Support search is local and tile-based. Different families use different support
 
 ## Support Matching
 
-`map_neighbor_family_to_support_match` (`1140:01b8`) normalizes a neighbor's family
+`map_neighbor_family_to_support_match` normalizes a neighbor's family
 code into a support-match code, or returns 0 when the neighbor does not qualify.
 Entertainment subtypes are grouped: `0x12/0x13/0x22/0x23` → party hall (`0x12`), `0x1d/0x1e` → cinema (`0x1d`).
 
@@ -97,16 +96,11 @@ Accepted support families:
 Notable exclusions: hotels do **not** accept condos or other hotels as support. Offices
 do **not** accept hotels or other offices. Commercial families (6, 10, 12) do not
 participate in the support scoring pipeline — they use a separate commercial readiness
-system with `apply_service_variant_modifier_to_score` (`1138:06b9`).
-
-Binary evidence:
-
-- `map_neighbor_family_to_support_match` (`1140:01b8`) accepts raw family codes `0x06`, `0x0a`, and `0x0c` directly, with entertainment grouped separately
-- build/type tables and recovered resource labels identify those codes as restaurant `0x06`, retail `0x0a`, and fast food `0x0c`
+system with `apply_service_variant_modifier_to_score`.
 
 ## Thresholds By Star Rating
 
-Thresholds are stored at `[DS:0xe5ea]` (lower) and `[DS:0xe5ec]` (upper) and are
+Thresholds are stored as tuning parameters (lower and upper) and are
 rewritten when the star rating changes:
 
 | Star rating | Lower | Upper |
@@ -123,7 +117,7 @@ Score mapping in `recompute_object_operational_status`:
 
 ### eval_active_flag Latching
 
-`eval_active_flag` (offset `+0x14`) is set to `1` the first time `eval_level`
+`eval_active_flag` is set to `1` the first time `eval_level`
 transitions to nonzero. For hotel rooms (families 3/4/5), the latch is further guarded
 by `unit_status <= 0x27` — hotels past that lifecycle phase do not latch even if their
 score is nonzero. The latch is **not retroactive**: if a room's `eval_level` transitions
@@ -134,12 +128,10 @@ forward-only.
 ## Commercial Readiness
 
 Commercial families (fast food 6, restaurant 10, retail 12) use a separate readiness
-model based on customer count from the commercial-venue sidecar record (offset `+0x10`
-in the venue record). Thresholds are stored in per-family global slots (e.g.,
-`g_restaurant_state_threshold_slot_0/1/2`).
+model based on customer count from the commercial-venue sidecar record. Thresholds are stored in per-family threshold slots.
 
-Restaurant (family 10) thresholds are adjusted by `apply_service_variant_modifier_to_score`
-(`1138:06b9`), which applies a smaller rent_level-based modifier:
+Restaurant (family 10) thresholds are adjusted by `apply_service_variant_modifier_to_score`,
+which applies a smaller rent_level-based modifier:
 
 - rent_level `0`: `+5`
 - rent_level `1`: `+0`

@@ -2,7 +2,7 @@ import { init_carrier_state } from "./carriers";
 import { rebuild_runtime_entities } from "./entities";
 import type { LedgerState } from "./ledger";
 import { createLedgerState } from "./ledger";
-import { LEGACY_VIP_TILE_TO_STANDARD } from "./resources";
+import { LEGACY_TILE_ALIASES, LEGACY_VIP_TILE_TO_STANDARD } from "./resources";
 import { RingBuffer } from "./ring-buffer";
 import {
 	rebuild_special_links,
@@ -135,6 +135,13 @@ function migrateSnakeToCamel(snapshot: SimSnapshot): void {
 	}
 }
 
+function normalizeLegacyTileNames(snapshot: SimSnapshot): void {
+	for (const key of Object.keys(snapshot.world.cells)) {
+		const tileType = snapshot.world.cells[key];
+		snapshot.world.cells[key] = LEGACY_TILE_ALIASES[tileType] ?? tileType;
+	}
+}
+
 export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	const snapshot = raw;
 	const old = snapshot as unknown as Record<string, unknown>;
@@ -182,6 +189,7 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	}
 
 	migrateSnakeToCamel(snapshot);
+	normalizeLegacyTileNames(snapshot);
 
 	const legacyLedger = snapshot.ledger as unknown as Record<string, unknown>;
 	if (
@@ -223,6 +231,19 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	snapshot.world.sidecars ??= [];
 	snapshot.world.entities ??= [];
 	snapshot.world.gateFlags ??= createGateFlags();
+	const gateFlags = snapshot.world.gateFlags as unknown as Record<
+		string,
+		unknown
+	>;
+	if (!("recyclingAdequate" in gateFlags) && "securityAdequate" in gateFlags) {
+		gateFlags.recyclingAdequate = gateFlags.securityAdequate;
+	}
+	if (
+		!("recyclingCenterCount" in gateFlags) &&
+		"securityLedgerScale" in gateFlags
+	) {
+		gateFlags.recyclingCenterCount = gateFlags.securityLedgerScale;
+	}
 	snapshot.world.carriers ??= [];
 	if (snapshot.world.specialLinks.length === 0) {
 		snapshot.world.specialLinks = createEmptySpecialLinks();

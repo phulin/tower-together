@@ -10,17 +10,11 @@ This document defines shared state and terminology used across the simulation sp
 - Floors `1..109` are above grade (109 above-ground levels).
 - Sky lobbies may be placed on floors `15`, `30`, `45`, etc.
 
-Each placed object is addressed by `(floor_index, subtype_index)`, where `subtype_index` is that floor's object-slot index.
+Each placed object is addressed by `(floor_index, floor_local_object_id)`.
 
-## Binary-Facing Floor Slots
-
-Some recovered binary notes use the executable's internal floor-slot numbering rather than world-floor numbering.
-
-- internal floor slot = `world_floor + 10`
-- world floor `0` (lobby) = internal floor slot `10`
-- world floor `109` = internal floor slot `119`
-
-When a spec mentions values like lobby floor `10`, that is an internal slot reference, not a contradiction of the world-floor model above.
+`floor_local_object_id` is the floor-local object identifier stored in the floor's subtype lookup
+tables. It is not a gameplay subtype. The floor table keeps a reverse map from this ID back to the
+current placed-object slot.
 
 ## Type Namespaces
 
@@ -46,7 +40,7 @@ Every placed object needs, at minimum:
 - pricing tier: `rent_level` (player-configurable, 0–3)
 - activity counter: `activation_tick_count`
 
-The implementation can choose any internal struct layout. The important part is preserving these behaviors and fields.
+The implementation can choose any internal struct layout. The important part is preserving these behaviors.
 
 ## Shared Runtime Actor Record
 
@@ -98,9 +92,29 @@ Common ranges:
 
 The exact interpretation is family-specific.
 
-## `base_offset`
+## `floor_local_object_id`
 
-`base_offset` is the occupant index within a multi-occupant object.
+`floor_local_object_id` is the compact per-floor object identifier used by runtime actors and
+sidecar systems.
+
+The floor-local blob contains:
+
+- `placed_object_records[150]`: the actual placed-object slots
+- `object_slot_by_subtype_index[150]`: the reverse lookup map from `floor_local_object_id` to the
+  current placed-object slot
+
+So conceptually:
+
+- `floor_local_object_id` = stable floor-local object ID
+- `object_slot_index` = current slot inside the floor's placed-object array
+
+## `occupant_index`
+
+`occupant_index` is the zero-based occupant slot within a multi-occupant object.
+
+The decompiler/binary-facing notes previously called this `base_offset`. The recovered helper
+`compute_object_occupant_runtime_index(floor_index, floor_local_object_id, occupant_index)` confirms the meaning:
+it returns `anchor_runtime_index + occupant_index`.
 
 Examples:
 
@@ -117,7 +131,7 @@ This field is used to stagger per-occupant behavior. It is based on population, 
 The simulation maintains:
 
 - `cash_balance`
-- `population_ledger`: live per-family active-unit counts (drives star thresholds and security tier)
+- `population_ledger`: live per-family active-unit counts (drives star thresholds and recycling adequacy tier)
 - `income_ledger`: realized income accumulated since 3-day rollover
 - `expense_ledger`: realized operating expenses accumulated since 3-day rollover
 
@@ -140,7 +154,7 @@ The top-level simulation state must include:
 The simulation also maintains derived or sidecar tables such as:
 
 - commercial venue records
-- entertainment venue records (`entertainment-link` in older binary-facing notes)
+- entertainment venue records
 - service-request entries
 - transfer-group cache
 - walkability flags

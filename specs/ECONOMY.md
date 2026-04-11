@@ -9,7 +9,7 @@ All values in the tables below are denominated in `$100` units.
 The simulation maintains:
 
 - `cash_balance`
-- `population_ledger`: live per-family active-unit counts (drives star thresholds and security tier)
+- `population_ledger`: live per-family active-unit counts (drives star thresholds and recycling adequacy tier)
 - `income_ledger`: realized income since the last 3-day rollover
 - `expense_ledger`: realized operating expenses since the last 3-day rollover
 
@@ -59,12 +59,10 @@ Construction costs are indexed by placed-object type:
 
 ## Floor Construction Premium
 
-Recovered behavior:
-
-- `g_lobby_height` is a saved tower parameter (1, 2, or 3) that defaults to `0` in `new_game_initializer` and is locked in to one of `{1, 2, 3}` on the player's first construction click; see `COMMANDS.md` for the selector and snap-back rules
-- the lobby occupies floor 0, with `g_lobby_height - 1` additional atrium floors directly above it; the predicate `0 < floor < g_lobby_height` identifies the atrium floors above the lobby base
+- `lobby_height` is a saved tower parameter (1, 2, or 3) that defaults to `0` in `new_game_initializer` and is locked in to one of `{1, 2, 3}` on the player's first construction click; see `COMMANDS.md` for the selector and snap-back rules
+- the lobby occupies floor 0, with `lobby_height - 1` additional atrium floors directly above it; the predicate `0 < floor < lobby_height` identifies the atrium floors above the lobby base
 - floors strictly inside that atrium band use a premium floor-construction base cost instead of the normal floor-tile base cost
-- the premium path multiplies the recovered high-band base rate by `g_lobby_height`, so a 2-floor lobby charges `premium_rate * 2` per tile on floor 1 and a 3-floor lobby charges `premium_rate * 3` per tile on floors 1 and 2
+- the premium path multiplies the recovered high-band base rate by `lobby_height`, so a 2-floor lobby charges `premium_rate * 2` per tile on floor 1 and a 3-floor lobby charges `premium_rate * 3` per tile on floors 1 and 2
 - the same parameter also affects special-link placement, fire ignition floors, the per-click commit count for lobby drag, and at least one family floor-class validator; see `COMMANDS.md` and `EVENTS.md`
 
 ## Family Payouts
@@ -102,7 +100,7 @@ Periodic operating expenses charge:
 - medical/recycling/support facilities
 - other infrastructure that contributes upkeep rather than direct income
 
-These expenses are charged at the `0x09e5` ledger/expense checkpoint on the same 3-day cadence as ledger rollover, not continuously per tick.
+These expenses are charged at the `2533` ledger/expense checkpoint on the same 3-day cadence as ledger rollover, not continuously per tick.
 
 Confirmed per-unit infrastructure expenses:
 
@@ -117,27 +115,24 @@ Confirmed per-unit infrastructure expenses:
 - Service Elevator unit: `$10,000`
 - Parking Ramp: `$10,000`
 
-Binary-confirmed expense lookup rules:
+Expense lookup rules:
 
-- placed-object infrastructure expenses index YEN `#1002` directly by placed-object type
-- carrier sweeps remap carrier mode to type `0x2a`, `0x01`, or `0x2b`, then multiply by carrier `unit_record_count`
-- special-link sweeps charge either type `0x1b` or type `0x16`, scaled by `(unit_count >> 1) + 1`
-- parking uses a separate parking-expense routine and is not a direct YEN `#1002` row lookup
+- placed-object infrastructure expenses are indexed directly by placed-object type from a tuning table
+- carrier sweeps remap carrier mode to the appropriate expense type, then multiply by carrier unit_record_count
+- special-link sweeps charge either stair type or escalator type, scaled by (unit_count / 2 + 1)
+- parking uses a separate parking-expense routine
 
-Binary-confirmed carrier expense values:
+Carrier expense values:
 
-- YEN `#1002[0x2a] = 200`, so express carriers charge `$20,000` per car on each 3-day expense pass
-- YEN `#1002[0x01] = 100`, so standard carriers charge `$10,000` per car on each 3-day expense pass
-- YEN `#1002[0x2b] = 100`, so service carriers charge `$10,000` per car on each 3-day expense pass
-- there is no extra divisor or currency conversion in the carrier path: `add_scaled_infrastructure_expense_by_type` byte-swaps the 32-bit YEN entry, multiplies it by `unit_count`, subtracts the result from cash, and records that exact amount in the expense ledger
+- Express carriers: $20,000 per car per 3-day expense pass
+- Standard carriers: $10,000 per car per 3-day expense pass
+- Service carriers: $10,000 per car per 3-day expense pass
 
-Recovered special-link branch mapping:
+Special-link branch mapping:
 
-- raw special-link records with low flag bit `0` charge as type `0x1b`
-- raw special-link records with low flag bit `1` charge as type `0x16`
-- `place_stairs_or_escalator_link` confirms the same low bit also controls route behavior and walkability writes: low-bit-`0` links are the local stair branch, and low-bit-`1` links are the express escalator branch
-- YEN `#1002` contains an expense row for type `0x1b` with value `50` (`$5,000`) and no nonzero row for type `0x16`, so the 3-day upkeep path charges stairs `$5,000` per scaled unit and escalators `$0`
-- this is a real type-row inversion in the binary's expense path, not a spec typo: player-facing labels still identify type `0x16` as `Stairs` and type `0x1b` as `Escalator`, but periodic upkeep remaps raw branch bit `0` to row `0x1b` and raw branch bit `1` to row `0x16`
+- local-branch special links (stairs) charge $5,000 per scaled unit on each 3-day expense pass
+- express-branch special links (escalators) charge $0
+- note: the internal type-to-expense mapping is inverted relative to player-facing type codes — this is a real behavior inversion, not a spec error
 
 Parking expense formula:
 
@@ -147,7 +142,7 @@ Parking expense formula:
   - star `3`: `30`
   - stars `>= 4`: `100`
 - these are `$100` units before the `/ 10` scaling step
-- the resulting expense is recorded under expense ledger bucket `0x18`
+- the resulting expense is recorded under the parking expense ledger bucket
 - the charge is skipped for floor indices inside the excluded underground band `1 <= floor < lowest_floor_bound`
 
 This naming-to-behavior inversion is strange, but it is no longer unresolved.
@@ -165,9 +160,9 @@ Examples:
 
 ## Pricing Tiers
 
-`rent_level` (placed-object offset `+0x16`) is the player-configurable pricing/rent
-tier. The player sets it via the facility info dialog for priced families (3, 4, 5, 7,
-9, 10). It indexes into the YEN #1001 payout resource table.
+`rent_level` is the player-configurable pricing/rent
+tier. The player sets it via the facility info dialog for priced families
+(hotel single/twin/suite, office, condo, retail). It indexes into the payout tuning table.
 
 - `0`: highest price (tier 0) — readiness penalty `+30`
 - `1`: default price (tier 1) — set at placement, no readiness modifier

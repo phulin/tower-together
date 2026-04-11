@@ -58,6 +58,24 @@ export function add_cashflow_from_family_resource(
 	}
 }
 
+export function remove_cashflow_from_family_resource(
+	ledger: LedgerState,
+	tileName: string,
+	rentLevel: number,
+	familyCode: number,
+): void {
+	const payouts = YEN_1001[tileName];
+	if (!payouts) return;
+	const amount = payouts[Math.min(rentLevel, 3)] * YEN_UNIT;
+	ledger.cashBalance = Math.max(0, ledger.cashBalance - amount);
+	if (familyCode >= 0 && familyCode < 256) {
+		ledger.incomeLedger[familyCode] = Math.max(
+			0,
+			ledger.incomeLedger[familyCode] - amount,
+		);
+	}
+}
+
 // ─── Expense sweep ────────────────────────────────────────────────────────────
 
 /**
@@ -195,8 +213,8 @@ const CODE_TO_TILE: Record<number, string> = {
 	12: "fastFood",
 	14: "metro",
 	18: "cinema",
-	20: "security",
-	21: "housekeeping",
+	20: "recyclingCenterUpper",
+	21: "recyclingCenterLower",
 	24: "parking",
 	29: "entertainment",
 	31: "hotelSingle",

@@ -1,6 +1,6 @@
 # Lobby
 
-Family `0x18` is passive transfer infrastructure.
+Family 24 (Lobby) is passive transfer infrastructure.
 
 Rules:
 

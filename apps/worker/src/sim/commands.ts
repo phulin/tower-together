@@ -8,11 +8,12 @@ import { type LedgerState, rebuild_facility_ledger } from "./ledger";
 import {
 	FAMILY_CONDO,
 	FAMILY_FAST_FOOD,
-	FAMILY_HOUSEKEEPING,
 	FAMILY_METRO,
 	FAMILY_OFFICE,
+	FAMILY_RECYCLING_CENTER_LOWER,
+	FAMILY_RECYCLING_CENTER_UPPER,
 	FAMILY_RETAIL,
-	FAMILY_SECURITY,
+	LEGACY_TILE_ALIASES,
 	LEGACY_VIP_TILE_TO_STANDARD,
 	TILE_COSTS,
 	TILE_TO_FAMILY_CODE,
@@ -121,8 +122,8 @@ function alloc_sidecar(
 		};
 		record = r;
 	} else if (
-		tileType === "security" ||
-		tileType === "housekeeping" ||
+		tileType === "recyclingCenterUpper" ||
+		tileType === "recyclingCenterLower" ||
 		tileType === "parking"
 	) {
 		const r: ServiceRequestEntry = {
@@ -245,7 +246,7 @@ export function run_global_rebuilds(
 	world.gateFlags.officePlaced = 0;
 	world.gateFlags.metroPlaced = 0;
 	world.gateFlags.vipSuiteFloor = 0xffff;
-	world.gateFlags.securityLedgerScale = 0;
+	world.gateFlags.recyclingCenterCount = 0;
 	for (const [key, object] of Object.entries(world.placedObjects)) {
 		if (object.objectTypeCode === FAMILY_OFFICE)
 			world.gateFlags.officePlaced = 1;
@@ -254,8 +255,8 @@ export function run_global_rebuilds(
 			const [, y] = key.split(",").map(Number);
 			world.gateFlags.vipSuiteFloor = world.height - 1 - y;
 		}
-		if (object.objectTypeCode === FAMILY_SECURITY)
-			world.gateFlags.securityLedgerScale += 1;
+		if (object.objectTypeCode === FAMILY_RECYCLING_CENTER_UPPER)
+			world.gateFlags.recyclingCenterCount += 1;
 	}
 
 	rebuild_facility_ledger(ledger, world);
@@ -276,7 +277,10 @@ export function handle_place_tile(
 	world: WorldState,
 	ledger: LedgerState,
 ): CommandResult {
-	const normalizedTileType = LEGACY_VIP_TILE_TO_STANDARD[tileType] ?? tileType;
+	const normalizedTileType =
+		LEGACY_TILE_ALIASES[LEGACY_VIP_TILE_TO_STANDARD[tileType] ?? tileType] ??
+		LEGACY_VIP_TILE_TO_STANDARD[tileType] ??
+		tileType;
 	const vipFlag = tileType in LEGACY_VIP_TILE_TO_STANDARD;
 
 	if (!VALID_TILE_TYPES.has(normalizedTileType)) {
@@ -440,17 +444,20 @@ export function handle_place_tile(
 		}
 	}
 
-	// Service stack proximity: security/housekeeping must overlap an existing
-	// 0x14/0x15 stack within the recovered search band (anchor-2 .. anchor+1).
+	// Recycling-center stacks must overlap an existing 0x14/0x15 stack within
+	// the recovered search band (anchor-2 .. anchor+1).
 	const familyCode = TILE_TO_FAMILY_CODE[normalizedTileType] ?? 0;
-	if (familyCode === FAMILY_SECURITY || familyCode === FAMILY_HOUSEKEEPING) {
+	if (
+		familyCode === FAMILY_RECYCLING_CENTER_UPPER ||
+		familyCode === FAMILY_RECYCLING_CENTER_LOWER
+	) {
 		const proposedFloor = yToFloor(y);
 		let hasExisting = false;
 		let overlaps = false;
 		for (const [key, obj] of Object.entries(world.placedObjects)) {
 			if (
-				obj.objectTypeCode !== FAMILY_SECURITY &&
-				obj.objectTypeCode !== FAMILY_HOUSEKEEPING
+				obj.objectTypeCode !== FAMILY_RECYCLING_CENTER_UPPER &&
+				obj.objectTypeCode !== FAMILY_RECYCLING_CENTER_LOWER
 			) {
 				continue;
 			}
@@ -469,7 +476,7 @@ export function handle_place_tile(
 			return {
 				accepted: false,
 				reason:
-					"Service facility must be placed near an existing security or housekeeping stack",
+					"Recycling center must be placed near an existing recycling-center stack",
 			};
 		}
 	}
