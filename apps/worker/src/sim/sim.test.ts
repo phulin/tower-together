@@ -1792,8 +1792,8 @@ describe("car state machine", () => {
 				routeRetryDelay: 0,
 				transitTicksRemaining: 0,
 				lastDemandTick: 0,
-				demandSampleCount: 0,
-				demandAccumulator: 0,
+				tripCount: 0,
+				accumulatedTicks: 0,
 			});
 		}
 		const time = createTimeState();
@@ -1841,8 +1841,8 @@ describe("car state machine", () => {
 				routeRetryDelay: 0,
 				transitTicksRemaining: 0,
 				lastDemandTick: 0,
-				demandSampleCount: 0,
-				demandAccumulator: 0,
+				tripCount: 0,
+				accumulatedTicks: 0,
 			});
 		}
 		const time = createTimeState();
@@ -2370,7 +2370,7 @@ describe("Phase 4 runtime entities", () => {
 			direction: "up",
 			source: 10,
 		};
-		entity.demandSampleCount = 1;
+		entity.tripCount = 1;
 
 		onCarrierArrival(
 			world,
@@ -2556,8 +2556,8 @@ describe("Phase 4 runtime entities", () => {
 			routeRetryDelay: 0,
 			transitTicksRemaining: 0,
 			lastDemandTick: 0,
-			demandSampleCount: 0,
-			demandAccumulator: 0,
+			tripCount: 0,
+			accumulatedTicks: 0,
 		});
 
 		populateCarrierRequests(world, { ...createTimeState(), dayTick: 321 });
@@ -2592,8 +2592,8 @@ describe("Phase 4 runtime entities", () => {
 			routeRetryDelay: 0,
 			transitTicksRemaining: 0,
 			lastDemandTick: 0,
-			demandSampleCount: 0,
-			demandAccumulator: 0,
+			tripCount: 0,
+			accumulatedTicks: 0,
 		});
 
 		reconcileEntityTransport(world, ledger, createTimeState());

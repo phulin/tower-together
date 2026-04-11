@@ -171,8 +171,8 @@ function makeEntity(
 		routeRetryDelay: 0,
 		transitTicksRemaining: 0,
 		lastDemandTick: 0,
-		demandSampleCount: 0,
-		demandAccumulator: 0,
+		tripCount: 0,
+		accumulatedTicks: 0,
 	};
 }
 
@@ -339,10 +339,8 @@ function recomputeObjectOperationalStatus(
 	// Per-sim stress = accumulated_elapsed / sample_count, averaged across population.
 	let stressSum = 0;
 	for (const sibling of siblings) {
-		if (sibling.demandSampleCount > 0) {
-			stressSum += Math.trunc(
-				sibling.demandAccumulator / sibling.demandSampleCount,
-			);
+		if (sibling.tripCount > 0) {
+			stressSum += Math.trunc(sibling.accumulatedTicks / sibling.tripCount);
 		}
 	}
 	let score = Math.trunc(stressSum / populationCount);
@@ -466,10 +464,10 @@ function rebaseSimElapsedFromClock(
 	entity.lastDemandTick = 0;
 }
 
-/** Capture a completed service-visit sample. Spec: advance_sim_demand_counters. */
-function advanceSimDemandCounters(entity: EntityRecord): void {
-	entity.demandSampleCount = Math.min(300, entity.demandSampleCount + 1);
-	entity.demandAccumulator += entity.elapsedTicks;
+/** Capture a completed trip. Spec: advance_sim_demand_counters. */
+function accumulateSimTripTicks(entity: EntityRecord): void {
+	entity.tripCount += 1;
+	entity.accumulatedTicks += entity.elapsedTicks;
 	entity.elapsedTicks = 0;
 	entity.lastDemandTick = 0;
 }
@@ -482,8 +480,8 @@ function addDelayToCurrentSim(entity: EntityRecord, delta: number): void {
 
 /** Clear demand counters. Spec: reset_sim_demand_counters. */
 function resetSimDemandCounters(entity: EntityRecord): void {
-	entity.demandSampleCount = 0;
-	entity.demandAccumulator = 0;
+	entity.tripCount = 0;
+	entity.accumulatedTicks = 0;
 }
 
 /**
@@ -578,7 +576,7 @@ function dispatchCommercialVenueVisit(
 	);
 	if (!venue) {
 		addDelayToCurrentSim(entity, 300);
-		advanceSimDemandCounters(entity);
+		accumulateSimTripTicks(entity);
 		if (options.unavailableState !== undefined) {
 			entity.stateCode = options.unavailableState;
 		}
@@ -606,7 +604,7 @@ function dispatchCommercialVenueVisit(
 
 	reserveVenue(venue.record);
 	rebaseSimElapsedFromClock(entity, time);
-	advanceSimDemandCounters(entity);
+	accumulateSimTripTicks(entity);
 	options.onVenueReserved?.();
 	if (venue.floor === entity.floorAnchor) {
 		beginCommercialVenueDwell(entity, venue.floor, options.returnState);
@@ -1121,7 +1119,7 @@ function tryAssignParkingService(
 	const rec = world.sidecars[idx] as ServiceRequestEntry | undefined;
 	if (!rec || rec.kind !== "service_request") return false;
 	rebaseSimElapsedFromClock(entity, time);
-	advanceSimDemandCounters(entity);
+	accumulateSimTripTicks(entity);
 	return true;
 }
 
@@ -1455,7 +1453,7 @@ export function resolveEntityRouteBetweenFloors(
 		clearEntityRoute(entity);
 		entity.routeRetryDelay = 300;
 		addDelayToCurrentSim(entity, 300);
-		advanceSimDemandCounters(entity);
+		accumulateSimTripTicks(entity);
 		return -1;
 	}
 
@@ -1485,7 +1483,7 @@ export function resolveEntityRouteBetweenFloors(
 	if (!carrier) {
 		clearEntityRoute(entity);
 		addDelayToCurrentSim(entity, 300);
-		advanceSimDemandCounters(entity);
+		accumulateSimTripTicks(entity);
 		return -1;
 	}
 

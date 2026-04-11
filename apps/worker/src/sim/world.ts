@@ -141,8 +141,8 @@ export interface EntityRecord {
 	routeRetryDelay: number;
 	transitTicksRemaining: number;
 	lastDemandTick: number;
-	demandSampleCount: number;
-	demandAccumulator: number;
+	tripCount: number;
+	accumulatedTicks: number;
 }
 
 // ─── Routing types ────────────────────────────────────────────────────────────
