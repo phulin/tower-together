@@ -510,9 +510,7 @@ function clear_entity_route_by_id(world: WorldState, entityId: string): void {
 	for (const entity of world.entities) {
 		const key = `${entity.floorAnchor}:${entity.subtypeIndex}:${entity.familyCode}:${entity.baseOffset}`;
 		if (key !== entityId) continue;
-		entity.routeMode = 0;
-		entity.routeSourceFloor = 0xff;
-		entity.routeCarrierOrSegment = 0xff;
+		entity.route = { mode: "idle" };
 		entity.routeRetryDelay = 0;
 		return;
 	}

@@ -23,6 +23,7 @@ import {
 	type EntityRecord,
 	GRID_HEIGHT,
 	type PlacedObjectRecord,
+	type RouteState,
 	type WorldState,
 	yToFloor,
 } from "./world";
@@ -35,8 +36,8 @@ const EVAL_ZONE_FLOOR = 109; // floor 0x6d
 // ─── Entity state codes (from spec state machines) ──────────────────────────
 
 const STATE_COMMUTE = 0x00; // commuting to destination
-const STATE_ACTIVE = 0x01; // active / in-stay / venue selection
-const STATE_ARRIVED = 0x03; // arrived at destination
+export const STATE_ACTIVE = 0x01; // active / in-stay / venue selection
+export const STATE_ARRIVED = 0x03; // arrived at destination
 const STATE_CHECKOUT_QUEUE = 0x04; // hotel checkout queue (non-last sibling)
 const STATE_DEPARTURE = 0x05; // departing / returning
 const STATE_TRANSITION = 0x10; // unit status transition (hotel checking out)
@@ -46,7 +47,7 @@ const STATE_VENUE_TRIP = 0x22; // commercial venue trip in transit
 const STATE_HOTEL_PARKED = 0x24; // hotel parked (awaiting guest)
 const STATE_NIGHT_A = 0x25; // night park variant A
 const STATE_NIGHT_B = 0x26; // night park / venue unavailable
-const STATE_PARKED = 0x27; // parked / idle
+export const STATE_PARKED = 0x27; // parked / idle
 const STATE_EVAL_RETURN = 0x45; // cathedral eval return transit
 const STATE_EVAL_OUTBOUND = 0x60; // cathedral eval outbound transit
 
@@ -58,15 +59,12 @@ const UNIT_STATUS_CONDO_VACANT = 0x18;
 const UNIT_STATUS_HOTEL_CHECKOUT = 0x28;
 const UNIT_STATUS_HOTEL_SOLD_OUT = 0x37;
 
-// ─── Carrier route encoding ─────────────────────────────────────────────────
+// ─── Route helpers ──────────────────────────────────────────────────────────
 
-const CARRIER_UP_BASE = 0x40;
-const CARRIER_DOWN_BASE = 0x58;
+const ROUTE_IDLE: RouteState = { mode: "idle" };
 
 // ─── Sentinel values ────────────────────────────────────────────────────────
 
-const INVALID_FLOOR = 0xff;
-const INVALID_ROUTE = 0xff;
 const NO_EVAL_ENTITY = 0xffff;
 
 // ─── Misc tuning constants ──────────────────────────────────────────────────
@@ -124,9 +122,8 @@ const ELEVATOR_DEMAND_STATES = new Set([
 	STATE_EVAL_OUTBOUND,
 	STATE_EVAL_RETURN,
 ]);
-const ROUTE_MODE_NONE = 0;
-const ROUTE_MODE_SEGMENT = 1;
-const ROUTE_MODE_CARRIER = 2;
+// Sentinel used by carrier car slot cleanup and unset cathedral owner indices.
+const INVALID_FLOOR = 0xff;
 const COMMERCIAL_VENUE_DWELL_TICKS = 60;
 const COMMERCIAL_DWELL_STATE = 0x62;
 const CONDO_COMMERCIAL_FAMILIES = new Set([
@@ -146,21 +143,19 @@ function makeEntity(
 		baseOffset,
 		familyCode,
 		stateCode: initialStateForFamily(familyCode),
-		routeMode: ROUTE_MODE_NONE,
-		routeSourceFloor: INVALID_FLOOR,
-		routeCarrierOrSegment: INVALID_ROUTE,
+		route: ROUTE_IDLE,
 		selectedFloor: floorAnchor,
 		originFloor: floorAnchor,
-		encodedRouteTarget: -1,
-		auxState: 0,
+		destinationFloor: -1,
+		venueReturnState: 0,
 		queueTick: 0,
-		accumulatedDelay: 0,
+		stressCounter: 0,
 		routeRetryDelay: 0,
-		auxCounter: 0,
-		word0a: 0,
-		word0c: 0,
-		word0e: 0,
-		byte09: 0,
+		transitTicksRemaining: 0,
+		lastDemandTick: 0,
+		demandSampleCount: 0,
+		demandAccumulator: 0,
+		visitCounter: 0,
 	};
 }
 
@@ -325,7 +320,7 @@ function recomputeObjectOperationalStatus(
 
 	const siblings = findSiblingEntities(world, entity);
 	const sampleTotal = siblings.reduce(
-		(sum, sibling) => sum + sibling.byte09,
+		(sum, sibling) => sum + sibling.visitCounter,
 		0,
 	);
 	const sampleDivisor =
@@ -435,10 +430,10 @@ function pickAvailableVenue(
 }
 
 function recordDemandSample(entity: EntityRecord, time: TimeState): void {
-	entity.word0a = time.dayTick;
-	entity.word0c = Math.min(300, entity.word0c + 1);
-	entity.word0e += entity.word0c;
-	entity.byte09 = Math.min(255, entity.byte09 + 1);
+	entity.lastDemandTick = time.dayTick;
+	entity.demandSampleCount = Math.min(300, entity.demandSampleCount + 1);
+	entity.demandAccumulator += entity.demandSampleCount;
+	entity.visitCounter = Math.min(255, entity.visitCounter + 1);
 }
 
 function reserveVenue(record: CommercialVenueRecord): void {
@@ -447,11 +442,11 @@ function reserveVenue(record: CommercialVenueRecord): void {
 }
 
 function raiseStress(entity: EntityRecord, amount = 20): void {
-	entity.accumulatedDelay = Math.min(255, entity.accumulatedDelay + amount);
+	entity.stressCounter = Math.min(255, entity.stressCounter + amount);
 }
 
 function lowerStress(entity: EntityRecord, amount = 12): void {
-	entity.accumulatedDelay = Math.max(0, entity.accumulatedDelay - amount);
+	entity.stressCounter = Math.max(0, entity.stressCounter - amount);
 }
 
 function beginCommercialVenueDwell(
@@ -459,10 +454,10 @@ function beginCommercialVenueDwell(
 	arrivalFloor: number,
 	returnState: number,
 ): void {
-	entity.encodedRouteTarget = -1;
+	entity.destinationFloor = -1;
 	entity.selectedFloor = arrivalFloor;
 	clear_entity_route(entity);
-	entity.auxState = returnState;
+	entity.venueReturnState = returnState;
 	entity.stateCode = COMMERCIAL_DWELL_STATE;
 }
 
@@ -470,7 +465,7 @@ function beginCommercialVenueTrip(
 	entity: EntityRecord,
 	destinationFloor: number,
 ): void {
-	entity.encodedRouteTarget = destinationFloor;
+	entity.destinationFloor = destinationFloor;
 	entity.selectedFloor = entity.floorAnchor;
 	entity.stateCode = STATE_VENUE_TRIP;
 }
@@ -481,10 +476,11 @@ function finishCommercialVenueDwell(
 	defaultState: number,
 ): boolean {
 	if (entity.stateCode !== COMMERCIAL_DWELL_STATE) return false;
-	if (time.dayTick - entity.word0a < COMMERCIAL_VENUE_DWELL_TICKS) return true;
+	if (time.dayTick - entity.lastDemandTick < COMMERCIAL_VENUE_DWELL_TICKS)
+		return true;
 	entity.selectedFloor = entity.floorAnchor;
-	entity.stateCode = entity.auxState || defaultState;
-	entity.auxState = 0;
+	entity.stateCode = entity.venueReturnState || defaultState;
+	entity.venueReturnState = 0;
 	return true;
 }
 
@@ -493,8 +489,8 @@ function finishCommercialVenueTrip(
 	returnState: number,
 ): boolean {
 	if (entity.stateCode !== STATE_VENUE_TRIP) return false;
-	if (entity.selectedFloor !== entity.encodedRouteTarget) return true;
-	entity.encodedRouteTarget = -1;
+	if (entity.selectedFloor !== entity.destinationFloor) return true;
+	entity.destinationFloor = -1;
 	entity.selectedFloor = entity.floorAnchor;
 	entity.stateCode = returnState;
 	return true;
@@ -545,7 +541,7 @@ function handleCommercialVenueArrival(
 ): boolean {
 	if (
 		entity.stateCode !== STATE_VENUE_TRIP ||
-		entity.encodedRouteTarget !== arrivalFloor
+		entity.destinationFloor !== arrivalFloor
 	) {
 		return false;
 	}
@@ -631,7 +627,7 @@ function processHotelEntity(
 				if (object.unitStatus === 0 || object.unitStatus === 8) {
 					object.unitStatus = STATE_TRANSITION;
 				}
-				entity.encodedRouteTarget = LOBBY_FLOOR;
+				entity.destinationFloor = LOBBY_FLOOR;
 				entity.selectedFloor = entity.floorAnchor;
 				entity.stateCode = STATE_DEPARTURE;
 				return;
@@ -735,7 +731,7 @@ function processOfficeEntity(
 
 		// Dispatch: route from lobby to office floor
 		if (entity.floorAnchor !== LOBBY_FLOOR) {
-			entity.encodedRouteTarget = entity.floorAnchor;
+			entity.destinationFloor = entity.floorAnchor;
 			entity.selectedFloor = LOBBY_FLOOR;
 			entity.stateCode = STATE_COMMUTE;
 		} else {
@@ -756,7 +752,7 @@ function processOfficeEntity(
 		// Gate: daypart ≥ 4 → evening departure
 		if (time.daypartIndex >= 4) {
 			entity.stateCode = STATE_DEPARTURE;
-			entity.encodedRouteTarget = LOBBY_FLOOR;
+			entity.destinationFloor = LOBBY_FLOOR;
 			entity.selectedFloor = entity.floorAnchor;
 			return;
 		}
@@ -783,7 +779,7 @@ function processOfficeEntity(
 		// Gate: daypart ≥ 4 → evening departure
 		if (time.daypartIndex >= 4) {
 			entity.stateCode = STATE_DEPARTURE;
-			entity.encodedRouteTarget = LOBBY_FLOOR;
+			entity.destinationFloor = LOBBY_FLOOR;
 			entity.selectedFloor = entity.floorAnchor;
 			return;
 		}
@@ -837,7 +833,7 @@ function processCondoEntity(
 					sibling.stateCode = STATE_ACTIVE;
 					continue;
 				}
-				sibling.encodedRouteTarget = sibling.floorAnchor;
+				sibling.destinationFloor = sibling.floorAnchor;
 				sibling.selectedFloor = LOBBY_FLOOR;
 				sibling.stateCode = STATE_VENUE_TRIP;
 			}
@@ -919,14 +915,12 @@ export function reset_entity_runtime_state(world: WorldState): void {
 
 		entity.selectedFloor = entity.floorAnchor;
 		entity.originFloor = entity.floorAnchor;
-		entity.routeMode = ROUTE_MODE_NONE;
-		entity.routeSourceFloor = INVALID_FLOOR;
-		entity.routeCarrierOrSegment = INVALID_ROUTE;
-		entity.encodedRouteTarget = -1;
-		entity.auxState = 0;
+		entity.route = ROUTE_IDLE;
+		entity.destinationFloor = -1;
+		entity.venueReturnState = 0;
 		entity.queueTick = 0;
-		entity.accumulatedDelay = 0;
-		entity.auxCounter = 0;
+		entity.stressCounter = 0;
+		entity.transitTicksRemaining = 0;
 	}
 }
 
@@ -967,7 +961,7 @@ export function advance_entity_refresh_stride(
 
 function shouldSeedElevatorDemand(entity: EntityRecord): boolean {
 	if (entity.routeRetryDelay > 0) return false;
-	if (entity.routeMode !== ROUTE_MODE_NONE) return false;
+	if (entity.route.mode !== "idle") return false;
 	if (!ELEVATOR_DEMAND_STATES.has(entity.stateCode)) return false;
 	if (
 		entity.familyCode !== FAMILY_HOTEL_SINGLE &&
@@ -988,11 +982,11 @@ function getElevatorDemand(entity: EntityRecord): {
 	directionFlag: number;
 } | null {
 	// Office commute: route from lobby to office floor
-	if (entity.stateCode === STATE_COMMUTE && entity.encodedRouteTarget >= 0) {
+	if (entity.stateCode === STATE_COMMUTE && entity.destinationFloor >= 0) {
 		return {
 			sourceFloor: entity.selectedFloor,
-			destinationFloor: entity.encodedRouteTarget,
-			directionFlag: entity.encodedRouteTarget > entity.selectedFloor ? 0 : 1,
+			destinationFloor: entity.destinationFloor,
+			directionFlag: entity.destinationFloor > entity.selectedFloor ? 0 : 1,
 		};
 	}
 
@@ -1007,11 +1001,11 @@ function getElevatorDemand(entity: EntityRecord): {
 		};
 	}
 
-	if (entity.stateCode === STATE_VENUE_TRIP && entity.encodedRouteTarget >= 0) {
+	if (entity.stateCode === STATE_VENUE_TRIP && entity.destinationFloor >= 0) {
 		return {
 			sourceFloor: entity.selectedFloor,
-			destinationFloor: entity.encodedRouteTarget,
-			directionFlag: entity.encodedRouteTarget > entity.selectedFloor ? 0 : 1,
+			destinationFloor: entity.destinationFloor,
+			directionFlag: entity.destinationFloor > entity.selectedFloor ? 0 : 1,
 		};
 	}
 
@@ -1132,17 +1126,20 @@ function resolve_entity_route_between_floors(
 	}
 
 	if (route.kind === "segment") {
-		entity.routeMode = ROUTE_MODE_SEGMENT;
-		entity.routeSourceFloor = destinationFloor;
-		entity.routeCarrierOrSegment = route.id;
+		entity.route = {
+			mode: "segment",
+			segmentId: route.id,
+			destination: destinationFloor,
+		};
 		entity.queueTick = time?.dayTick ?? entity.queueTick;
-		entity.encodedRouteTarget = destinationFloor;
+		entity.destinationFloor = destinationFloor;
 		// Per-stop transit delay: local stair branch = 16 ticks/floor,
 		// express escalator branch = 35 ticks/floor.
 		const segment = world.specialLinks[route.id];
 		const isExpressBranch = segment ? (segment.flags & 1) !== 0 : false;
 		const perStopDelay = isExpressBranch ? 35 : 16;
-		entity.auxCounter = Math.abs(destinationFloor - sourceFloor) * perStopDelay;
+		entity.transitTicksRemaining =
+			Math.abs(destinationFloor - sourceFloor) * perStopDelay;
 		return 1;
 	}
 
@@ -1162,31 +1159,26 @@ function resolve_entity_route_between_floors(
 		directionFlag,
 	);
 	if (!queued) {
-		// Queue full: stamp the sentinel and source floor so the entity
-		// remains parked here and retries after the waiting-state delay.
-		entity.routeMode = ROUTE_MODE_NONE;
-		entity.routeSourceFloor = sourceFloor;
-		entity.routeCarrierOrSegment = INVALID_ROUTE;
-		entity.encodedRouteTarget = destinationFloor;
+		// Queue full: entity remains parked here and retries after a short delay.
+		entity.route = { mode: "queued", source: sourceFloor };
+		entity.destinationFloor = destinationFloor;
 		entity.routeRetryDelay = 5;
 		return 0;
 	}
 
-	entity.routeMode = ROUTE_MODE_CARRIER;
-	entity.routeSourceFloor = sourceFloor;
-	entity.routeCarrierOrSegment =
-		directionFlag === 0
-			? route.id + CARRIER_UP_BASE
-			: route.id + CARRIER_DOWN_BASE;
+	entity.route = {
+		mode: "carrier",
+		carrierId: route.id,
+		direction: directionFlag === 0 ? "up" : "down",
+		source: sourceFloor,
+	};
 	entity.queueTick = time?.dayTick ?? entity.queueTick;
-	entity.encodedRouteTarget = destinationFloor;
+	entity.destinationFloor = destinationFloor;
 	return 2;
 }
 
 function clear_entity_route(entity: EntityRecord): void {
-	entity.routeMode = ROUTE_MODE_NONE;
-	entity.routeSourceFloor = INVALID_FLOOR;
-	entity.routeCarrierOrSegment = INVALID_ROUTE;
+	entity.route = ROUTE_IDLE;
 }
 
 function should_finalize_segment_trip(entity: EntityRecord): boolean {
@@ -1199,13 +1191,12 @@ function should_finalize_segment_trip(entity: EntityRecord): boolean {
 }
 
 function finalize_pending_route_leg(entity: EntityRecord): void {
-	if (entity.routeMode !== ROUTE_MODE_SEGMENT) return;
-	if (entity.routeSourceFloor === INVALID_FLOOR) return;
-	if (entity.auxCounter > 0) {
-		entity.auxCounter -= 1;
+	if (entity.route.mode !== "segment") return;
+	if (entity.transitTicksRemaining > 0) {
+		entity.transitTicksRemaining -= 1;
 		return;
 	}
-	entity.selectedFloor = entity.routeSourceFloor;
+	entity.selectedFloor = entity.route.destination;
 	clear_entity_route(entity);
 }
 
@@ -1232,7 +1223,7 @@ function dispatch_entity_arrival(
 					entity.stateCode === STATE_DEPARTURE) &&
 				arrivalFloor === LOBBY_FLOOR
 			) {
-				entity.encodedRouteTarget = -1;
+				entity.destinationFloor = -1;
 				if (object) checkoutHotelStay(world, ledger, entity, object);
 			}
 			return;
@@ -1242,7 +1233,7 @@ function dispatch_entity_arrival(
 				entity.stateCode === STATE_COMMUTE &&
 				arrivalFloor === entity.floorAnchor
 			) {
-				entity.encodedRouteTarget = -1;
+				entity.destinationFloor = -1;
 				entity.selectedFloor = entity.floorAnchor;
 				entity.stateCode = STATE_AT_WORK;
 				if (object)
@@ -1258,7 +1249,7 @@ function dispatch_entity_arrival(
 				entity.stateCode === STATE_DEPARTURE &&
 				arrivalFloor === LOBBY_FLOOR
 			) {
-				entity.encodedRouteTarget = -1;
+				entity.destinationFloor = -1;
 				entity.selectedFloor = entity.floorAnchor;
 				entity.stateCode = STATE_PARKED;
 			}
@@ -1274,14 +1265,14 @@ function dispatch_entity_arrival(
 					arrivalFloor === EVAL_ZONE_FLOOR
 				) {
 					entity.stateCode = STATE_ARRIVED;
-					entity.encodedRouteTarget = -1;
+					entity.destinationFloor = -1;
 					checkEvalCompletionAndAward(world, time, entity);
 				} else if (
 					entity.stateCode === STATE_EVAL_RETURN &&
 					arrivalFloor === LOBBY_FLOOR
 				) {
 					entity.stateCode = STATE_PARKED;
-					entity.encodedRouteTarget = -1;
+					entity.destinationFloor = -1;
 				}
 			}
 			return;
@@ -1300,10 +1291,7 @@ export function populate_carrier_requests(
 	for (const entity of world.entities) {
 		// Entities already in-transit on a carrier or segment are active demand —
 		// their pending routes must not be pruned.
-		if (
-			entity.routeMode === ROUTE_MODE_CARRIER ||
-			entity.routeMode === ROUTE_MODE_SEGMENT
-		) {
+		if (entity.route.mode === "carrier" || entity.route.mode === "segment") {
 			activeDemandIds.add(entityKey(entity));
 			continue;
 		}
@@ -1351,7 +1339,7 @@ export function populate_carrier_requests(
 
 	for (const entity of world.entities) {
 		if (!activeDemandIds.has(entityKey(entity))) {
-			entity.routeCarrierOrSegment = INVALID_ROUTE;
+			entity.route = ROUTE_IDLE;
 		}
 	}
 }
@@ -1385,11 +1373,10 @@ export function reconcile_entity_transport(
 	time: TimeState,
 ): void {
 	for (const entity of world.entities) {
-		if (entity.routeMode !== ROUTE_MODE_SEGMENT) continue;
-		if (entity.routeSourceFloor === INVALID_FLOOR) continue;
+		if (entity.route.mode !== "segment") continue;
 		if (!should_finalize_segment_trip(entity)) continue;
-		if (entity.auxCounter > 0) {
-			entity.auxCounter -= 1;
+		if (entity.transitTicksRemaining > 0) {
+			entity.transitTicksRemaining -= 1;
 			continue;
 		}
 		dispatch_entity_arrival(
@@ -1397,7 +1384,7 @@ export function reconcile_entity_transport(
 			ledger,
 			time,
 			entity,
-			entity.routeSourceFloor,
+			entity.route.destination,
 		);
 	}
 
@@ -1408,14 +1395,14 @@ export function reconcile_entity_transport(
 	}
 
 	for (const entity of world.entities) {
-		if (entity.encodedRouteTarget < 0) continue;
+		if (entity.destinationFloor < 0) continue;
 		if (!completed.has(entityKey(entity))) continue;
 		dispatch_entity_arrival(
 			world,
 			ledger,
 			time,
 			entity,
-			entity.encodedRouteTarget,
+			entity.destinationFloor,
 		);
 	}
 }
@@ -1582,8 +1569,8 @@ export function activateEvalEntities(world: WorldState, time: TimeState): void {
 		entity.selectedFloor = LOBBY_FLOOR;
 		entity.originFloor = entity.floorAnchor;
 		clear_entity_route(entity);
-		entity.encodedRouteTarget = -1;
-		entity.auxState = 0;
+		entity.destinationFloor = -1;
+		entity.venueReturnState = 0;
 	}
 }
 
@@ -1597,7 +1584,7 @@ export function dispatchEvalMiddayReturn(world: WorldState): void {
 		if (entity.stateCode === STATE_ARRIVED) {
 			entity.stateCode = STATE_DEPARTURE;
 			entity.selectedFloor = EVAL_ZONE_FLOOR;
-			entity.encodedRouteTarget = LOBBY_FLOOR;
+			entity.destinationFloor = LOBBY_FLOOR;
 		}
 	}
 }
@@ -1631,7 +1618,7 @@ function processCathedralEntity(
 
 			// Dispatch: route from lobby to eval zone
 			entity.selectedFloor = LOBBY_FLOOR;
-			entity.encodedRouteTarget = EVAL_ZONE_FLOOR;
+			entity.destinationFloor = EVAL_ZONE_FLOOR;
 			const result = resolve_entity_route_between_floors(
 				world,
 				entity,
@@ -1661,9 +1648,9 @@ function processCathedralEntity(
 
 		case STATE_DEPARTURE: {
 			// Midday return: route from eval zone to lobby
-			if (entity.routeMode !== ROUTE_MODE_NONE) return; // already routed
+			if (entity.route.mode !== "idle") return; // already routed
 			entity.selectedFloor = EVAL_ZONE_FLOOR;
-			entity.encodedRouteTarget = LOBBY_FLOOR;
+			entity.destinationFloor = LOBBY_FLOOR;
 			const returnResult = resolve_entity_route_between_floors(
 				world,
 				entity,
@@ -1742,241 +1729,14 @@ function checkEvalCompletionAndAward(
 	}
 }
 
-// ─── Entertainment phase logic (families 0x12 / 0x1d) ────────────────────────
-
-const ENTERTAINMENT_FAMILY_PAIRED = FAMILY_CINEMA;
-const ENTERTAINMENT_FAMILY_SINGLE = FAMILY_ENTERTAINMENT;
-
-/**
- * Paired-link budget tiers indexed by `linkAgeCounter / 3`.
- * Selectors 0..6 → [40, 40, 40, 20], selectors 7..13 → [60, 60, 40, 20].
- */
-function pairedBudget(linkAgeCounter: number, selector: number): number {
-	const ageTier = Math.min(3, Math.trunc(linkAgeCounter / 3));
-	const lowSelectorTable = [40, 40, 40, 20];
-	const highSelectorTable = [60, 60, 40, 20];
-	const table =
-		selector >= 0 && selector < 7 ? lowSelectorTable : highSelectorTable;
-	return table[ageTier] ?? table[table.length - 1] ?? 20;
-}
-
-/**
- * Seed entertainment link budgets and increment link age.
- * Called as part of checkpoint 0x0f0 (facility ledger rebuild).
- */
-export function seedEntertainmentBudgets(world: WorldState): void {
-	for (const object of Object.values(world.placedObjects)) {
-		if (
-			object.objectTypeCode !== ENTERTAINMENT_FAMILY_PAIRED &&
-			object.objectTypeCode !== ENTERTAINMENT_FAMILY_SINGLE
-		)
-			continue;
-		if (object.linkedRecordIndex < 0) continue;
-		const sidecar = world.sidecars[object.linkedRecordIndex];
-		if (!sidecar || sidecar.kind !== "entertainment_link") continue;
-
-		sidecar.attendanceCounter = 0;
-		sidecar.activeRuntimeCount = 0;
-		sidecar.linkPhaseState = 0;
-		sidecar.pendingTransitionFlag = 0;
-		sidecar.linkAgeCounter = Math.min(0x7f, sidecar.linkAgeCounter + 1);
-
-		if (object.objectTypeCode === ENTERTAINMENT_FAMILY_PAIRED) {
-			const budget = pairedBudget(
-				sidecar.linkAgeCounter,
-				sidecar.familySelectorOrSingleLinkFlag,
-			);
-			sidecar.forwardBudget = budget;
-			sidecar.reverseBudget = budget;
-		} else {
-			sidecar.forwardBudget = 0;
-			sidecar.reverseBudget = 50;
-		}
-	}
-}
-
-/**
- * Activate paired-link forward-half entities (checkpoint 0x3e8).
- * Sets forwardPhase to 1 for all paired entertainment links that are idle.
- */
-export function activateEntertainmentForwardHalf(world: WorldState): void {
-	for (const sidecar of world.sidecars) {
-		if (sidecar.kind !== "entertainment_link") continue;
-		const object = findObjectBySidecarOwner(world, sidecar);
-		if (!object || object.objectTypeCode !== ENTERTAINMENT_FAMILY_PAIRED)
-			continue;
-		if (sidecar.linkPhaseState === 0) {
-			sidecar.linkPhaseState = 1;
-		}
-	}
-}
-
-/**
- * Promote paired links to ready phase; activate single-link reverse-half
- * (checkpoint 0x4b0).
- */
-export function promoteAndActivateSingleReverse(world: WorldState): void {
-	for (const sidecar of world.sidecars) {
-		if (sidecar.kind !== "entertainment_link") continue;
-		const object = findObjectBySidecarOwner(world, sidecar);
-		if (!object) continue;
-
-		if (object.objectTypeCode === ENTERTAINMENT_FAMILY_PAIRED) {
-			if (sidecar.linkPhaseState === 2) {
-				sidecar.linkPhaseState = 3;
-			}
-		} else if (object.objectTypeCode === ENTERTAINMENT_FAMILY_SINGLE) {
-			if (sidecar.linkPhaseState === 0) {
-				sidecar.linkPhaseState = 1;
-			}
-		}
-	}
-}
-
-/**
- * Activate paired-link reverse-half entities still in phase 1 (checkpoint 0x578).
- */
-export function activateEntertainmentReverseHalf(world: WorldState): void {
-	for (const sidecar of world.sidecars) {
-		if (sidecar.kind !== "entertainment_link") continue;
-		const object = findObjectBySidecarOwner(world, sidecar);
-		if (!object || object.objectTypeCode !== ENTERTAINMENT_FAMILY_PAIRED)
-			continue;
-		if (sidecar.linkPhaseState === 1) {
-			sidecar.linkPhaseState = 2;
-		}
-	}
-}
-
-/**
- * Movie-theater (paired) attendance-tiered payout.
- */
-function movieTheaterPayout(attendance: number): number {
-	if (attendance >= 100) return 15_000;
-	if (attendance >= 80) return 10_000;
-	if (attendance >= 40) return 2_000;
-	return 0;
-}
-
-/**
- * Advance paired-link forward phase (checkpoint 0x5dc).
- * Decrements active runtime count and accrues income for completed forward phases.
- */
-export function advanceEntertainmentForwardPhase(world: WorldState): void {
-	for (const sidecar of world.sidecars) {
-		if (sidecar.kind !== "entertainment_link") continue;
-		const object = findObjectBySidecarOwner(world, sidecar);
-		if (!object || object.objectTypeCode !== ENTERTAINMENT_FAMILY_PAIRED)
-			continue;
-		if (sidecar.linkPhaseState < 1) continue;
-
-		sidecar.activeRuntimeCount = Math.max(
-			0,
-			sidecar.activeRuntimeCount - sidecar.forwardBudget,
-		);
-		sidecar.linkPhaseState = sidecar.activeRuntimeCount === 0 ? 1 : 2;
-
-		// Park forward-half entities for this entertainment record
-		for (const entity of world.entities) {
-			if (entity.familyCode !== ENTERTAINMENT_FAMILY_PAIRED) continue;
-			if (entity.subtypeIndex !== sidecar.ownerSubtypeIndex) continue;
-			if (
-				entity.stateCode >= STATE_ACTIVE &&
-				entity.stateCode <= STATE_ARRIVED
-			) {
-				entity.stateCode = STATE_PARKED; // park
-			}
-		}
-	}
-}
-
-/**
- * Advance reverse phase for both families, accrue cash income, reset phases
- * (checkpoint 0x640).
- */
-export function advanceEntertainmentReversePhaseAndAccrue(
-	world: WorldState,
-	ledger: LedgerState,
-): void {
-	for (const sidecar of world.sidecars) {
-		if (sidecar.kind !== "entertainment_link") continue;
-		const object = findObjectBySidecarOwner(world, sidecar);
-		if (!object) continue;
-
-		if (object.objectTypeCode === ENTERTAINMENT_FAMILY_PAIRED) {
-			if (sidecar.linkPhaseState >= 1) {
-				sidecar.activeRuntimeCount = Math.max(
-					0,
-					sidecar.activeRuntimeCount - sidecar.reverseBudget,
-				);
-				const payout = movieTheaterPayout(sidecar.attendanceCounter);
-				if (payout > 0) {
-					ledger.cashBalance = Math.min(
-						99_999_999,
-						ledger.cashBalance + payout,
-					);
-					ledger.incomeLedger[ENTERTAINMENT_FAMILY_PAIRED] =
-						(ledger.incomeLedger[ENTERTAINMENT_FAMILY_PAIRED] ?? 0) + payout;
-				}
-			}
-		} else if (object.objectTypeCode === ENTERTAINMENT_FAMILY_SINGLE) {
-			if (sidecar.linkPhaseState >= 1) {
-				sidecar.activeRuntimeCount = Math.max(
-					0,
-					sidecar.activeRuntimeCount - sidecar.reverseBudget,
-				);
-				if (sidecar.attendanceCounter > 0) {
-					const payout = 20_000;
-					ledger.cashBalance = Math.min(
-						99_999_999,
-						ledger.cashBalance + payout,
-					);
-					ledger.incomeLedger[ENTERTAINMENT_FAMILY_SINGLE] =
-						(ledger.incomeLedger[ENTERTAINMENT_FAMILY_SINGLE] ?? 0) + payout;
-				}
-			}
-		}
-
-		// Reset phases
-		sidecar.linkPhaseState = 0;
-
-		// Park all entertainment entities for this record
-		for (const entity of world.entities) {
-			if (
-				entity.familyCode !== object.objectTypeCode ||
-				entity.subtypeIndex !== sidecar.ownerSubtypeIndex
-			)
-				continue;
-			if (entity.stateCode !== STATE_PARKED) {
-				entity.stateCode = STATE_PARKED;
-			}
-		}
-	}
-}
-
-function findObjectBySidecarOwner(
-	world: WorldState,
-	sidecar: { ownerSubtypeIndex: number },
-): PlacedObjectRecord | undefined {
-	for (const object of Object.values(world.placedObjects)) {
-		if (
-			object.linkedRecordIndex >= 0 &&
-			world.sidecars[object.linkedRecordIndex] === sidecar
-		) {
-			return object;
-		}
-	}
-	return undefined;
-}
-
 function entityStressLevel(
 	entity: EntityRecord,
 	object: PlacedObjectRecord | undefined,
 ): "low" | "medium" | "high" {
-	if (object?.evalLevel === 0 || entity.accumulatedDelay >= 120) {
+	if (object?.evalLevel === 0 || entity.stressCounter >= 120) {
 		return "high";
 	}
-	if (object?.evalLevel === 1 || entity.accumulatedDelay >= 40) {
+	if (object?.evalLevel === 1 || entity.stressCounter >= 40) {
 		return "medium";
 	}
 	return "low";
@@ -1998,14 +1758,17 @@ export function create_entity_state_records(
 				(route) => route.entityId === entityKey(entity),
 			);
 			const carrierId =
-				pendingRoute || entity.routeMode === ROUTE_MODE_CARRIER
+				pendingRoute || entity.route.mode === "carrier"
 					? (carrierRoute?.carrierId ??
-						(entity.routeCarrierOrSegment >= CARRIER_DOWN_BASE
-							? entity.routeCarrierOrSegment - CARRIER_DOWN_BASE
-							: entity.routeCarrierOrSegment >= CARRIER_UP_BASE
-								? entity.routeCarrierOrSegment - CARRIER_UP_BASE
-								: null))
+						(entity.route.mode === "carrier" ? entity.route.carrierId : null))
 					: null;
+
+			const routeModeNum =
+				entity.route.mode === "carrier"
+					? 2
+					: entity.route.mode === "segment"
+						? 1
+						: 0;
 
 			return {
 				id: entityKey(entity),
@@ -2015,7 +1778,7 @@ export function create_entity_state_records(
 				baseOffset: entity.baseOffset,
 				familyCode: entity.familyCode,
 				stateCode: entity.stateCode,
-				routeMode: entity.routeMode,
+				routeMode: routeModeNum,
 				carrierId,
 				assignedCarIndex: pendingRoute?.assignedCarIndex ?? -1,
 				boardedOnCarrier: pendingRoute?.boarded ?? false,

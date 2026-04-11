@@ -114,28 +114,37 @@ export interface CarrierRecord {
 
 // ─── Runtime entities ────────────────────────────────────────────────────────
 
+export type RouteState =
+	| { mode: "idle" }
+	| { mode: "segment"; segmentId: number; destination: number }
+	| {
+			mode: "carrier";
+			carrierId: number;
+			direction: "up" | "down";
+			source: number;
+	  }
+	| { mode: "queued"; source: number };
+
 export interface EntityRecord {
 	floorAnchor: number;
 	subtypeIndex: number;
 	baseOffset: number;
 	familyCode: number;
 	stateCode: number;
-	routeMode: number;
-	routeSourceFloor: number;
-	routeCarrierOrSegment: number;
+	route: RouteState;
 	selectedFloor: number;
 	originFloor: number;
-	encodedRouteTarget: number;
-	auxState: number;
+	destinationFloor: number;
+	venueReturnState: number;
 	queueTick: number;
-	accumulatedDelay: number;
+	stressCounter: number;
 	/** Ticks remaining before the entity may retry routing (route-failure / wait-state delay). */
 	routeRetryDelay: number;
-	auxCounter: number;
-	word0a: number;
-	word0c: number;
-	word0e: number;
-	byte09: number;
+	transitTicksRemaining: number;
+	lastDemandTick: number;
+	demandSampleCount: number;
+	demandAccumulator: number;
+	visitCounter: number;
 }
 
 // ─── Routing types ────────────────────────────────────────────────────────────

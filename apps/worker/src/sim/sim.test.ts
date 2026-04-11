@@ -1773,21 +1773,19 @@ describe("car state machine", () => {
 				baseOffset: 0,
 				familyCode: 7,
 				stateCode: 0x22,
-				routeMode: 0,
-				routeSourceFloor: 0xff,
-				routeCarrierOrSegment: 0xff,
+				route: { mode: "idle" },
 				selectedFloor: f,
 				originFloor: f,
-				encodedRouteTarget: 10,
-				auxState: 0,
+				destinationFloor: 10,
+				venueReturnState: 0,
 				queueTick: 0,
-				accumulatedDelay: 0,
+				stressCounter: 0,
 				routeRetryDelay: 0,
-				auxCounter: 0,
-				word0a: 0,
-				word0c: 0,
-				word0e: 0,
-				byte09: 0,
+				transitTicksRemaining: 0,
+				lastDemandTick: 0,
+				demandSampleCount: 0,
+				demandAccumulator: 0,
+				visitCounter: 0,
 			});
 		}
 		const time = createTimeState();
@@ -1825,21 +1823,19 @@ describe("car state machine", () => {
 				baseOffset: 0,
 				familyCode: 7,
 				stateCode: 0x22,
-				routeMode: 0,
-				routeSourceFloor: 0xff,
-				routeCarrierOrSegment: 0xff,
+				route: { mode: "idle" },
 				selectedFloor: src,
 				originFloor: src,
-				encodedRouteTarget: dst,
-				auxState: 0,
+				destinationFloor: dst,
+				venueReturnState: 0,
 				queueTick: 0,
-				accumulatedDelay: 0,
+				stressCounter: 0,
 				routeRetryDelay: 0,
-				auxCounter: 0,
-				word0a: 0,
-				word0c: 0,
-				word0e: 0,
-				byte09: 0,
+				transitTicksRemaining: 0,
+				lastDemandTick: 0,
+				demandSampleCount: 0,
+				demandAccumulator: 0,
+				visitCounter: 0,
 			});
 		}
 		const time = createTimeState();
@@ -1991,12 +1987,15 @@ describe("car state machine", () => {
 		if (!carrier || !entity || !hotel)
 			throw new Error("expected hotel runtime state");
 		entity.stateCode = 0x05;
-		entity.routeMode = 2;
-		entity.routeSourceFloor = 15;
-		entity.routeCarrierOrSegment = 0x58;
+		entity.route = {
+			mode: "carrier",
+			carrierId: 0,
+			direction: "down",
+			source: 15,
+		};
 		entity.selectedFloor = 15;
 		entity.originFloor = 15;
-		entity.encodedRouteTarget = 10;
+		entity.destinationFloor = 10;
 
 		carrier.pendingRoutes.push({
 			entityId: "15:0:3:0",
@@ -2015,7 +2014,7 @@ describe("car state machine", () => {
 		reconcile_entity_transport(world, ledger, createTimeState());
 		expect(world.entities[0]?.selectedFloor).toBe(10);
 		expect(world.entities[0]?.stateCode).toBe(0x24);
-		expect(world.entities[0]?.routeCarrierOrSegment).toBe(0xff);
+		expect(world.entities[0]?.route.mode).toBe("idle");
 		expect(hotel.unitStatus).toBe(0x28);
 		expect(ledger.cashBalance).toBeGreaterThan(cashBefore);
 	});
@@ -2153,8 +2152,8 @@ describe("Phase 4 runtime entities", () => {
 		const hotel = world.placedObjects[`0,${GROUND_Y - 1}`];
 		if (!firstEntity || !secondEntity || !hotel)
 			throw new Error("expected hotel runtime state");
-		firstEntity.accumulatedDelay = 10;
-		secondEntity.accumulatedDelay = 140;
+		firstEntity.stressCounter = 10;
+		secondEntity.stressCounter = 140;
 		hotel.evalLevel = 1;
 
 		const state = create_entity_state_records(world);
@@ -2187,8 +2186,8 @@ describe("Phase 4 runtime entities", () => {
 		}
 		officeEntity.stateCode = 0x01;
 		officeEntity.selectedFloor = officeEntity.floorAnchor;
-		officeEntity.encodedRouteTarget = -1;
-		officeEntity.routeMode = 0;
+		officeEntity.destinationFloor = -1;
+		officeEntity.route = { mode: "idle" };
 		const venue = world.sidecars[venueObject.linkedRecordIndex] as
 			| { kind: "commercial_venue"; todayVisitCount: number }
 			| undefined;
@@ -2204,8 +2203,8 @@ describe("Phase 4 runtime entities", () => {
 		});
 
 		expect(officeEntity.stateCode).toBe(0x62);
-		expect(officeEntity.routeMode).toBe(0);
-		expect(officeEntity.encodedRouteTarget).toBe(-1);
+		expect(officeEntity.route.mode).toBe("idle");
+		expect(officeEntity.destinationFloor).toBe(-1);
 		expect(venue.todayVisitCount).toBe(1);
 
 		advance_entity_refresh_stride(world, ledger, {
@@ -2237,8 +2236,11 @@ describe("Phase 4 runtime entities", () => {
 		const requestSlot = floor_to_slot(carrier, entity.floorAnchor);
 		expect(requestSlot).toBeGreaterThanOrEqual(0);
 		expect(carrier.secondaryRouteStatusByFloor[requestSlot]).toBeGreaterThan(0);
-		expect(entity.routeSourceFloor).toBe(entity.floorAnchor);
-		expect(entity.routeCarrierOrSegment).toBeGreaterThanOrEqual(0x58);
+		expect(entity.route.mode).toBe("carrier");
+		if (entity.route.mode === "carrier") {
+			expect(entity.route.source).toBe(entity.floorAnchor);
+			expect(entity.route.direction).toBe("down");
+		}
 		expect(entity.queueTick).toBe(123);
 	});
 
@@ -2297,7 +2299,7 @@ describe("Phase 4 runtime entities", () => {
 		advance_entity_refresh_stride(world, ledger, activeTime);
 		expect(entity.stateCode).toBe(0x00); // commuting to office
 		expect(entity.selectedFloor).toBe(10);
-		expect(entity.encodedRouteTarget).toBe(entity.floorAnchor);
+		expect(entity.destinationFloor).toBe(entity.floorAnchor);
 
 		populate_carrier_requests(world, activeTime);
 		const carrier = world.carriers[0];
@@ -2331,7 +2333,7 @@ describe("Phase 4 runtime entities", () => {
 		advance_entity_refresh_stride(world, ledger, activeTime);
 		expect(entity.stateCode).toBe(0x22);
 		expect(entity.selectedFloor).toBe(10);
-		expect(entity.encodedRouteTarget).toBe(entity.floorAnchor);
+		expect(entity.destinationFloor).toBe(entity.floorAnchor);
 
 		populate_carrier_requests(world, activeTime);
 		const carrier = world.carriers[0];
@@ -2362,21 +2364,19 @@ describe("Phase 4 runtime entities", () => {
 			baseOffset: 0,
 			familyCode: 7,
 			stateCode: 0x22,
-			routeMode: 0,
-			routeSourceFloor: 0xff,
-			routeCarrierOrSegment: 0xff,
+			route: { mode: "idle" },
 			selectedFloor: 10,
 			originFloor: 10,
-			encodedRouteTarget: 14,
-			auxState: 0,
+			destinationFloor: 14,
+			venueReturnState: 0,
 			queueTick: 0,
-			accumulatedDelay: 0,
+			stressCounter: 0,
 			routeRetryDelay: 0,
-			auxCounter: 0,
-			word0a: 0,
-			word0c: 0,
-			word0e: 0,
-			byte09: 0,
+			transitTicksRemaining: 0,
+			lastDemandTick: 0,
+			demandSampleCount: 0,
+			demandAccumulator: 0,
+			visitCounter: 0,
 		});
 
 		populate_carrier_requests(world, { ...createTimeState(), dayTick: 321 });
@@ -2388,8 +2388,8 @@ describe("Phase 4 runtime entities", () => {
 		if (!entity) throw new Error("expected entity");
 		// Entity is now in-transit on the segment route with per-stop delay
 		// 4 floors × 16 ticks (local branch, flag bit 0 = 0) = 64; one tick decremented = 63
-		expect(entity.routeMode).toBe(1);
-		expect(entity.auxCounter).toBe(63);
+		expect(entity.route.mode).toBe("segment");
+		expect(entity.transitTicksRemaining).toBe(63);
 	});
 
 	it("does not finalize segment routes for entities outside transport transit states", () => {
@@ -2401,27 +2401,28 @@ describe("Phase 4 runtime entities", () => {
 			baseOffset: 0,
 			familyCode: 7,
 			stateCode: 0x01,
-			routeMode: 1,
-			routeSourceFloor: 14,
-			routeCarrierOrSegment: 0,
+			route: { mode: "segment", segmentId: 0, destination: 14 },
 			selectedFloor: 10,
 			originFloor: 10,
-			encodedRouteTarget: 14,
-			auxState: 0,
+			destinationFloor: 14,
+			venueReturnState: 0,
 			queueTick: 0,
-			accumulatedDelay: 0,
+			stressCounter: 0,
 			routeRetryDelay: 0,
-			auxCounter: 0,
-			word0a: 0,
-			word0c: 0,
-			word0e: 0,
-			byte09: 0,
+			transitTicksRemaining: 0,
+			lastDemandTick: 0,
+			demandSampleCount: 0,
+			demandAccumulator: 0,
+			visitCounter: 0,
 		});
 
 		reconcile_entity_transport(world, ledger, createTimeState());
 		expect(world.entities[0]?.selectedFloor).toBe(10);
-		expect(world.entities[0]?.routeMode).toBe(1);
-		expect(world.entities[0]?.routeSourceFloor).toBe(14);
+		expect(world.entities[0]?.route.mode).toBe("segment");
+		const route0 = world.entities[0]?.route;
+		if (route0?.mode === "segment") {
+			expect(route0.destination).toBe(14);
+		}
 	});
 
 	it("prompts before removing an elevator car with active traffic", () => {
