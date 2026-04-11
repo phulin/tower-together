@@ -14,6 +14,7 @@ import {
 	FAMILY_HOTEL_TWIN,
 	FAMILY_HOUSEKEEPING,
 	FAMILY_OFFICE,
+	FAMILY_PARKING,
 	FAMILY_RESTAURANT,
 	FAMILY_RETAIL,
 	FAMILY_SECURITY,
@@ -28,6 +29,7 @@ import {
 	GRID_HEIGHT,
 	type PlacedObjectRecord,
 	type RouteState,
+	type ServiceRequestEntry,
 	type WorldState,
 	yToFloor,
 } from "./world";
@@ -653,6 +655,14 @@ function processHotelEntity(
 				entity.stateCode = STATE_DEPARTURE;
 				return;
 			}
+			// Hotel suite parking demand: eligible when occupied (unitStatus != 0)
+			if (
+				entity.familyCode === FAMILY_HOTEL_SUITE &&
+				time.starCount > 2 &&
+				object.unitStatus !== 0
+			) {
+				tryAssignParkingService(world, time, entity);
+			}
 			dispatchCommercialVenueVisit(world, time, entity, {
 				venueFamilies: COMMERCIAL_FAMILIES,
 				returnState: STATE_ACTIVE,
@@ -748,6 +758,20 @@ function processOfficeEntity(
 				object.rentLevel,
 				object.objectTypeCode,
 			);
+		}
+
+		// Office parking demand: (floorAnchor + subtypeIndex) % 4 === 1, unitStatus === 2
+		if (
+			time.starCount > 2 &&
+			(entity.floorAnchor + entity.subtypeIndex) % 4 === 1 &&
+			object.unitStatus === 2
+		) {
+			if (!tryAssignParkingService(world, time, entity)) {
+				world.pendingNotifications.push({
+					kind: "route_failure",
+					message: "Office workers demand Parking",
+				});
+			}
 		}
 
 		// Dispatch: route from lobby to office floor
@@ -959,6 +983,49 @@ export function cleanup_entities_for_removed_tile(
 			);
 		}
 	}
+}
+
+// ─── Parking demand ──────────────────────────────────────────────────────────
+
+export function rebuild_parking_demand_log(world: WorldState): void {
+	world.parkingDemandLog = [];
+	for (let i = 0; i < world.sidecars.length; i++) {
+		const rec = world.sidecars[i];
+		if (rec.kind !== "service_request") continue;
+		if (rec.ownerSubtypeIndex === 0xff) continue;
+		if (rec.floorIndex === undefined) continue;
+		if (rec.coverageFlag === 1) continue;
+		// Verify the owning object is still a parking space
+		let isParking = false;
+		for (const obj of Object.values(world.placedObjects)) {
+			if (
+				obj.objectTypeCode === FAMILY_PARKING &&
+				obj.linkedRecordIndex === i
+			) {
+				isParking = true;
+				break;
+			}
+		}
+		if (isParking) {
+			world.parkingDemandLog.push(i);
+		}
+	}
+}
+
+function tryAssignParkingService(
+	world: WorldState,
+	time: TimeState,
+	entity: EntityRecord,
+): boolean {
+	if (world.parkingDemandLog.length === 0) return false;
+	const idx =
+		world.parkingDemandLog[
+			Math.floor(Math.random() * world.parkingDemandLog.length)
+		];
+	const rec = world.sidecars[idx] as ServiceRequestEntry | undefined;
+	if (!rec || rec.kind !== "service_request") return false;
+	recordDemandSample(entity, time);
+	return true;
 }
 
 export function reset_entity_runtime_state(world: WorldState): void {

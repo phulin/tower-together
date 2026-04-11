@@ -155,6 +155,18 @@ export const OP_SCORE_THRESHOLDS: Record<number, [number, number]> = {
 	5: [80, 200],
 };
 
+// ─── Parking expense rates ──────────────────────────────────────────────────
+// Per-star tier rate in $100 units: expense = (width) * rate / 10.
+// Stars <3 → 0, star 3 → 30, stars >=4 → 100.
+
+export const PARKING_EXPENSE_RATE_BY_STAR: Record<number, number> = {
+	1: 0,
+	2: 0,
+	3: 30,
+	4: 100,
+	5: 100,
+};
+
 // ─── Activity score star thresholds ──────────────────────────────────────────
 // score must exceed STAR_THRESHOLDS[star - 1] to advance from star → star+1
 

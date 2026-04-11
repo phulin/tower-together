@@ -108,7 +108,7 @@ function checkpoint_runtime_refresh(_s: SimState): void {
 }
 
 function checkpoint_ledger_rollover(s: SimState): void {
-	do_ledger_rollover(s.ledger, s.world, s.time.dayCounter);
+	do_ledger_rollover(s.ledger, s.world, s.time.dayCounter, s.time.starCount);
 	refund_unhappy_condos(s.world, s.ledger);
 }
 

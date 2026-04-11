@@ -1,4 +1,4 @@
-import { YEN_1001, YEN_1002 } from "./resources";
+import { PARKING_EXPENSE_RATE_BY_STAR, YEN_1001, YEN_1002 } from "./resources";
 import type { WorldState } from "./world";
 
 // ─── Three-ledger money model ─────────────────────────────────────────────────
@@ -64,9 +64,27 @@ export function add_cashflow_from_family_resource(
  * Charge operating expenses for all placed tiles (YEN #1002).
  * Called at checkpoint 0x09e5 every 3 days.
  */
-export function do_expense_sweep(ledger: LedgerState, world: WorldState): void {
+export function do_expense_sweep(
+	ledger: LedgerState,
+	world: WorldState,
+	starCount = 1,
+): void {
+	const parkingRate = PARKING_EXPENSE_RATE_BY_STAR[Math.min(starCount, 5)] ?? 0;
+
 	for (const obj of Object.values(world.placedObjects)) {
 		const code = obj.objectTypeCode;
+
+		// Parking: star-dependent rate × width / 10
+		if (code === 0x18) {
+			if (parkingRate > 0) {
+				const width = obj.rightTileIndex - obj.leftTileIndex + 1;
+				const amount = Math.trunc((width * parkingRate) / 10) * YEN_UNIT;
+				ledger.cashBalance = Math.max(0, ledger.cashBalance - amount);
+				ledger.expenseLedger[code] += amount;
+			}
+			continue;
+		}
+
 		// Carriers: use elevatorLocal / elevatorExpress / escalator keys
 		let expenseKey: string;
 		if (code === 0x01) {
@@ -154,12 +172,13 @@ export function do_ledger_rollover(
 	ledger: LedgerState,
 	world: WorldState,
 	dayCounter: number,
+	starCount = 1,
 ): void {
 	if (dayCounter % 3 !== 0) return;
 	ledger.cashBalanceCycleBase = ledger.cashBalance;
 	ledger.incomeLedger.fill(0);
 	ledger.expenseLedger.fill(0);
-	do_expense_sweep(ledger, world);
+	do_expense_sweep(ledger, world, starCount);
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -172,8 +191,8 @@ const CODE_TO_TILE: Record<number, string> = {
 	6: "restaurant",
 	7: "office",
 	9: "condo",
-	10: "fastFood",
-	12: "retail",
+	10: "retail",
+	12: "fastFood",
 	14: "metro",
 	18: "cinema",
 	20: "security",

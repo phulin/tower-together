@@ -82,6 +82,7 @@ export function createInitialSnapshot(
 			floorWalkabilityFlags: new Array(GRID_HEIGHT).fill(0),
 			transferGroupEntries: createEmptyTransferGroupEntries(),
 			transferGroupCache: new Array(GRID_HEIGHT).fill(0),
+			parkingDemandLog: [],
 			eventState: createEventState(),
 			pendingNotifications: [],
 			pendingPrompts: [],
@@ -158,6 +159,7 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 			floorWalkabilityFlags: [],
 			transferGroupEntries: [],
 			transferGroupCache: [],
+			parkingDemandLog: [],
 			eventState: createEventState(),
 			pendingNotifications: [],
 			pendingPrompts: [],
@@ -352,6 +354,7 @@ export function hydrateSnapshot(raw: SimSnapshot): SimSnapshot {
 	snapshot.world.specialLinks ??= createEmptySpecialLinks();
 	snapshot.world.specialLinkRecords ??= createEmptySpecialLinkRecords();
 	snapshot.world.transferGroupEntries ??= createEmptyTransferGroupEntries();
+	snapshot.world.parkingDemandLog ??= [];
 	for (const entity of snapshot.world.entities) {
 		entity.routeRetryDelay ??= 0;
 	}
@@ -405,6 +408,7 @@ export function serializeSimState(
 				JSON.stringify(world.transferGroupEntries),
 			) as WorldState["transferGroupEntries"],
 			transferGroupCache: [...world.transferGroupCache],
+			parkingDemandLog: [...world.parkingDemandLog],
 			eventState: JSON.parse(
 				JSON.stringify(world.eventState),
 			) as WorldState["eventState"],

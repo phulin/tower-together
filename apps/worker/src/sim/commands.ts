@@ -1,6 +1,7 @@
 import { rebuild_carrier_list } from "./carriers";
 import {
 	cleanup_entities_for_removed_tile,
+	rebuild_parking_demand_log,
 	rebuild_runtime_entities,
 } from "./entities";
 import { type LedgerState, rebuild_facility_ledger } from "./ledger";
@@ -71,13 +72,14 @@ const VARIANT_INIT_ONE_FAMILIES = new Set([3, 4, 5, 7, 9, FAMILY_RETAIL]);
 
 function make_placed_object(
 	x: number,
+	y: number,
 	tileType: string,
 	world: WorldState,
 	vipFlag = false,
 ): PlacedObjectRecord {
 	const width = TILE_WIDTHS[tileType] ?? 1;
 	const familyCode = TILE_TO_FAMILY_CODE[tileType] ?? 0;
-	const sidecarIndex = alloc_sidecar(tileType, x, world);
+	const sidecarIndex = alloc_sidecar(tileType, x, y, world);
 	return {
 		leftTileIndex: x,
 		rightTileIndex: x + width - 1,
@@ -95,7 +97,12 @@ function make_placed_object(
 }
 
 /** Allocate a sidecar for tiles that need one. Returns index or −1. */
-function alloc_sidecar(tileType: string, x: number, world: WorldState): number {
+function alloc_sidecar(
+	tileType: string,
+	x: number,
+	y: number,
+	world: WorldState,
+): number {
 	let record: WorldState["sidecars"][number] | null = null;
 
 	if (
@@ -113,10 +120,16 @@ function alloc_sidecar(tileType: string, x: number, world: WorldState): number {
 			availabilityState: 1,
 		};
 		record = r;
-	} else if (tileType === "security" || tileType === "housekeeping") {
+	} else if (
+		tileType === "security" ||
+		tileType === "housekeeping" ||
+		tileType === "parking"
+	) {
 		const r: ServiceRequestEntry = {
 			kind: "service_request",
 			ownerSubtypeIndex: x,
+			floorIndex: tileType === "parking" ? yToFloor(y) : undefined,
+			coverageFlag: 0,
 		};
 		record = r;
 	} else if (tileType === "cinema" || tileType === "entertainment") {
@@ -247,6 +260,7 @@ export function run_global_rebuilds(
 
 	rebuild_facility_ledger(ledger, world);
 	rebuild_runtime_entities(world);
+	rebuild_parking_demand_log(world);
 	rebuild_carrier_list(world);
 	rebuild_special_links(world);
 	rebuild_walkability_flags(world);
@@ -473,6 +487,7 @@ export function handle_place_tile(
 	if (!INFRASTRUCTURE_TILES.has(normalizedTileType)) {
 		world.placedObjects[`${x},${y}`] = make_placed_object(
 			x,
+			y,
 			normalizedTileType,
 			world,
 			vipFlag,

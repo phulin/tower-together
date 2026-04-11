@@ -275,6 +275,10 @@ export interface CommercialVenueRecord {
 export interface ServiceRequestEntry {
 	kind: "service_request";
 	ownerSubtypeIndex: number;
+	/** Floor index of the service provider (used by parking demand log). */
+	floorIndex?: number;
+	/** 0 = uncovered / active, 1 = covered / suppressed by ramp. */
+	coverageFlag?: number;
 }
 
 export interface EntertainmentLinkRecord {
@@ -406,6 +410,8 @@ export interface WorldState {
 	transferGroupEntries: TransferGroupEntry[];
 	/** Per-floor bitmask of carrier IDs that serve each floor. Size = GRID_HEIGHT. */
 	transferGroupCache: number[];
+	/** Sidecar indices of uncovered parking spaces feeding the demand log. */
+	parkingDemandLog: number[];
 	/** Bomb/fire/VIP event state. */
 	eventState: EventState;
 	/** Pending notifications emitted during the current tick (drained by the transport layer). */
