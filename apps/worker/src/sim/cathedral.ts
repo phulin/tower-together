@@ -1,6 +1,6 @@
 import {
-	clearEntityRoute,
-	findObjectForEntity,
+	clearSimRoute,
+	findObjectForSim,
 	resolveSimRouteBetweenFloors,
 } from "./sims";
 import {
@@ -16,62 +16,62 @@ import {
 	STATE_PARKED,
 } from "./sims/states";
 import type { TimeState } from "./time";
-import type { EntityRecord, WorldState } from "./world";
+import type { SimRecord, WorldState } from "./world";
 
 // 5 floor types × 8 slots
-const EVAL_ENTITY_COUNT = 40;
+const EVAL_SIM_COUNT = 40;
 
 /**
- * Activate cathedral guest entities at the day-start checkpoint.
- * Forces all cathedral entity slots into the morning-gate state
+ * Activate cathedral guest sims at the day-start checkpoint.
+ * Forces all cathedral sim slots into the morning-gate state
  * if a cathedral is placed and the tower is above 2 stars.
  */
-export function activateEvalEntities(world: WorldState, time: TimeState): void {
+export function activateEvalSims(world: WorldState, time: TimeState): void {
 	if (
-		world.gateFlags.evalEntityIndex < 0 ||
-		world.gateFlags.evalEntityIndex === NO_EVAL_ENTITY
+		world.gateFlags.evalSimIndex < 0 ||
+		world.gateFlags.evalSimIndex === NO_EVAL_ENTITY
 	) {
 		return;
 	}
 	if (time.starCount <= 2) return;
 
-	for (const entity of world.entities) {
-		if (!CATHEDRAL_FAMILIES.has(entity.familyCode)) continue;
-		entity.stateCode = STATE_MORNING_GATE;
-		entity.selectedFloor = LOBBY_FLOOR;
-		entity.originFloor = entity.floorAnchor;
-		clearEntityRoute(entity);
-		entity.destinationFloor = -1;
-		entity.venueReturnState = 0;
+	for (const sim of world.sims) {
+		if (!CATHEDRAL_FAMILIES.has(sim.familyCode)) continue;
+		sim.stateCode = STATE_MORNING_GATE;
+		sim.selectedFloor = LOBBY_FLOOR;
+		sim.originFloor = sim.floorAnchor;
+		clearSimRoute(sim);
+		sim.destinationFloor = -1;
+		sim.venueReturnState = 0;
 	}
 }
 
 /**
- * Dispatch midday return for cathedral guest entities at the hotel-sale checkpoint.
- * Entities in the arrived state are advanced to the return state.
+ * Dispatch midday return for cathedral guest sims at the hotel-sale checkpoint.
+ * Sims in the arrived state are advanced to the return state.
  */
 export function dispatchEvalMiddayReturn(world: WorldState): void {
-	for (const entity of world.entities) {
-		if (!CATHEDRAL_FAMILIES.has(entity.familyCode)) continue;
-		if (entity.stateCode === STATE_ARRIVED) {
-			entity.stateCode = STATE_DEPARTURE;
-			entity.selectedFloor = EVAL_ZONE_FLOOR;
-			entity.destinationFloor = LOBBY_FLOOR;
+	for (const sim of world.sims) {
+		if (!CATHEDRAL_FAMILIES.has(sim.familyCode)) continue;
+		if (sim.stateCode === STATE_ARRIVED) {
+			sim.stateCode = STATE_DEPARTURE;
+			sim.selectedFloor = EVAL_ZONE_FLOOR;
+			sim.destinationFloor = LOBBY_FLOOR;
 		}
 	}
 }
 
-export function processCathedralEntity(
+export function processCathedralSim(
 	world: WorldState,
 	time: TimeState,
-	entity: EntityRecord,
+	sim: SimRecord,
 ): void {
-	switch (entity.stateCode) {
+	switch (sim.stateCode) {
 		case STATE_MORNING_GATE: {
 			// Gate: calendar_phase_flag must be 1
 			if (time.calendarPhaseFlag !== 1) {
 				if (time.daypartIndex >= 1) {
-					entity.stateCode = STATE_PARKED; // missed dispatch window
+					sim.stateCode = STATE_PARKED; // missed dispatch window
 				}
 				return;
 			}
@@ -84,34 +84,34 @@ export function processCathedralEntity(
 				}
 				// After tick 0xf0, guaranteed dispatch
 			} else if (time.daypartIndex >= 1) {
-				entity.stateCode = STATE_PARKED; // missed
+				sim.stateCode = STATE_PARKED; // missed
 				return;
 			}
 
 			// Dispatch: route from lobby to eval zone
-			entity.selectedFloor = LOBBY_FLOOR;
-			entity.destinationFloor = EVAL_ZONE_FLOOR;
+			sim.selectedFloor = LOBBY_FLOOR;
+			sim.destinationFloor = EVAL_ZONE_FLOOR;
 			const result = resolveSimRouteBetweenFloors(
 				world,
-				entity,
+				sim,
 				LOBBY_FLOOR,
 				EVAL_ZONE_FLOOR,
 				0,
 				time,
 			);
 			if (result === 3) {
-				entity.stateCode = STATE_ARRIVED;
-				checkEvalCompletionAndAward(world, time, entity);
+				sim.stateCode = STATE_ARRIVED;
+				checkEvalCompletionAndAward(world, time, sim);
 			} else if (result >= 0) {
-				entity.stateCode = STATE_EVAL_OUTBOUND; // in transit to eval zone
+				sim.stateCode = STATE_EVAL_OUTBOUND; // in transit to eval zone
 			} else {
-				entity.stateCode = STATE_PARKED; // route failure → parked
+				sim.stateCode = STATE_PARKED; // route failure → parked
 			}
 			return;
 		}
 
 		case STATE_EVAL_OUTBOUND:
-			// In transit to eval zone; arrival handled by dispatchEntityArrival
+			// In transit to eval zone; arrival handled by dispatchSimArrival
 			return;
 
 		case STATE_ARRIVED:
@@ -120,29 +120,29 @@ export function processCathedralEntity(
 
 		case STATE_DEPARTURE: {
 			// Midday return: route from eval zone to lobby
-			if (entity.route.mode !== "idle") return; // already routed
-			entity.selectedFloor = EVAL_ZONE_FLOOR;
-			entity.destinationFloor = LOBBY_FLOOR;
+			if (sim.route.mode !== "idle") return; // already routed
+			sim.selectedFloor = EVAL_ZONE_FLOOR;
+			sim.destinationFloor = LOBBY_FLOOR;
 			const returnResult = resolveSimRouteBetweenFloors(
 				world,
-				entity,
+				sim,
 				EVAL_ZONE_FLOOR,
 				LOBBY_FLOOR,
 				1,
 				time,
 			);
 			if (returnResult === 3) {
-				entity.stateCode = STATE_PARKED;
+				sim.stateCode = STATE_PARKED;
 			} else if (returnResult >= 0) {
-				entity.stateCode = STATE_EVAL_RETURN; // in transit back to lobby
+				sim.stateCode = STATE_EVAL_RETURN; // in transit back to lobby
 			} else {
-				entity.stateCode = STATE_PARKED;
+				sim.stateCode = STATE_PARKED;
 			}
 			return;
 		}
 
 		case STATE_EVAL_RETURN:
-			// In transit back to lobby; arrival handled by dispatchEntityArrival
+			// In transit back to lobby; arrival handled by dispatchSimArrival
 			return;
 
 		case STATE_PARKED:
@@ -157,26 +157,26 @@ export function processCathedralEntity(
 export function checkEvalCompletionAndAward(
 	world: WorldState,
 	time: TimeState,
-	arrivedEntity: EntityRecord,
+	arrivedSim: SimRecord,
 ): void {
 	if (
-		world.gateFlags.evalEntityIndex < 0 ||
-		world.gateFlags.evalEntityIndex === NO_EVAL_ENTITY
+		world.gateFlags.evalSimIndex < 0 ||
+		world.gateFlags.evalSimIndex === NO_EVAL_ENTITY
 	) {
 		return;
 	}
 	if (time.dayTick >= 800) return;
 
-	// Count entities that arrived at eval zone
+	// Count sims that arrived at eval zone
 	let arrivedCount = 0;
-	for (const entity of world.entities) {
-		if (!CATHEDRAL_FAMILIES.has(entity.familyCode)) continue;
-		if (entity.stateCode === STATE_ARRIVED) arrivedCount++;
+	for (const sim of world.sims) {
+		if (!CATHEDRAL_FAMILIES.has(sim.familyCode)) continue;
+		if (sim.stateCode === STATE_ARRIVED) arrivedCount++;
 	}
 
-	if (arrivedCount < EVAL_ENTITY_COUNT) {
-		// Not all arrived yet — stamp the arrived entity's placed object
-		const object = findObjectForEntity(world, arrivedEntity);
+	if (arrivedCount < EVAL_SIM_COUNT) {
+		// Not all arrived yet — stamp the arrived sim's placed object
+		const object = findObjectForSim(world, arrivedSim);
 		if (object) {
 			object.auxValueOrTimer = 3;
 			object.needsRefreshFlag = 1;

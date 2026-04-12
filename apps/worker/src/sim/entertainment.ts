@@ -70,7 +70,7 @@ export function seedEntertainmentBudgets(world: WorldState): void {
 }
 
 /**
- * Activate paired-link upper-half entities.
+ * Activate paired-link upper-half sims.
  * Sets upper phase to 1 for all paired entertainment links that are idle.
  */
 export function activateEntertainmentUpperHalf(world: WorldState): void {
@@ -107,7 +107,7 @@ export function promoteAndActivateSingleLower(world: WorldState): void {
 }
 
 /**
- * Activate paired-link lower-half entities still in phase 1.
+ * Activate paired-link lower-half sims still in phase 1.
  */
 export function activateEntertainmentLowerHalf(world: WorldState): void {
 	for (const sidecar of world.sidecars) {
@@ -147,15 +147,12 @@ export function advanceEntertainmentUpperPhase(world: WorldState): void {
 		);
 		sidecar.linkPhaseState = sidecar.activeRuntimeCount === 0 ? 1 : 2;
 
-		// Park upper-half entities for this entertainment record
-		for (const entity of world.entities) {
-			if (entity.familyCode !== ENTERTAINMENT_FAMILY_PAIRED) continue;
-			if (entity.homeColumn !== sidecar.ownerSubtypeIndex) continue;
-			if (
-				entity.stateCode >= STATE_ACTIVE &&
-				entity.stateCode <= STATE_ARRIVED
-			) {
-				entity.stateCode = STATE_PARKED;
+		// Park upper-half sims for this entertainment record
+		for (const sim of world.sims) {
+			if (sim.familyCode !== ENTERTAINMENT_FAMILY_PAIRED) continue;
+			if (sim.homeColumn !== sidecar.ownerSubtypeIndex) continue;
+			if (sim.stateCode >= STATE_ACTIVE && sim.stateCode <= STATE_ARRIVED) {
+				sim.stateCode = STATE_PARKED;
 			}
 		}
 	}
@@ -210,15 +207,15 @@ export function advanceEntertainmentLowerPhaseAndAccrue(
 		// Reset phases
 		sidecar.linkPhaseState = 0;
 
-		// Park all entertainment entities for this record
-		for (const entity of world.entities) {
+		// Park all entertainment sims for this record
+		for (const sim of world.sims) {
 			if (
-				entity.familyCode !== object.objectTypeCode ||
-				entity.homeColumn !== sidecar.ownerSubtypeIndex
+				sim.familyCode !== object.objectTypeCode ||
+				sim.homeColumn !== sidecar.ownerSubtypeIndex
 			)
 				continue;
-			if (entity.stateCode !== STATE_PARKED) {
-				entity.stateCode = STATE_PARKED;
+			if (sim.stateCode !== STATE_PARKED) {
+				sim.stateCode = STATE_PARKED;
 			}
 		}
 	}

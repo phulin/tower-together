@@ -1,5 +1,5 @@
 import { flushCarriersEndOfDay } from "./carriers";
-import { activateEvalEntities, dispatchEvalMiddayReturn } from "./cathedral";
+import { activateEvalSims, dispatchEvalMiddayReturn } from "./cathedral";
 import {
 	activateEntertainmentLowerHalf,
 	activateEntertainmentUpperHalf,
@@ -23,7 +23,7 @@ import {
 	normalizeUnitStatusEndOfDay,
 	refundUnhappyFacilities,
 	resetCommercialVenueCycle,
-	resetEntityRuntimeState,
+	resetSimRuntimeState,
 	spreadCockroachInfestation,
 	updateHotelOperationalAndOccupancy,
 } from "./sims";
@@ -41,8 +41,8 @@ export interface SimState {
 // ─── Checkpoint bodies ────────────────────────────────────────────────────────
 
 function checkpointStartOfDay(_s: SimState): void {
-	// Activate cathedral guest entities
-	activateEvalEntities(_s.world, _s.time);
+	// Activate cathedral guest sims
+	activateEvalSims(_s.world, _s.time);
 }
 
 function checkpointRecyclingReset(_s: SimState): void {
@@ -115,7 +115,7 @@ function checkpointDayCounter(s: SimState): void {
 }
 
 function checkpointRuntimeRefresh(_s: SimState): void {
-	resetEntityRuntimeState(_s.world);
+	resetSimRuntimeState(_s.world);
 	normalizeUnitStatusEndOfDay(_s.world);
 }
 

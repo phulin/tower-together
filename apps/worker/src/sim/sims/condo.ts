@@ -1,9 +1,9 @@
 import { addCashflowFromFamilyResource, type LedgerState } from "../ledger";
 import type { TimeState } from "../time";
-import type { EntityRecord, WorldState } from "../world";
+import type { SimRecord, WorldState } from "../world";
 import {
 	dispatchCommercialVenueVisit,
-	findObjectForEntity,
+	findObjectForSim,
 	finishCommercialVenueDwell,
 	finishCommercialVenueTrip,
 	recomputeObjectOperationalStatus,
@@ -17,21 +17,21 @@ import {
 	UNIT_STATUS_CONDO_VACANT,
 } from "./states";
 
-export function processCondoEntity(
+export function processCondoSim(
 	world: WorldState,
 	ledger: LedgerState,
 	time: TimeState,
-	entity: EntityRecord,
+	sim: SimRecord,
 ): void {
-	const object = findObjectForEntity(world, entity);
+	const object = findObjectForSim(world, sim);
 	if (!object) return;
 
-	if (entity.stateCode === STATE_PARKED) entity.stateCode = STATE_ACTIVE;
-	if (finishCommercialVenueDwell(entity, time, STATE_ACTIVE)) return;
-	if (entity.stateCode === STATE_ACTIVE) {
-		dispatchCommercialVenueVisit(world, time, entity, {
+	if (sim.stateCode === STATE_PARKED) sim.stateCode = STATE_ACTIVE;
+	if (finishCommercialVenueDwell(sim, time, STATE_ACTIVE)) return;
+	if (sim.stateCode === STATE_ACTIVE) {
+		dispatchCommercialVenueVisit(world, time, sim, {
 			venueFamilies:
-				entity.baseOffset % 4 === 0
+				sim.baseOffset % 4 === 0
 					? CONDO_SELECTOR_RESTAURANT
 					: CONDO_SELECTOR_FAST_FOOD,
 			returnState: STATE_ACTIVE,
@@ -41,7 +41,7 @@ export function processCondoEntity(
 				if (object.unitStatus < UNIT_STATUS_CONDO_VACANT) return;
 				object.unitStatus = time.daypartIndex < 4 ? 0x08 : 0x00;
 				object.needsRefreshFlag = 1;
-				if (entity.baseOffset !== 0) return;
+				if (sim.baseOffset !== 0) return;
 				addCashflowFromFamilyResource(
 					ledger,
 					"condo",
@@ -50,9 +50,9 @@ export function processCondoEntity(
 				);
 			},
 		});
-	} else if (entity.stateCode === STATE_VENUE_TRIP) {
-		finishCommercialVenueTrip(entity, STATE_ACTIVE);
+	} else if (sim.stateCode === STATE_VENUE_TRIP) {
+		finishCommercialVenueTrip(sim, STATE_ACTIVE);
 	}
 
-	recomputeObjectOperationalStatus(world, time, entity, object);
+	recomputeObjectOperationalStatus(world, time, sim, object);
 }

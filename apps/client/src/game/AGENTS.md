@@ -2,7 +2,7 @@
 
 Phaser 3 game rendering layer.
 
-- **GameScene.ts** — Main Phaser `Scene`. Renders tower grid, entities, elevator cars; exposes `apply*` methods for state updates from `GameScreen`.
+- **GameScene.ts** — Main Phaser `Scene`. Renders tower grid, sims, elevator cars; exposes `apply*` methods for state updates from `GameScreen`.
 - **PhaserGame.tsx** — React wrapper that creates/destroys the `Phaser.Game` instance.
 - **gameSceneConstants.ts** — Shared tile dimensions, colors, label maps, zoom bounds.
 - **gameScenePlacement.ts** — Placement preview and shift-fill helpers for the selected tool.

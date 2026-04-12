@@ -1,8 +1,8 @@
-import type { EntityStateData } from "../types";
+import type { SimStateData } from "../types";
 import { gameScreenStyles as styles } from "./gameScreenStyles";
 
 interface Props {
-	entities: EntityStateData[];
+	sims: SimStateData[];
 }
 
 const STATE_LABELS: Record<number, string> = {
@@ -21,7 +21,7 @@ const STATE_LABELS: Record<number, string> = {
 	39: "Parked",
 };
 
-const STRESS_VALUE: Record<EntityStateData["stressLevel"], number> = {
+const STRESS_VALUE: Record<SimStateData["stressLevel"], number> = {
 	low: 0,
 	medium: 1,
 	high: 2,
@@ -36,11 +36,11 @@ function stateLabel(code: number): string {
 	);
 }
 
-export function GameInspectPanel({ entities }: Props) {
+export function GameInspectPanel({ sims }: Props) {
 	const avgStress =
-		entities.length > 0
-			? entities.reduce((sum, e) => sum + STRESS_VALUE[e.stressLevel], 0) /
-				entities.length
+		sims.length > 0
+			? sims.reduce((sum, e) => sum + STRESS_VALUE[e.stressLevel], 0) /
+				sims.length
 			: 0;
 
 	return (
@@ -48,14 +48,14 @@ export function GameInspectPanel({ entities }: Props) {
 			<div style={styles.debugTitle}>Inspect</div>
 			<div style={styles.debugRow}>
 				<span>Population</span>
-				<strong>{entities.length}</strong>
+				<strong>{sims.length}</strong>
 			</div>
 			<div style={styles.debugRow}>
 				<span>Avg stress</span>
 				<strong>{avgStress.toFixed(2)}</strong>
 			</div>
 			<div style={inspectListStyle}>
-				{entities.map((e) => (
+				{sims.map((e) => (
 					<div key={e.id} style={styles.debugRow}>
 						<span>
 							{e.id.slice(0, 6)} · {stateLabel(e.stateCode)}
@@ -77,7 +77,7 @@ const inspectListStyle: React.CSSProperties = {
 };
 
 const stressColorStyle: Record<
-	EntityStateData["stressLevel"],
+	SimStateData["stressLevel"],
 	React.CSSProperties
 > = {
 	low: { color: "#4ade80" },

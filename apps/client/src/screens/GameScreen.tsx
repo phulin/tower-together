@@ -128,7 +128,7 @@ export function GameScreen({
 		playerCount,
 		towerName,
 		setTowerName,
-		entities,
+		sims,
 		carriers,
 		speedMultiplier,
 		freeBuild,
@@ -219,7 +219,7 @@ export function GameScreen({
 	const day = Math.floor(simTime / DAY_TICK_MAX) + 1;
 	const dayTick = simTime % DAY_TICK_MAX;
 	const hour = (6 + Math.floor((dayTick * 19) / DAY_TICK_MAX)) % 24;
-	const metrics = buildTransportMetrics(entities, carriers);
+	const metrics = buildTransportMetrics(sims, carriers);
 
 	return (
 		<div style={styles.container}>
@@ -258,7 +258,7 @@ export function GameScreen({
 					freeBuild={freeBuild}
 					onFreeBuildChange={setFreeBuild}
 				/>
-				{selectedTool === "inspect" && <GameInspectPanel entities={entities} />}
+				{selectedTool === "inspect" && <GameInspectPanel sims={sims} />}
 			</div>
 
 			{activePrompt && (
@@ -267,7 +267,7 @@ export function GameScreen({
 
 			<CellInspectionDialog
 				inspectedCell={inspectedCell}
-				entities={entities}
+				sims={sims}
 				onClose={() => setInspectedCell(null)}
 				onSetRentLevel={setRentLevel}
 				onAddElevatorCar={addElevatorCar}

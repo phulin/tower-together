@@ -8,7 +8,7 @@ import {
 	rebuildTransferGroupCache,
 	rebuildWalkabilityFlags,
 } from "./routing";
-import { rebuildRuntimeEntities } from "./sims";
+import { rebuildRuntimeSims } from "./sims";
 import { createNewGameTimeState, type TimeState } from "./time";
 import {
 	createEventState,
@@ -76,7 +76,7 @@ export function createInitialSnapshot(
 			overlayToAnchor: {},
 			placedObjects: {},
 			sidecars: [],
-			entities: [],
+			sims: [],
 			carriers: [],
 			specialLinks: createEmptySpecialLinks(),
 			specialLinkRecords: createEmptySpecialLinkRecords(),
@@ -161,7 +161,7 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 			overlayToAnchor: (old.overlayToAnchor as Record<string, string>) ?? {},
 			placedObjects: {},
 			sidecars: [],
-			entities: [],
+			sims: [],
 			carriers: [],
 			specialLinks: [],
 			specialLinkRecords: [],
@@ -235,12 +235,19 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	snapshot.world.lobbyHeight ??= 1;
 	snapshot.world.placedObjects ??= {};
 	snapshot.world.sidecars ??= [];
-	snapshot.world.entities ??= [];
+	const legacyWorld = snapshot.world as unknown as Record<string, unknown>;
+	if (!("sims" in legacyWorld) && Array.isArray(legacyWorld.entities)) {
+		legacyWorld.sims = legacyWorld.entities;
+	}
+	snapshot.world.sims ??= [];
 	snapshot.world.gateFlags ??= createGateFlags();
 	const gateFlags = snapshot.world.gateFlags as unknown as Record<
 		string,
 		unknown
 	>;
+	if (!("evalSimIndex" in gateFlags) && "evalEntityIndex" in gateFlags) {
+		gateFlags.evalSimIndex = gateFlags.evalEntityIndex;
+	}
 	if (!("recyclingAdequate" in gateFlags) && "securityAdequate" in gateFlags) {
 		gateFlags.recyclingAdequate = gateFlags.securityAdequate;
 	}
@@ -356,7 +363,7 @@ export function hydrateSnapshot(raw: SimSnapshot): SimSnapshot {
 	if (snapshot.world.height < GRID_HEIGHT) snapshot.world.height = GRID_HEIGHT;
 	snapshot.world.placedObjects ??= {};
 	snapshot.world.sidecars ??= [];
-	snapshot.world.entities ??= [];
+	snapshot.world.sims ??= [];
 
 	if (!snapshot.ledger) {
 		const legacyWorld = snapshot.world as unknown as Record<string, unknown>;
@@ -392,11 +399,11 @@ export function hydrateSnapshot(raw: SimSnapshot): SimSnapshot {
 	snapshot.world.specialLinkRecords ??= createEmptySpecialLinkRecords();
 	snapshot.world.transferGroupEntries ??= createEmptyTransferGroupEntries();
 	snapshot.world.parkingDemandLog ??= [];
-	for (const entity of snapshot.world.entities) {
-		entity.routeRetryDelay ??= 0;
-		entity.elapsedTicks ??= 0;
+	for (const sim of snapshot.world.sims) {
+		sim.routeRetryDelay ??= 0;
+		sim.elapsedTicks ??= 0;
 		// Migrate old stressCounter/visitCounter fields away
-		const raw = entity as unknown as Record<string, unknown>;
+		const raw = sim as unknown as Record<string, unknown>;
 		delete raw.stressCounter;
 		delete raw.visitCounter;
 	}
@@ -410,7 +417,7 @@ export function hydrateSnapshot(raw: SimSnapshot): SimSnapshot {
 	rebuildSpecialLinks(snapshot.world);
 	rebuildWalkabilityFlags(snapshot.world);
 	rebuildTransferGroupCache(snapshot.world);
-	rebuildRuntimeEntities(snapshot.world);
+	rebuildRuntimeSims(snapshot.world);
 
 	return snapshot;
 }
@@ -439,9 +446,7 @@ export function serializeSimState(
 			sidecars: JSON.parse(
 				JSON.stringify(world.sidecars),
 			) as WorldState["sidecars"],
-			entities: JSON.parse(
-				JSON.stringify(world.entities),
-			) as WorldState["entities"],
+			sims: JSON.parse(JSON.stringify(world.sims)) as WorldState["sims"],
 			carriers: JSON.parse(
 				JSON.stringify(world.carriers),
 			) as WorldState["carriers"],

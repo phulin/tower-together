@@ -125,14 +125,14 @@ export function updateHotelOperationalAndOccupancy(
 	world: WorldState,
 	time: TimeState,
 ): void {
-	for (const sim of world.entities) {
+	for (const sim of world.sims) {
 		const object = findObjectForSim(world, sim);
 		if (!object || !HOTEL_FAMILIES.has(object.objectTypeCode)) continue;
 		if (sim.baseOffset !== 0) continue;
 		recomputeObjectOperationalStatus(world, time, sim, object);
 	}
 	handleExtendedVacancyExpiry(world, time);
-	for (const sim of world.entities) {
+	for (const sim of world.sims) {
 		const object = findObjectForSim(world, sim);
 		if (!object || !HOTEL_FAMILIES.has(object.objectTypeCode)) continue;
 		if (sim.baseOffset !== 0) continue;

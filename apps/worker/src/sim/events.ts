@@ -376,8 +376,8 @@ export function tryTriggerFireEvent(
 	if (time.starCount <= 2) return;
 	// Guard: no cathedral guest dispatch active
 	if (
-		world.gateFlags.evalEntityIndex >= 0 &&
-		world.gateFlags.evalEntityIndex !== 0xffff
+		world.gateFlags.evalSimIndex >= 0 &&
+		world.gateFlags.evalSimIndex !== 0xffff
 	)
 		return;
 

@@ -25,7 +25,7 @@ export type CellData = {
 	unitStatus?: number;
 };
 
-export type EntityStateData = {
+export type SimStateData = {
 	id: string;
 	floorAnchor: number;
 	selectedFloor: number;
@@ -65,11 +65,11 @@ export type ServerMessage =
 			width: number;
 			height: number;
 			cells: CellData[];
-			entities: EntityStateData[];
+			sims: SimStateData[];
 			carriers: CarrierCarStateData[];
 	  }
 	| { type: "state_patch"; cells: CellData[] }
-	| { type: "entity_update"; simTime: number; entities: EntityStateData[] }
+	| { type: "sim_update"; simTime: number; sims: SimStateData[] }
 	| { type: "carrier_update"; simTime: number; carriers: CarrierCarStateData[] }
 	| {
 			type: "command_result";

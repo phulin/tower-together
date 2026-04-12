@@ -1,9 +1,9 @@
 import { FAMILY_CONDO, FAMILY_OFFICE } from "../resources";
 import type { CarrierRecord } from "../world";
 import {
-	type EntityRecord,
 	GRID_HEIGHT,
 	type PlacedObjectRecord,
+	type SimRecord,
 	type WorldState,
 	yToFloor,
 } from "../world";
@@ -24,7 +24,7 @@ function makeSim(
 	homeColumn: number,
 	baseOffset: number,
 	familyCode: number,
-): EntityRecord {
+): SimRecord {
 	return {
 		floorAnchor,
 		homeColumn,
@@ -53,27 +53,27 @@ function initialStateForFamily(familyCode: number): number {
 	return STATE_PARKED;
 }
 
-export function simKey(sim: EntityRecord): string {
+export function simKey(sim: SimRecord): string {
 	return `${sim.floorAnchor}:${sim.homeColumn}:${sim.familyCode}:${sim.baseOffset}`;
 }
 
-function objectKey(sim: EntityRecord): string {
+function objectKey(sim: SimRecord): string {
 	const y = GRID_HEIGHT - 1 - sim.floorAnchor;
 	return `${sim.homeColumn},${y}`;
 }
 
 export function findObjectForSim(
 	world: WorldState,
-	sim: EntityRecord,
+	sim: SimRecord,
 ): PlacedObjectRecord | undefined {
 	return world.placedObjects[objectKey(sim)];
 }
 
 export function findSiblingSims(
 	world: WorldState,
-	sim: EntityRecord,
-): EntityRecord[] {
-	return world.entities.filter(
+	sim: SimRecord,
+): SimRecord[] {
+	return world.sims.filter(
 		(candidate) =>
 			candidate.floorAnchor === sim.floorAnchor &&
 			candidate.homeColumn === sim.homeColumn &&
@@ -81,7 +81,7 @@ export function findSiblingSims(
 	);
 }
 
-export function clearSimRoute(sim: EntityRecord): void {
+export function clearSimRoute(sim: SimRecord): void {
 	sim.route = ROUTE_IDLE;
 }
 
@@ -90,7 +90,7 @@ function clearCarrierSlotsForRemovedSims(
 	removedIds: Set<string>,
 ): void {
 	carrier.pendingRoutes = carrier.pendingRoutes.filter(
-		(route) => !removedIds.has(route.entityId),
+		(route) => !removedIds.has(route.simId),
 	);
 	for (const car of carrier.cars) {
 		for (const slot of car.activeRouteSlots) {
@@ -110,9 +110,9 @@ function clearCarrierSlotsForRemovedSims(
 
 export function rebuildRuntimeSims(world: WorldState): void {
 	const previous = new Map(
-		world.entities.map((sim) => [simKey(sim), sim] as const),
+		world.sims.map((sim) => [simKey(sim), sim] as const),
 	);
-	const next: EntityRecord[] = [];
+	const next: SimRecord[] = [];
 
 	for (const [key, object] of Object.entries(world.placedObjects)) {
 		const population = ENTITY_POPULATION_BY_TYPE[object.objectTypeCode] ?? 0;
@@ -133,7 +133,7 @@ export function rebuildRuntimeSims(world: WorldState): void {
 		}
 	}
 
-	world.entities = next;
+	world.sims = next;
 }
 
 export function cleanupSimsForRemovedTile(
@@ -144,7 +144,7 @@ export function cleanupSimsForRemovedTile(
 	const floorAnchor = yToFloor(y);
 	const removedIds = new Set<string>();
 
-	for (const sim of world.entities) {
+	for (const sim of world.sims) {
 		if (sim.homeColumn !== anchorX || sim.floorAnchor !== floorAnchor) {
 			continue;
 		}
@@ -161,7 +161,7 @@ export function cleanupSimsForRemovedTile(
 }
 
 export function resetSimRuntimeState(world: WorldState): void {
-	for (const sim of world.entities) {
+	for (const sim of world.sims) {
 		const object = findObjectForSim(world, sim);
 		if (!object) continue;
 
@@ -186,11 +186,3 @@ export function resetSimRuntimeState(world: WorldState): void {
 		sim.transitTicksRemaining = 0;
 	}
 }
-
-export const entityKey = simKey;
-export const findObjectForEntity = findObjectForSim;
-export const findSiblingEntities = findSiblingSims;
-export const clearEntityRoute = clearSimRoute;
-export const rebuildRuntimeEntities = rebuildRuntimeSims;
-export const cleanupEntitiesForRemovedTile = cleanupSimsForRemovedTile;
-export const resetEntityRuntimeState = resetSimRuntimeState;

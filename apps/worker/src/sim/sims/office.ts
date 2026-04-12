@@ -1,11 +1,11 @@
 import { addCashflowFromFamilyResource, type LedgerState } from "../ledger";
 import { FAMILY_OFFICE } from "../resources";
 import type { TimeState } from "../time";
-import type { EntityRecord, PlacedObjectRecord, WorldState } from "../world";
+import type { PlacedObjectRecord, SimRecord, WorldState } from "../world";
 import {
-	clearEntityRoute,
+	clearSimRoute,
 	dispatchCommercialVenueVisit,
-	findObjectForEntity,
+	findObjectForSim,
 	recomputeObjectOperationalStatus,
 	releaseServiceRequest,
 	resetFacilitySimTripCounters,
@@ -62,13 +62,13 @@ function decrementOfficePresenceCounter(
 function activateOfficeCashflow(
 	world: WorldState,
 	object: PlacedObjectRecord,
-	entity: EntityRecord,
+	sim: SimRecord,
 ): void {
 	if (object.unitStatus <= UNIT_STATUS_OFFICE_OCCUPIED) return;
 	object.unitStatus = 0;
 	object.evalActiveFlag = 1;
 	object.needsRefreshFlag = 1;
-	resetFacilitySimTripCounters(world, entity);
+	resetFacilitySimTripCounters(world, sim);
 }
 
 function routeFailureStateForOffice(object: PlacedObjectRecord): number {
@@ -77,41 +77,41 @@ function routeFailureStateForOffice(object: PlacedObjectRecord): number {
 		: STATE_NIGHT_A;
 }
 
-export function nextOfficeReturnState(entity: EntityRecord): number {
-	return entity.baseOffset === 1 ? STATE_COMMUTE : STATE_DEPARTURE;
+export function nextOfficeReturnState(sim: SimRecord): number {
+	return sim.baseOffset === 1 ? STATE_COMMUTE : STATE_DEPARTURE;
 }
 
 function runOfficeServiceEvaluation(
 	world: WorldState,
 	time: TimeState,
-	entity?: EntityRecord,
+	sim?: SimRecord,
 	object?: PlacedObjectRecord,
 ): void {
 	if (time.starCount !== 3 || time.dayCounter % 9 !== 3) return;
 	if (world.gateFlags.officeServiceOk !== 0) return;
 	if (
-		world.gateFlags.evalEntityIndex >= 0 &&
-		world.gateFlags.evalEntityIndex !== NO_EVAL_ENTITY
+		world.gateFlags.evalSimIndex >= 0 &&
+		world.gateFlags.evalSimIndex !== NO_EVAL_ENTITY
 	) {
 		return;
 	}
-	if (!entity || !object) return;
-	if (entity.familyCode !== FAMILY_OFFICE || entity.stateCode !== STATE_ACTIVE)
+	if (!sim || !object) return;
+	if (sim.familyCode !== FAMILY_OFFICE || sim.stateCode !== STATE_ACTIVE)
 		return;
 	if (object.evalLevel <= 0) return;
 	world.gateFlags.officeServiceOk = 1;
 }
 
-export function processOfficeEntity(
+export function processOfficeSim(
 	world: WorldState,
 	ledger: LedgerState,
 	time: TimeState,
-	entity: EntityRecord,
+	sim: SimRecord,
 ): void {
-	const object = findObjectForEntity(world, entity);
+	const object = findObjectForSim(world, sim);
 	if (!object) return;
 
-	const state = entity.stateCode;
+	const state = sim.stateCode;
 
 	// --- Night / failure park states ---
 	// Gate: day_tick > 2300 → transition to morning activation
@@ -121,7 +121,7 @@ export function processOfficeEntity(
 		state === STATE_PARKED
 	) {
 		if (time.dayTick > 2300) {
-			entity.stateCode = STATE_MORNING_GATE;
+			sim.stateCode = STATE_MORNING_GATE;
 		}
 		return;
 	}
@@ -139,15 +139,15 @@ export function processOfficeEntity(
 			if (Math.floor(Math.random() * 12) !== 0) return;
 		}
 
-		// 3-day cashflow (first entity triggers income once per 3-day cycle)
+		// 3-day cashflow (first sim triggers income once per 3-day cycle)
 		if (
-			entity.baseOffset === 0 &&
+			sim.baseOffset === 0 &&
 			object.auxValueOrTimer !== time.dayCounter + 1 &&
 			time.dayCounter % 3 === 0
 		) {
 			object.auxValueOrTimer = time.dayCounter + 1;
 			object.evalActiveFlag = 1;
-			resetFacilitySimTripCounters(world, entity);
+			resetFacilitySimTripCounters(world, sim);
 			addCashflowFromFamilyResource(
 				ledger,
 				"office",
@@ -159,10 +159,10 @@ export function processOfficeEntity(
 		// Office parking demand: (floorAnchor + homeColumn) % 4 === 1, unitStatus === 2
 		if (
 			time.starCount > 2 &&
-			(entity.floorAnchor + entity.homeColumn) % 4 === 1 &&
+			(sim.floorAnchor + sim.homeColumn) % 4 === 1 &&
 			object.unitStatus === 2
 		) {
-			if (!tryAssignParkingService(world, time, entity)) {
+			if (!tryAssignParkingService(world, time, sim)) {
 				world.pendingNotifications.push({
 					kind: "route_failure",
 					message: "Office workers demand Parking",
@@ -172,37 +172,37 @@ export function processOfficeEntity(
 
 		const routeResult = resolveSimRouteBetweenFloors(
 			world,
-			entity,
+			sim,
 			LOBBY_FLOOR,
-			entity.floorAnchor,
-			entity.floorAnchor > LOBBY_FLOOR ? 0 : 1,
+			sim.floorAnchor,
+			sim.floorAnchor > LOBBY_FLOOR ? 0 : 1,
 			time,
 		);
 		if (routeResult === -1) {
-			entity.stateCode = routeFailureStateForOffice(object);
+			sim.stateCode = routeFailureStateForOffice(object);
 			return;
 		}
-		activateOfficeCashflow(world, object, entity);
-		entity.selectedFloor = LOBBY_FLOOR;
-		entity.destinationFloor = entity.floorAnchor;
+		activateOfficeCashflow(world, object, sim);
+		sim.selectedFloor = LOBBY_FLOOR;
+		sim.destinationFloor = sim.floorAnchor;
 		if (routeResult === 0 || routeResult === 1 || routeResult === 2) {
-			entity.stateCode = STATE_MORNING_TRANSIT;
+			sim.stateCode = STATE_MORNING_TRANSIT;
 			return;
 		}
 		advanceOfficePresenceCounter(object);
-		entity.destinationFloor = -1;
-		entity.selectedFloor = entity.floorAnchor;
-		entity.stateCode = STATE_DEPARTURE;
+		sim.destinationFloor = -1;
+		sim.selectedFloor = sim.floorAnchor;
+		sim.stateCode = STATE_DEPARTURE;
 		return;
 	}
 
 	// --- Normal inbound commute gate (spec state 0x00) ---
 	if (state === STATE_COMMUTE) {
 		if (time.daypartIndex >= 4) {
-			entity.stateCode = STATE_DEPARTURE;
+			sim.stateCode = STATE_DEPARTURE;
 			return;
 		}
-		if (entity.baseOffset === 0) {
+		if (sim.baseOffset === 0) {
 			if (time.daypartIndex === 0 && Math.floor(Math.random() * 12) !== 0)
 				return;
 		} else {
@@ -211,25 +211,25 @@ export function processOfficeEntity(
 		}
 		const routeResult = resolveSimRouteBetweenFloors(
 			world,
-			entity,
+			sim,
 			LOBBY_FLOOR,
-			entity.floorAnchor,
-			entity.floorAnchor > LOBBY_FLOOR ? 0 : 1,
+			sim.floorAnchor,
+			sim.floorAnchor > LOBBY_FLOOR ? 0 : 1,
 			time,
 		);
 		if (routeResult === -1) {
-			entity.stateCode = STATE_NIGHT_B;
+			sim.stateCode = STATE_NIGHT_B;
 			return;
 		}
-		entity.selectedFloor = LOBBY_FLOOR;
-		entity.destinationFloor = entity.floorAnchor;
+		sim.selectedFloor = LOBBY_FLOOR;
+		sim.destinationFloor = sim.floorAnchor;
 		if (routeResult === 3) {
 			advanceOfficePresenceCounter(object);
-			entity.destinationFloor = -1;
-			entity.selectedFloor = entity.floorAnchor;
-			entity.stateCode = STATE_AT_WORK;
+			sim.destinationFloor = -1;
+			sim.selectedFloor = sim.floorAnchor;
+			sim.stateCode = STATE_AT_WORK;
 		} else {
-			entity.stateCode = STATE_COMMUTE_TRANSIT;
+			sim.stateCode = STATE_COMMUTE_TRANSIT;
 		}
 		return;
 	}
@@ -238,10 +238,10 @@ export function processOfficeEntity(
 	if (state === STATE_AT_WORK) {
 		// Gate: daypart >= 4 → depart from office back to the lobby.
 		if (time.daypartIndex >= 4) {
-			entity.stateCode = STATE_PARKED;
-			entity.destinationFloor = -1;
-			clearEntityRoute(entity);
-			releaseServiceRequest(world, entity);
+			sim.stateCode = STATE_PARKED;
+			sim.destinationFloor = -1;
+			clearSimRoute(sim);
+			releaseServiceRequest(world, sim);
 			return;
 		}
 		// Gate: daypart 3 → 1/12 chance; dayparts 0–2 → no dispatch
@@ -253,71 +253,71 @@ export function processOfficeEntity(
 
 		const routeResult = resolveSimRouteBetweenFloors(
 			world,
-			entity,
+			sim,
 			LOBBY_FLOOR,
-			entity.floorAnchor,
-			entity.floorAnchor > LOBBY_FLOOR ? 0 : 1,
+			sim.floorAnchor,
+			sim.floorAnchor > LOBBY_FLOOR ? 0 : 1,
 			time,
 		);
 		if (routeResult === -1) {
-			entity.stateCode = STATE_NIGHT_B;
-			releaseServiceRequest(world, entity);
+			sim.stateCode = STATE_NIGHT_B;
+			releaseServiceRequest(world, sim);
 			return;
 		}
-		entity.selectedFloor = LOBBY_FLOOR;
-		entity.destinationFloor = entity.floorAnchor;
+		sim.selectedFloor = LOBBY_FLOOR;
+		sim.destinationFloor = sim.floorAnchor;
 		if (routeResult === 3) {
 			advanceOfficePresenceCounter(object);
-			entity.destinationFloor = -1;
-			entity.selectedFloor = entity.floorAnchor;
-			entity.stateCode = STATE_DEPARTURE;
+			sim.destinationFloor = -1;
+			sim.selectedFloor = sim.floorAnchor;
+			sim.stateCode = STATE_DEPARTURE;
 		} else {
-			entity.stateCode = STATE_AT_WORK_TRANSIT;
+			sim.stateCode = STATE_AT_WORK_TRANSIT;
 		}
 		return;
 	}
 
 	if (state === COMMERCIAL_DWELL_STATE) {
-		if (time.dayTick - entity.lastDemandTick < COMMERCIAL_VENUE_DWELL_TICKS)
+		if (time.dayTick - sim.lastDemandTick < COMMERCIAL_VENUE_DWELL_TICKS)
 			return;
 		const routeResult = resolveSimRouteBetweenFloors(
 			world,
-			entity,
-			entity.selectedFloor,
-			entity.floorAnchor,
-			entity.floorAnchor > entity.selectedFloor ? 0 : 1,
+			sim,
+			sim.selectedFloor,
+			sim.floorAnchor,
+			sim.floorAnchor > sim.selectedFloor ? 0 : 1,
 			time,
 		);
 		if (routeResult === -1) {
-			entity.stateCode = STATE_NIGHT_B;
-			releaseServiceRequest(world, entity);
+			sim.stateCode = STATE_NIGHT_B;
+			releaseServiceRequest(world, sim);
 			return;
 		}
-		entity.destinationFloor = entity.floorAnchor;
+		sim.destinationFloor = sim.floorAnchor;
 		if (routeResult === 3) {
 			advanceOfficePresenceCounter(object);
-			entity.destinationFloor = -1;
-			entity.selectedFloor = entity.floorAnchor;
-			entity.venueReturnState = 0;
-			entity.stateCode = nextOfficeReturnState(entity);
+			sim.destinationFloor = -1;
+			sim.selectedFloor = sim.floorAnchor;
+			sim.venueReturnState = 0;
+			sim.stateCode = nextOfficeReturnState(sim);
 		} else {
-			entity.stateCode = STATE_DWELL_RETURN_TRANSIT;
+			sim.stateCode = STATE_DWELL_RETURN_TRANSIT;
 		}
 		return;
 	}
 
 	// --- Venue selection ---
 	if (state === STATE_ACTIVE || state === STATE_ACTIVE_ALT) {
-		runOfficeServiceEvaluation(world, time, entity, object);
+		runOfficeServiceEvaluation(world, time, sim, object);
 		// Gate: daypart ≥ 4 → evening departure
 		if (time.daypartIndex >= 4) {
-			entity.stateCode = STATE_DEPARTURE;
-			entity.destinationFloor = LOBBY_FLOOR;
-			entity.selectedFloor = entity.floorAnchor;
+			sim.stateCode = STATE_DEPARTURE;
+			sim.destinationFloor = LOBBY_FLOOR;
+			sim.selectedFloor = sim.floorAnchor;
 			return;
 		}
 
-		dispatchCommercialVenueVisit(world, time, entity, {
+		dispatchCommercialVenueVisit(world, time, sim, {
 			venueFamilies: COMMERCIAL_FAMILIES,
 			returnState: STATE_AT_WORK,
 			unavailableState: STATE_NIGHT_B,
@@ -325,7 +325,7 @@ export function processOfficeEntity(
 		return;
 	}
 
-	// --- In transit to venue — arrival handled by dispatchEntityArrival ---
+	// --- In transit to venue — arrival handled by dispatchSimArrival ---
 	if (
 		state === STATE_VENUE_TRIP ||
 		state === STATE_COMMUTE_TRANSIT ||
@@ -349,29 +349,29 @@ export function processOfficeEntity(
 		decrementOfficePresenceCounter(object, time);
 		const routeResult = resolveSimRouteBetweenFloors(
 			world,
-			entity,
-			entity.floorAnchor,
+			sim,
+			sim.floorAnchor,
 			LOBBY_FLOOR,
 			1,
 			time,
 		);
 		if (routeResult === -1) {
-			entity.stateCode = STATE_NIGHT_B;
-			releaseServiceRequest(world, entity);
+			sim.stateCode = STATE_NIGHT_B;
+			releaseServiceRequest(world, sim);
 			return;
 		}
-		entity.selectedFloor = entity.floorAnchor;
-		entity.destinationFloor = LOBBY_FLOOR;
+		sim.selectedFloor = sim.floorAnchor;
+		sim.destinationFloor = LOBBY_FLOOR;
 		if (routeResult === 3) {
-			entity.destinationFloor = -1;
-			entity.selectedFloor = LOBBY_FLOOR;
-			entity.stateCode = STATE_PARKED;
-			releaseServiceRequest(world, entity);
+			sim.destinationFloor = -1;
+			sim.selectedFloor = LOBBY_FLOOR;
+			sim.stateCode = STATE_PARKED;
+			releaseServiceRequest(world, sim);
 		} else {
-			entity.stateCode = STATE_DEPARTURE_TRANSIT;
+			sim.stateCode = STATE_DEPARTURE_TRANSIT;
 		}
 		return;
 	}
 
-	recomputeObjectOperationalStatus(world, time, entity, object);
+	recomputeObjectOperationalStatus(world, time, sim, object);
 }

@@ -12,7 +12,7 @@ import {
 
 /**
  * Optional callback invoked synchronously from inside the carrier tick when an
- * entity is unloaded at its destination. Mirrors the binary's
+ * sim is unloaded at its destination. Mirrors the binary's
  * `dispatch_destination_queue_entries` path, which calls the family state
  * handler directly during the carrier tick instead of via a separate later
  * sweep over `completedRouteIds`.
@@ -48,7 +48,7 @@ function getCarCapacity(carrier: CarrierRecord): number {
 }
 
 function findRoute(carrier: CarrierRecord, routeId: string) {
-	return carrier.pendingRoutes.find((route) => route.entityId === routeId);
+	return carrier.pendingRoutes.find((route) => route.simId === routeId);
 }
 
 function getQueueState(carrier: CarrierRecord, floor: number) {
@@ -107,12 +107,12 @@ function addRouteSlot(
 	car: CarrierCar,
 	route: CarrierRecord["pendingRoutes"][number],
 ): boolean {
-	if (hasActiveSlot(car, route.entityId)) return true;
+	if (hasActiveSlot(car, route.simId)) return true;
 	const limit = activeSlotLimit(carrier);
 	for (let index = 0; index < limit; index++) {
 		const slot = car.activeRouteSlots[index];
 		if (!slot || slot.active) continue;
-		slot.routeId = route.entityId;
+		slot.routeId = route.simId;
 		slot.sourceFloor = route.sourceFloor;
 		slot.destinationFloor = route.destinationFloor;
 		slot.boarded = route.boarded;
@@ -507,12 +507,12 @@ function findBestAvailableCarForFloor(
 	return 0;
 }
 
-function clearEntityRouteById(world: WorldState, entityId: string): void {
-	for (const entity of world.entities) {
-		const key = `${entity.floorAnchor}:${entity.homeColumn}:${entity.familyCode}:${entity.baseOffset}`;
-		if (key !== entityId) continue;
-		entity.route = { mode: "idle" };
-		entity.routeRetryDelay = 0;
+function clearSimRouteById(world: WorldState, simId: string): void {
+	for (const sim of world.sims) {
+		const key = `${sim.floorAnchor}:${sim.homeColumn}:${sim.familyCode}:${sim.baseOffset}`;
+		if (key !== simId) continue;
+		sim.route = { mode: "idle" };
+		sim.routeRetryDelay = 0;
 		return;
 	}
 }
@@ -604,7 +604,7 @@ function processUnitTravelQueue(
 					route !== undefined &&
 					!route.boarded &&
 					route.assignedCarIndex === carIndex &&
-					!hasActiveSlot(car, route.entityId),
+					!hasActiveSlot(car, route.simId),
 			);
 		for (const route of assignedRoutes.slice(0, remainingSlots)) {
 			buf.pop();
@@ -616,9 +616,9 @@ function processUnitTravelQueue(
 			);
 			if (resolvedFloor < 0) {
 				carrier.pendingRoutes = carrier.pendingRoutes.filter(
-					(candidate) => candidate.entityId !== route.entityId,
+					(candidate) => candidate.simId !== route.simId,
 				);
-				clearEntityRouteById(world, route.entityId);
+				clearSimRouteById(world, route.simId);
 				continue;
 			}
 			route.destinationFloor = resolvedFloor;
@@ -797,7 +797,7 @@ function boardAndUnloadRoutes(
 		}
 		slot.active = false;
 		carrier.pendingRoutes = carrier.pendingRoutes.filter(
-			(candidate) => candidate.entityId !== arrivedRouteId,
+			(candidate) => candidate.simId !== arrivedRouteId,
 		);
 		if (!carrier.completedRouteIds.includes(arrivedRouteId)) {
 			carrier.completedRouteIds.push(arrivedRouteId);
@@ -1088,17 +1088,16 @@ export function initCarrierState(world: WorldState): void {
 
 export function enqueueCarrierRoute(
 	carrier: CarrierRecord,
-	entityId: string,
+	simId: string,
 	sourceFloor: number,
 	destinationFloor: number,
 	directionFlag: number,
 ): boolean {
-	if (carrier.pendingRoutes.some((route) => route.entityId === entityId))
-		return true;
+	if (carrier.pendingRoutes.some((route) => route.simId === simId)) return true;
 	const floorQueue = getQueueState(carrier, sourceFloor);
 	if (
 		!floorQueue ||
-		!getDirectionQueue(floorQueue, directionFlag).push(entityId)
+		!getDirectionQueue(floorQueue, directionFlag).push(simId)
 	) {
 		const slot = floorToSlot(carrier, sourceFloor);
 		if (slot >= 0) {
@@ -1111,7 +1110,7 @@ export function enqueueCarrierRoute(
 		return false;
 	}
 	const route = {
-		entityId,
+		simId,
 		sourceFloor,
 		destinationFloor,
 		boarded: false,

@@ -40,7 +40,7 @@ export function createLedgerState(startingCash: number): LedgerState {
 
 /**
  * Credit checkout/activation income for a placed object using YEN #1001.
- * Called by entity checkout handlers (Phase 4). tileName is the canonical
+ * Called by sim checkout handlers (Phase 4). tileName is the canonical
  * string key (e.g. "hotelSingle", "office").
  */
 export function addCashflowFromFamilyResource(

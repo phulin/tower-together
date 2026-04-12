@@ -1,4 +1,4 @@
-import type { EntityStateData } from "../types";
+import type { SimStateData } from "../types";
 import { TILE_WIDTHS } from "../types";
 
 export const TILE_WIDTH = 4;
@@ -62,14 +62,12 @@ export const COLOR_SKY = 0x5ba8d4;
 export const COLOR_UNDERGROUND = 0x3d2010;
 export const COLOR_GRID_LINE = 0x333333;
 export const COLOR_HOVER = 0xffff00;
-export const ENTITY_STRESS_COLORS: Record<
-	EntityStateData["stressLevel"],
-	number
-> = {
-	low: 0x111111,
-	medium: 0xff5fa2,
-	high: 0xd81919,
-};
+export const ENTITY_STRESS_COLORS: Record<SimStateData["stressLevel"], number> =
+	{
+		low: 0x111111,
+		medium: 0xff5fa2,
+		high: 0xd81919,
+	};
 export const CAR_COLOR = 0xf6d463;
 export const MIN_ZOOM = 1;
 export const MAX_ZOOM = 4;

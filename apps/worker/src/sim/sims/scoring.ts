@@ -13,9 +13,9 @@ import {
 } from "../resources";
 import type { TimeState } from "../time";
 import {
-	type EntityRecord,
 	GRID_HEIGHT,
 	type PlacedObjectRecord,
+	type SimRecord,
 	type WorldState,
 	yToFloor,
 } from "../world";
@@ -129,7 +129,7 @@ function hasNearbyNoise(
 export function recomputeObjectOperationalStatus(
 	world: WorldState,
 	time: TimeState,
-	sim: EntityRecord,
+	sim: SimRecord,
 	object: PlacedObjectRecord,
 ): void {
 	if (!EVALUATABLE_FAMILIES.has(object.objectTypeCode)) return;
@@ -228,7 +228,7 @@ export function recomputeObjectOperationalStatus(
 
 export function refreshOccupiedFlagAndTripCounters(
 	world: WorldState,
-	sim: EntityRecord,
+	sim: SimRecord,
 	object: PlacedObjectRecord,
 ): void {
 	const y = GRID_HEIGHT - 1 - sim.floorAnchor;
@@ -253,7 +253,7 @@ export function refreshOccupiedFlagAndTripCounters(
 }
 
 function simStressLevel(
-	sim: EntityRecord,
+	sim: SimRecord,
 	_object: PlacedObjectRecord | undefined,
 ): "low" | "medium" | "high" {
 	const elapsed = sim.elapsedTicks;
@@ -262,7 +262,7 @@ function simStressLevel(
 	return "low";
 }
 
-function shouldEmitDistanceFeedback(sim: EntityRecord): boolean {
+function shouldEmitDistanceFeedback(sim: SimRecord): boolean {
 	switch (sim.familyCode) {
 		case FAMILY_HOTEL_SINGLE:
 		case FAMILY_HOTEL_TWIN:
@@ -294,7 +294,7 @@ function distanceFeedbackPenalty(
 
 export function maybeApplyDistanceFeedback(
 	_world: WorldState,
-	sim: EntityRecord,
+	sim: SimRecord,
 	sourceFloor: number,
 	destinationFloor: number,
 	canApplyForRouteKind: boolean,
@@ -307,15 +307,15 @@ export function maybeApplyDistanceFeedback(
 }
 
 export function createSimStateRecords(world: WorldState): SimStateRecord[] {
-	return world.entities
+	return world.sims
 		.map((sim) => {
 			const object = findObjectForSim(world, sim);
 			if (!object) return null;
 			const carrierRoute = world.carriers.find((carrier) =>
-				carrier.pendingRoutes.some((route) => route.entityId === simKey(sim)),
+				carrier.pendingRoutes.some((route) => route.simId === simKey(sim)),
 			);
 			const pendingRoute = carrierRoute?.pendingRoutes.find(
-				(route) => route.entityId === simKey(sim),
+				(route) => route.simId === simKey(sim),
 			);
 			const carrierId =
 				pendingRoute || sim.route.mode === "carrier"
@@ -346,6 +346,3 @@ export function createSimStateRecords(world: WorldState): SimStateRecord[] {
 		})
 		.filter((sim): sim is SimStateRecord => sim !== null);
 }
-
-export type EntityStateRecord = SimStateRecord;
-export const createEntityStateRecords = createSimStateRecords;

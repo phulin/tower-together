@@ -133,7 +133,7 @@ export class TowerRoom extends DurableObject<Env> {
 				width: this.sim.width,
 				height: this.sim.height,
 				cells: this.sim.cellsToArray(),
-				entities: this.sim.entitiesToArray(),
+				sims: this.sim.simsToArray(),
 				carriers: this.sim.carriersToArray(),
 			});
 			this.broadcast({
@@ -302,9 +302,9 @@ export class TowerRoom extends DurableObject<Env> {
 		if (!this.sim) return;
 		this.lastStateBroadcastAt = now;
 		this.broadcast({
-			type: "entity_update",
+			type: "sim_update",
 			simTime: this.sim.simTime,
-			entities: this.sim.entitiesToArray(),
+			sims: this.sim.simsToArray(),
 		});
 		this.broadcast({
 			type: "carrier_update",

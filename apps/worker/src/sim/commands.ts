@@ -24,9 +24,9 @@ import {
 	rebuildWalkabilityFlags,
 } from "./routing";
 import {
-	cleanupEntitiesForRemovedTile,
+	cleanupSimsForRemovedTile,
 	rebuildParkingDemandLog,
-	rebuildRuntimeEntities,
+	rebuildRuntimeSims,
 } from "./sims";
 import {
 	type CommercialVenueRecord,
@@ -290,7 +290,7 @@ export function runGlobalRebuilds(
 	}
 
 	rebuildFacilityLedger(ledger, world);
-	rebuildRuntimeEntities(world);
+	rebuildRuntimeSims(world);
 	rebuildParkingDemandLog(world);
 	rebuildCarrierList(world);
 	rebuildSpecialLinks(world);
@@ -798,7 +798,7 @@ export function handleRemoveTile(
 		delete world.placedObjects[anchorKey];
 	}
 
-	cleanupEntitiesForRemovedTile(world, ax, ay);
+	cleanupSimsForRemovedTile(world, ax, ay);
 
 	const patch: CellPatch[] = [];
 	for (let dx = 0; dx < tileWidth; dx++) {

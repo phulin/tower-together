@@ -55,11 +55,11 @@ export function GameDebugPanel({
 			</div>
 			<div style={styles.debugRow}>
 				<span>Queued</span>
-				<strong>{metrics.queuedEntities}</strong>
+				<strong>{metrics.queuedSims}</strong>
 			</div>
 			<div style={styles.debugRow}>
 				<span>Boarded</span>
-				<strong>{metrics.boardedEntities}</strong>
+				<strong>{metrics.boardedSims}</strong>
 			</div>
 			<div style={styles.debugRow}>
 				<span>Active trips</span>
@@ -83,11 +83,11 @@ export function GameDebugPanel({
 			</div>
 			<div style={styles.debugRow}>
 				<span>Trip state `0x22`</span>
-				<strong>{metrics.state22Entities}</strong>
+				<strong>{metrics.state22Sims}</strong>
 			</div>
 			<div style={styles.debugRow}>
 				<span>Checkout `0x04/0x05`</span>
-				<strong>{metrics.checkoutQueueEntities}</strong>
+				<strong>{metrics.checkoutQueueSims}</strong>
 			</div>
 		</div>
 	);

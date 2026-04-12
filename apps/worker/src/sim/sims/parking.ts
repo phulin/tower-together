@@ -1,6 +1,6 @@
 import { FAMILY_PARKING } from "../resources";
 import type { TimeState } from "../time";
-import type { EntityRecord, ServiceRequestEntry, WorldState } from "../world";
+import type { ServiceRequestEntry, SimRecord, WorldState } from "../world";
 import {
 	advanceSimTripCounters,
 	rebaseSimElapsedFromClock,
@@ -34,7 +34,7 @@ export function rebuildParkingDemandLog(world: WorldState): void {
 export function tryAssignParkingService(
 	world: WorldState,
 	time: TimeState,
-	sim: EntityRecord,
+	sim: SimRecord,
 ): boolean {
 	if (world.parkingDemandLog.length === 0) return false;
 	const idx =

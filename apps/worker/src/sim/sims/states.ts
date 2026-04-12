@@ -74,7 +74,7 @@ export const ENTITY_POPULATION_BY_TYPE: Record<number, number> = {
 	[FAMILY_HOTEL_SUITE]: 3,
 	[FAMILY_OFFICE]: 6,
 	[FAMILY_CONDO]: 3,
-	// Cathedral guest entities: 5 floor types x 8 slots = 40 guests.
+	// Cathedral guest sims: 5 floor types x 8 slots = 40 guests.
 	36: 8, // 0x24
 	37: 8, // 0x25
 	38: 8, // 0x26

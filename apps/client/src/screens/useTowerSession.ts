@@ -4,8 +4,8 @@ import type { TowerSocket } from "../lib/socket";
 import type {
 	CarrierCarStateData,
 	ConnectionStatus,
-	EntityStateData,
 	ServerMessage,
+	SimStateData,
 } from "../types";
 import type { ActivePrompt, CellInfoData } from "./gameScreenTypes";
 
@@ -24,7 +24,7 @@ interface UseTowerSessionResult {
 	playerCount: number;
 	towerName: string;
 	setTowerName: (value: string) => void;
-	entities: EntityStateData[];
+	sims: SimStateData[];
 	carriers: CarrierCarStateData[];
 	speedMultiplier: 1 | 3 | 10;
 	freeBuild: boolean;
@@ -62,7 +62,7 @@ export function useTowerSession({
 	const [cash, setCash] = useState(0);
 	const [playerCount, setPlayerCount] = useState(0);
 	const [towerName, setTowerName] = useState("");
-	const [entities, setEntities] = useState<EntityStateData[]>([]);
+	const [sims, setSims] = useState<SimStateData[]>([]);
 	const [carriers, setCarriers] = useState<CarrierCarStateData[]>([]);
 	const [speedMultiplier, setSpeedMultiplierState] = useState<1 | 3 | 10>(1);
 	const [freeBuild, setFreeBuildState] = useState(false);
@@ -109,21 +109,21 @@ export function useTowerSession({
 					updatePresentationClock(msg.simTime);
 					setCash(msg.cash);
 					setTowerName(msg.name || msg.towerId);
-					setEntities(msg.entities);
+					setSims(msg.sims);
 					setCarriers(msg.carriers);
 					sceneRef.current?.applyInitState(
 						msg.cells,
 						msg.simTime,
-						msg.entities,
+						msg.sims,
 						msg.carriers,
 					);
 					break;
 				case "state_patch":
 					sceneRef.current?.applyPatch(msg.cells);
 					break;
-				case "entity_update":
-					setEntities(msg.entities);
-					sceneRef.current?.applyEntities(msg.simTime, msg.entities);
+				case "sim_update":
+					setSims(msg.sims);
+					sceneRef.current?.applySims(msg.simTime, msg.sims);
 					break;
 				case "carrier_update":
 					setCarriers(msg.carriers);
@@ -298,7 +298,7 @@ export function useTowerSession({
 		playerCount,
 		towerName,
 		setTowerName,
-		entities,
+		sims,
 		carriers,
 		speedMultiplier,
 		freeBuild,

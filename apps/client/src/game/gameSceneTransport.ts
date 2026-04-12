@@ -1,4 +1,4 @@
-import type { CarrierCarStateData, EntityStateData } from "../types";
+import type { CarrierCarStateData, SimStateData } from "../types";
 import { GRID_HEIGHT, TILE_WIDTHS } from "../types";
 import {
 	EXPRESS_TICKS_PER_FLOOR,
@@ -20,7 +20,7 @@ export interface PresentationClock {
 	tickIntervalMs: number;
 }
 
-export interface QueuedEntityLayout {
+export interface QueuedSimLayout {
 	gridX: number;
 	gridY: number;
 }
@@ -118,21 +118,19 @@ export function collectElevatorColumnsByFloor(
 	return result;
 }
 
-export function getQueuedEntityLayout(
-	entity: EntityStateData,
+export function getQueuedSimLayout(
+	sim: SimStateData,
 	elevatorColumnsByFloor: Map<number, number[]>,
 	queueIndex: number,
-): QueuedEntityLayout {
-	const spanWidth = FAMILY_WIDTHS[entity.familyCode] ?? 1;
-	const population = FAMILY_POPULATION[entity.familyCode] ?? 1;
-	const slotFraction = (entity.baseOffset + 0.5) / population;
-	const fallbackX = entity.homeColumn + slotFraction * spanWidth;
-	const elevatorColumn = pickElevatorColumn(entity, elevatorColumnsByFloor);
-	const hasSelectedFloorColumns = elevatorColumnsByFloor.has(
-		entity.selectedFloor,
-	);
+): QueuedSimLayout {
+	const spanWidth = FAMILY_WIDTHS[sim.familyCode] ?? 1;
+	const population = FAMILY_POPULATION[sim.familyCode] ?? 1;
+	const slotFraction = (sim.baseOffset + 0.5) / population;
+	const fallbackX = sim.homeColumn + slotFraction * spanWidth;
+	const elevatorColumn = pickElevatorColumn(sim, elevatorColumnsByFloor);
+	const hasSelectedFloorColumns = elevatorColumnsByFloor.has(sim.selectedFloor);
 	const gridX =
-		elevatorColumn === entity.homeColumn && !hasSelectedFloorColumns
+		elevatorColumn === sim.homeColumn && !hasSelectedFloorColumns
 			? fallbackX
 			: elevatorColumn +
 				(TILE_WIDTHS.elevator ?? 4) / 2 +
@@ -141,16 +139,16 @@ export function getQueuedEntityLayout(
 
 	return {
 		gridX,
-		gridY: GRID_HEIGHT - 1 - entity.selectedFloor + 0.5,
+		gridY: GRID_HEIGHT - 1 - sim.selectedFloor + 0.5,
 	};
 }
 
-export function getQueuedEntityQueueKey(
-	entity: EntityStateData,
+export function getQueuedSimQueueKey(
+	sim: SimStateData,
 	elevatorColumnsByFloor: Map<number, number[]>,
 ): string {
-	return `${entity.selectedFloor}:${pickElevatorColumn(
-		entity,
+	return `${sim.selectedFloor}:${pickElevatorColumn(
+		sim,
 		elevatorColumnsByFloor,
 	)}`;
 }
@@ -175,20 +173,20 @@ export function getCarBounds(car: CarrierCarStateData): {
 }
 
 function pickElevatorColumn(
-	entity: EntityStateData,
+	sim: SimStateData,
 	elevatorColumnsByFloor: Map<number, number[]>,
 ): number {
-	const columns = elevatorColumnsByFloor.get(entity.floorAnchor);
-	const selectedColumns = elevatorColumnsByFloor.get(entity.selectedFloor);
+	const columns = elevatorColumnsByFloor.get(sim.floorAnchor);
+	const selectedColumns = elevatorColumnsByFloor.get(sim.selectedFloor);
 	const availableColumns = selectedColumns ?? columns;
 	if (!availableColumns || availableColumns.length === 0) {
-		return entity.homeColumn;
+		return sim.homeColumn;
 	}
 
-	let best = availableColumns[0] ?? entity.homeColumn;
-	let bestDistance = Math.abs(best - entity.homeColumn);
+	let best = availableColumns[0] ?? sim.homeColumn;
+	let bestDistance = Math.abs(best - sim.homeColumn);
 	for (const column of availableColumns) {
-		const distance = Math.abs(column - entity.homeColumn);
+		const distance = Math.abs(column - sim.homeColumn);
 		if (distance < bestDistance) {
 			best = column;
 			bestDistance = distance;

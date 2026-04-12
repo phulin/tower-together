@@ -392,7 +392,7 @@ export class TowerSim {
 		return result;
 	}
 
-	entitiesToArray() {
+	simsToArray() {
 		return createSimStateRecords(this.world);
 	}
 

@@ -5,11 +5,11 @@ import {
 	FAMILY_HOTEL_TWIN,
 } from "../resources";
 import type { TimeState } from "../time";
-import type { EntityRecord, PlacedObjectRecord, WorldState } from "../world";
+import type { PlacedObjectRecord, SimRecord, WorldState } from "../world";
 import {
 	dispatchCommercialVenueVisit,
-	findObjectForEntity,
-	findSiblingEntities,
+	findObjectForSim,
+	findSiblingSims,
 	finishCommercialVenueDwell,
 	finishCommercialVenueTrip,
 	resolveSimRouteBetweenFloors,
@@ -31,19 +31,19 @@ import {
 
 function activateHotelStay(
 	world: WorldState,
-	entity: EntityRecord,
+	sim: SimRecord,
 	time: TimeState,
 ): void {
-	const object = findObjectForEntity(world, entity);
+	const object = findObjectForSim(world, sim);
 	if (!object) return;
 
 	// Route requirement: actual route must succeed, not just structural check.
-	const directionFlag = entity.floorAnchor > LOBBY_FLOOR ? 0 : 1;
+	const directionFlag = sim.floorAnchor > LOBBY_FLOOR ? 0 : 1;
 	const result = resolveSimRouteBetweenFloors(
 		world,
-		entity,
+		sim,
 		LOBBY_FLOOR,
-		entity.floorAnchor,
+		sim.floorAnchor,
 		directionFlag,
 		time,
 	);
@@ -51,19 +51,19 @@ function activateHotelStay(
 		return;
 	}
 
-	entity.originFloor = LOBBY_FLOOR;
+	sim.originFloor = LOBBY_FLOOR;
 	object.unitStatus = time.daypartIndex < 4 ? 0 : 8;
 	object.needsRefreshFlag = 1;
 
 	if (result === 3) {
 		// Same-floor: immediate arrival
-		entity.stateCode = STATE_ACTIVE;
-		entity.selectedFloor = entity.floorAnchor;
+		sim.stateCode = STATE_ACTIVE;
+		sim.selectedFloor = sim.floorAnchor;
 	} else {
-		// In-transit: commute to room, arrival handled by dispatchEntityArrival
-		entity.stateCode = STATE_COMMUTE;
-		entity.selectedFloor = LOBBY_FLOOR;
-		entity.destinationFloor = entity.floorAnchor;
+		// In-transit: commute to room, arrival handled by dispatchSimArrival
+		sim.stateCode = STATE_COMMUTE;
+		sim.selectedFloor = LOBBY_FLOOR;
+		sim.destinationFloor = sim.floorAnchor;
 	}
 }
 
@@ -71,16 +71,16 @@ export function checkoutHotelStay(
 	world: WorldState,
 	ledger: LedgerState,
 	time: TimeState,
-	entity: EntityRecord,
+	sim: SimRecord,
 	object: PlacedObjectRecord,
 ): void {
-	const siblings = findSiblingEntities(world, entity);
+	const siblings = findSiblingSims(world, sim);
 	const lastSibling = siblings.reduce(
 		(max, sibling) => Math.max(max, sibling.baseOffset),
 		0,
 	);
-	if (entity.baseOffset !== lastSibling) {
-		entity.stateCode = STATE_CHECKOUT_QUEUE;
+	if (sim.baseOffset !== lastSibling) {
+		sim.stateCode = STATE_CHECKOUT_QUEUE;
 		return;
 	}
 
@@ -113,38 +113,38 @@ export function checkoutHotelStay(
 	object.needsRefreshFlag = 1;
 }
 
-export function processHotelEntity(
+export function processHotelSim(
 	world: WorldState,
 	ledger: LedgerState,
 	time: TimeState,
-	entity: EntityRecord,
+	sim: SimRecord,
 ): void {
-	const object = findObjectForEntity(world, entity);
+	const object = findObjectForSim(world, sim);
 	if (!object) return;
 
-	switch (entity.stateCode) {
+	switch (sim.stateCode) {
 		case STATE_HOTEL_PARKED:
-			activateHotelStay(world, entity, time);
+			activateHotelStay(world, sim, time);
 			return;
 		case STATE_ACTIVE: {
 			if (time.daypartIndex >= 4) {
 				if (object.unitStatus === 0 || object.unitStatus === 8) {
 					object.unitStatus = STATE_TRANSITION;
 				}
-				entity.destinationFloor = LOBBY_FLOOR;
-				entity.selectedFloor = entity.floorAnchor;
-				entity.stateCode = STATE_DEPARTURE;
+				sim.destinationFloor = LOBBY_FLOOR;
+				sim.selectedFloor = sim.floorAnchor;
+				sim.stateCode = STATE_DEPARTURE;
 				return;
 			}
 			// Hotel suite parking demand: eligible when occupied (unitStatus != 0)
 			if (
-				entity.familyCode === FAMILY_HOTEL_SUITE &&
+				sim.familyCode === FAMILY_HOTEL_SUITE &&
 				time.starCount > 2 &&
 				object.unitStatus !== 0
 			) {
-				tryAssignParkingService(world, time, entity);
+				tryAssignParkingService(world, time, sim);
 			}
-			dispatchCommercialVenueVisit(world, time, entity, {
+			dispatchCommercialVenueVisit(world, time, sim, {
 				venueFamilies: COMMERCIAL_FAMILIES,
 				returnState: STATE_ACTIVE,
 				onVenueReserved: () => {
@@ -157,14 +157,14 @@ export function processHotelEntity(
 			return;
 		}
 		case STATE_COMMUTE:
-			// In transit from lobby to room; arrival handled by dispatchEntityArrival
+			// In transit from lobby to room; arrival handled by dispatchSimArrival
 			return;
 		case STATE_VENUE_TRIP:
-			finishCommercialVenueTrip(entity, STATE_ACTIVE);
+			finishCommercialVenueTrip(sim, STATE_ACTIVE);
 			return;
 		case STATE_DEPARTURE:
 		case STATE_CHECKOUT_QUEUE:
-			if (entity.selectedFloor !== LOBBY_FLOOR) return;
+			if (sim.selectedFloor !== LOBBY_FLOOR) return;
 			if (object.unitStatus === 0 || object.unitStatus === 8) {
 				object.unitStatus = STATE_TRANSITION;
 				object.needsRefreshFlag = 1;
@@ -181,12 +181,12 @@ export function processHotelEntity(
 				object.needsRefreshFlag = 1;
 				return;
 			}
-			checkoutHotelStay(world, ledger, time, entity, object);
+			checkoutHotelStay(world, ledger, time, sim, object);
 			return;
 		case COMMERCIAL_DWELL_STATE:
-			finishCommercialVenueDwell(entity, time, STATE_ACTIVE);
+			finishCommercialVenueDwell(sim, time, STATE_ACTIVE);
 			return;
 		default:
-			entity.stateCode = STATE_HOTEL_PARKED;
+			sim.stateCode = STATE_HOTEL_PARKED;
 	}
 }

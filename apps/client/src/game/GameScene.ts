@@ -1,9 +1,9 @@
 import Phaser from "phaser";
 import {
 	type CarrierCarStateData,
-	type EntityStateData,
 	GRID_HEIGHT,
 	GRID_WIDTH,
+	type SimStateData,
 	TILE_WIDTHS,
 	UNDERGROUND_FLOORS,
 	UNDERGROUND_Y,
@@ -33,12 +33,12 @@ import {
 	collectElevatorColumnsByFloor,
 	getCarBounds,
 	getDisplayedCars,
-	getQueuedEntityLayout,
-	getQueuedEntityQueueKey,
+	getQueuedSimLayout,
+	getQueuedSimQueueKey,
 	type PresentationClock,
 	type TimedSnapshot,
 } from "./gameSceneTransport";
-import { buildOccupancyByCar, isQueuedEntity } from "./transportSelectors";
+import { buildOccupancyByCar, isQueuedSim } from "./transportSelectors";
 
 export type CellClickHandler = (x: number, y: number, shift: boolean) => void;
 export type CellInspectHandler = (x: number, y: number) => void;
@@ -47,7 +47,7 @@ export class GameScene extends Phaser.Scene {
 	private static readonly UNDERGROUND_TEXTURE_KEY = "underground";
 
 	private cellGraphics!: Phaser.GameObjects.Graphics;
-	private entityGraphics!: Phaser.GameObjects.Graphics;
+	private simGraphics!: Phaser.GameObjects.Graphics;
 	private carGraphics!: Phaser.GameObjects.Graphics;
 	private undergroundBackground: Phaser.GameObjects.TileSprite | null = null;
 
@@ -71,8 +71,8 @@ export class GameScene extends Phaser.Scene {
 	private anchorSet: Set<string> = new Set();
 	// Overlay tiles (e.g. stairs) keyed by "x,y"
 	private overlayGrid: Map<string, string> = new Map();
-	private previousEntitySnapshot: TimedSnapshot<EntityStateData> | null = null;
-	private currentEntitySnapshot: TimedSnapshot<EntityStateData> | null = null;
+	private previousSimSnapshot: TimedSnapshot<SimStateData> | null = null;
+	private currentSimSnapshot: TimedSnapshot<SimStateData> | null = null;
 	private previousCarrierSnapshot: TimedSnapshot<CarrierCarStateData> | null =
 		null;
 	private currentCarrierSnapshot: TimedSnapshot<CarrierCarStateData> | null =
@@ -159,7 +159,7 @@ export class GameScene extends Phaser.Scene {
 			evalScore?: number;
 		}>,
 		simTime: number,
-		entities: EntityStateData[] = [],
+		sims: SimStateData[] = [],
 		carriers: CarrierCarStateData[] = [],
 	): void {
 		this.grid.clear();
@@ -186,8 +186,8 @@ export class GameScene extends Phaser.Scene {
 					this.evalScoreMap.set(key, cell.evalScore);
 			}
 		}
-		this.previousEntitySnapshot = null;
-		this.currentEntitySnapshot = { simTime, items: entities };
+		this.previousSimSnapshot = null;
+		this.currentSimSnapshot = { simTime, items: sims };
 		this.previousCarrierSnapshot = null;
 		this.currentCarrierSnapshot = { simTime, items: carriers };
 		this.presentationClock = {
@@ -246,9 +246,9 @@ export class GameScene extends Phaser.Scene {
 		this.drawAllCells();
 	}
 
-	applyEntities(simTime: number, entities: EntityStateData[]): void {
-		this.previousEntitySnapshot = this.currentEntitySnapshot;
-		this.currentEntitySnapshot = { simTime, items: entities };
+	applySims(simTime: number, sims: SimStateData[]): void {
+		this.previousSimSnapshot = this.currentSimSnapshot;
+		this.currentSimSnapshot = { simTime, items: sims };
 		this.drawDynamicOverlays();
 	}
 
@@ -287,13 +287,13 @@ export class GameScene extends Phaser.Scene {
 		);
 
 		this.cellGraphics = this.add.graphics();
-		this.entityGraphics = this.add.graphics();
+		this.simGraphics = this.add.graphics();
 		this.carGraphics = this.add.graphics();
 		this.hoverGraphics = this.add.graphics();
 
 		// Depth ordering: sky (0) -> clouds (1) -> cells (2) -> overlays (3-4)
 		this.cellGraphics.setDepth(2);
-		this.entityGraphics.setDepth(3);
+		this.simGraphics.setDepth(3);
 		this.carGraphics.setDepth(3);
 		this.hoverGraphics.setDepth(4);
 
@@ -715,7 +715,7 @@ export class GameScene extends Phaser.Scene {
 	}
 
 	private drawDynamicOverlays(): void {
-		this.drawEntities();
+		this.drawSims();
 		this.drawCars();
 	}
 
@@ -759,24 +759,24 @@ export class GameScene extends Phaser.Scene {
 		}
 	}
 
-	private drawEntities(): void {
-		const g = this.entityGraphics;
+	private drawSims(): void {
+		const g = this.simGraphics;
 		g.clear();
 		const queueIndices = new Map<string, number>();
 		const elevatorColumnsByFloor = collectElevatorColumnsByFloor(
 			this.overlayGrid,
 		);
-		const entitySnapshot = this.currentEntitySnapshot ??
-			this.previousEntitySnapshot ?? { simTime: 0, items: [] };
+		const simSnapshot = this.currentSimSnapshot ??
+			this.previousSimSnapshot ?? { simTime: 0, items: [] };
 
-		for (const entity of entitySnapshot.items) {
-			if (!isQueuedEntity(entity)) continue;
-			const color = ENTITY_STRESS_COLORS[entity.stressLevel] ?? 0x111111;
-			const queueKey = getQueuedEntityQueueKey(entity, elevatorColumnsByFloor);
+		for (const sim of simSnapshot.items) {
+			if (!isQueuedSim(sim)) continue;
+			const color = ENTITY_STRESS_COLORS[sim.stressLevel] ?? 0x111111;
+			const queueKey = getQueuedSimQueueKey(sim, elevatorColumnsByFloor);
 			const queueIndex = queueIndices.get(queueKey) ?? 0;
 			queueIndices.set(queueKey, queueIndex + 1);
-			const { gridX, gridY } = getQueuedEntityLayout(
-				entity,
+			const { gridX, gridY } = getQueuedSimLayout(
+				sim,
 				elevatorColumnsByFloor,
 				queueIndex,
 			);
@@ -794,9 +794,9 @@ export class GameScene extends Phaser.Scene {
 		const g = this.carGraphics;
 		g.clear();
 		this.clearCarLabels();
-		const entitySnapshot = this.currentEntitySnapshot ??
-			this.previousEntitySnapshot ?? { simTime: 0, items: [] };
-		const occupancyByCar = buildOccupancyByCar(entitySnapshot.items);
+		const simSnapshot = this.currentSimSnapshot ??
+			this.previousSimSnapshot ?? { simTime: 0, items: [] };
+		const occupancyByCar = buildOccupancyByCar(simSnapshot.items);
 
 		for (const car of getDisplayedCars(
 			this.currentCarrierSnapshot,

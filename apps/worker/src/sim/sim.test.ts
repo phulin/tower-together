@@ -55,7 +55,7 @@ import {
 	createSimStateRecords,
 	onCarrierArrival,
 	populateCarrierRequests,
-	rebuildRuntimeEntities,
+	rebuildRuntimeSims,
 	reconcileSimTransport,
 	resetCommercialVenueCycle,
 	resolveSimRouteBetweenFloors,
@@ -96,7 +96,7 @@ function makeWorld(_opts?: { cash?: number }): WorldState {
 		overlayToAnchor: {},
 		placedObjects: {},
 		sidecars: [],
-		entities: [],
+		sims: [],
 		carriers: [],
 		specialLinks: [],
 		specialLinkRecords: [],
@@ -1808,7 +1808,7 @@ describe("selectBestRouteCandidate", () => {
 		const world = makeWorld();
 		world.lobbyHeight = 3;
 		world.carriers.push(makeCarrier(0, 0, 1, 10, 110));
-		const entity = {
+		const sim = {
 			floorAnchor: 80,
 			homeColumn: 0,
 			baseOffset: 0,
@@ -1830,7 +1830,7 @@ describe("selectBestRouteCandidate", () => {
 
 		const result = resolveSimRouteBetweenFloors(
 			world,
-			entity,
+			sim,
 			10,
 			40,
 			0,
@@ -1838,7 +1838,7 @@ describe("selectBestRouteCandidate", () => {
 		);
 
 		expect(result).toBe(2);
-		expect(entity.elapsedTicks).toBe(30);
+		expect(sim.elapsedTicks).toBe(30);
 	});
 });
 
@@ -1884,15 +1884,15 @@ describe("car state machine", () => {
 		expect(reachedTarget).toBe(true);
 	});
 
-	it("car picks up and delivers entity through full populate+tick cycle", () => {
+	it("car picks up and delivers sim through full populate+tick cycle", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		placeElevatorShaft(world, ledger, 10, 10, 14);
 		const carrier = world.carriers[0];
 		const car = carrier.cars[0];
-		// Multiple entities at floors 11-14 wanting to go down to floor 10
+		// Multiple sims at floors 11-14 wanting to go down to floor 10
 		for (let f = 11; f <= 14; f++) {
-			world.entities.push({
+			world.sims.push({
 				floorAnchor: f,
 				homeColumn: 0,
 				baseOffset: 0,
@@ -1916,7 +1916,7 @@ describe("car state machine", () => {
 		populateCarrierRequests(world, time);
 		expect(carrier.pendingRoutes.length).toBe(4);
 
-		// Tick until car boards at least one entity
+		// Tick until car boards at least one sim
 		let boarded = false;
 		for (let i = 0; i < 300; i++) {
 			tickAllCarriers(world, time);
@@ -1931,17 +1931,17 @@ describe("car state machine", () => {
 		expect(car.currentFloor).not.toBe(car.homeFloor);
 	});
 
-	it("car does not get stuck toggling when many entities queue", () => {
+	it("car does not get stuck toggling when many sims queue", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		placeElevatorShaft(world, ledger, 10, 10, 14);
 		const carrier = world.carriers[0];
 		const car = carrier.cars[0];
-		// 30 entities at various floors wanting to go to different floors
+		// 30 sims at various floors wanting to go to different floors
 		for (let i = 0; i < 30; i++) {
 			const src = 10 + (i % 5);
 			const dst = src === 10 ? 14 : 10;
-			world.entities.push({
+			world.sims.push({
 				floorAnchor: src,
 				homeColumn: i,
 				baseOffset: 0,
@@ -2037,7 +2037,7 @@ describe("car state machine", () => {
 		const car = carrier.cars[0];
 		car.pendingRouteIds.push("r1");
 		carrier.pendingRoutes.push({
-			entityId: "r1",
+			simId: "r1",
 			sourceFloor: 10,
 			destinationFloor: 15,
 			boarded: true,
@@ -2063,11 +2063,11 @@ describe("car state machine", () => {
 
 		tickAllCarriers(world, createTimeState());
 		expect(
-			carrier.pendingRoutes.find((route) => route.entityId === "low")
+			carrier.pendingRoutes.find((route) => route.simId === "low")
 				?.assignedCarIndex,
 		).toBe(0);
 		expect(
-			carrier.pendingRoutes.find((route) => route.entityId === "high")
+			carrier.pendingRoutes.find((route) => route.simId === "high")
 				?.assignedCarIndex,
 		).toBe(1);
 	});
@@ -2081,7 +2081,7 @@ describe("car state machine", () => {
 
 		car.pendingRouteIds.push("r1");
 		carrier.pendingRoutes.push({
-			entityId: "r1",
+			simId: "r1",
 			sourceFloor: 10,
 			destinationFloor: 18,
 			boarded: true,
@@ -2108,7 +2108,7 @@ describe("car state machine", () => {
 		expect(car.targetFloor).toBe(12);
 	});
 
-	it("reconciles entity arrival only from explicit completed carrier routes", () => {
+	it("reconciles sim arrival only from explicit completed carrier routes", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		const hotelY = GRID_HEIGHT - 1 - 15;
@@ -2116,26 +2116,26 @@ describe("car state machine", () => {
 			world.cells[`${x},${hotelY + 1}`] = "floor";
 		}
 		handlePlaceTile(0, hotelY, "hotelSingle", world, ledger);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 		world.carriers.push(makeCarrier(0, 0, 1, 10, 20, 1));
 		const carrier = world.carriers[0];
-		const entity = world.entities[0];
+		const sim = world.sims[0];
 		const hotel = world.placedObjects[`0,${hotelY}`];
-		if (!carrier || !entity || !hotel)
+		if (!carrier || !sim || !hotel)
 			throw new Error("expected hotel runtime state");
-		entity.stateCode = 0x05;
-		entity.route = {
+		sim.stateCode = 0x05;
+		sim.route = {
 			mode: "carrier",
 			carrierId: 0,
 			direction: "down",
 			source: 15,
 		};
-		entity.selectedFloor = 15;
-		entity.originFloor = 15;
-		entity.destinationFloor = 10;
+		sim.selectedFloor = 15;
+		sim.originFloor = 15;
+		sim.destinationFloor = 10;
 
 		carrier.pendingRoutes.push({
-			entityId: "15:0:3:0",
+			simId: "15:0:3:0",
 			sourceFloor: 15,
 			destinationFloor: 10,
 			boarded: true,
@@ -2143,21 +2143,21 @@ describe("car state machine", () => {
 			assignedCarIndex: 0,
 		});
 		reconcileSimTransport(world, ledger, createTimeState());
-		expect(world.entities[0]?.selectedFloor).toBe(15);
+		expect(world.sims[0]?.selectedFloor).toBe(15);
 
 		carrier.pendingRoutes = [];
 		carrier.completedRouteIds.push("15:0:3:0");
 		const cashBefore = ledger.cashBalance;
 		reconcileSimTransport(world, ledger, createTimeState());
-		expect(world.entities[0]?.selectedFloor).toBe(10);
-		expect(world.entities[0]?.stateCode).toBe(0x24);
-		expect(world.entities[0]?.route.mode).toBe("idle");
+		expect(world.sims[0]?.selectedFloor).toBe(10);
+		expect(world.sims[0]?.stateCode).toBe(0x24);
+		expect(world.sims[0]?.route.mode).toBe("idle");
 		expect(hotel.unitStatus).toBe(0x28);
 		expect(ledger.cashBalance).toBeGreaterThan(cashBefore);
 	});
 });
 
-describe("Phase 4 runtime entities", () => {
+describe("Phase 4 runtime sims", () => {
 	function setupOccupiedFloor(world: WorldState, ledger: LedgerState) {
 		for (let x = 0; x < GRID_WIDTH; x++) {
 			world.cells[`${x},${GROUND_Y}`] = "floor";
@@ -2180,16 +2180,10 @@ describe("Phase 4 runtime entities", () => {
 			handlePlaceTile(24, GROUND_Y - 1, "condo", world, ledger).accepted,
 		).toBe(true);
 
-		rebuildRuntimeEntities(world);
-		expect(
-			world.entities.filter((entity) => entity.familyCode === 4),
-		).toHaveLength(2);
-		expect(
-			world.entities.filter((entity) => entity.familyCode === 7),
-		).toHaveLength(6);
-		expect(
-			world.entities.filter((entity) => entity.familyCode === 9),
-		).toHaveLength(3);
+		rebuildRuntimeSims(world);
+		expect(world.sims.filter((sim) => sim.familyCode === 4)).toHaveLength(2);
+		expect(world.sims.filter((sim) => sim.familyCode === 7)).toHaveLength(6);
+		expect(world.sims.filter((sim) => sim.familyCode === 9)).toHaveLength(3);
 	});
 
 	it("resets commercial venue counters at the daily cycle checkpoint", () => {
@@ -2231,7 +2225,7 @@ describe("Phase 4 runtime entities", () => {
 		expect(world.placedObjects[`0,${GROUND_Y + 2}`].unitStatus).toBe(1);
 	});
 
-	it("sells condos through the entity refresh stride", () => {
+	it("sells condos through the sim refresh stride", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		setupOccupiedFloor(world, ledger);
@@ -2240,7 +2234,7 @@ describe("Phase 4 runtime entities", () => {
 		handlePlaceTile(24, GROUND_Y - 1, "condo", world, ledger);
 		handlePlaceTile(40, GROUND_Y - 1, "hotelSingle", world, ledger);
 		placeElevatorShaft(world, ledger, 0, 10, 15);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
 		const condoBefore = ledger.cashBalance;
 		for (let tick = 0; tick < 64; tick++) {
@@ -2273,15 +2267,15 @@ describe("Phase 4 runtime entities", () => {
 		);
 	});
 
-	it("projects entity wire state with stress bands", () => {
+	it("projects sim wire state with stress bands", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		setupOccupiedFloor(world, ledger);
 
 		handlePlaceTile(0, GROUND_Y - 1, "hotelTwin", world, ledger);
-		rebuildRuntimeEntities(world);
-		const firstEntity = world.entities[0];
-		const secondEntity = world.entities[1];
+		rebuildRuntimeSims(world);
+		const firstEntity = world.sims[0];
+		const secondEntity = world.sims[1];
 		const hotel = world.placedObjects[`0,${GROUND_Y - 1}`];
 		if (!firstEntity || !secondEntity || !hotel)
 			throw new Error("expected hotel runtime state");
@@ -2304,10 +2298,10 @@ describe("Phase 4 runtime entities", () => {
 		setupOccupiedFloor(world, ledger);
 
 		handlePlaceTile(0, GROUND_Y - 1, "hotelSingle", world, ledger);
-		rebuildRuntimeEntities(world);
-		const entity = world.entities[0];
-		if (!entity) throw new Error("expected hotel entity");
-		entity.elapsedTicks = 120;
+		rebuildRuntimeSims(world);
+		const sim = world.sims[0];
+		if (!sim) throw new Error("expected hotel sim");
+		sim.elapsedTicks = 120;
 
 		const state = createSimStateRecords(world);
 		expect(state[0]?.stressLevel).toBe("high");
@@ -2324,11 +2318,9 @@ describe("Phase 4 runtime entities", () => {
 		expect(
 			handlePlaceTile(12, GROUND_Y - 1, "restaurant", world, ledger).accepted,
 		).toBe(true);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
-		const officeEntity = world.entities.find(
-			(entity) => entity.familyCode === 7,
-		);
+		const officeEntity = world.sims.find((sim) => sim.familyCode === 7);
 		const officeObject = world.placedObjects[`0,${GROUND_Y - 1}`];
 		const venueObject = world.placedObjects[`12,${GROUND_Y - 1}`];
 		if (!officeEntity || !officeObject || !venueObject) {
@@ -2375,16 +2367,14 @@ describe("Phase 4 runtime entities", () => {
 		setupOccupiedFloor(world, ledger);
 
 		handlePlaceTile(0, GROUND_Y - 1, "office", world, ledger);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
-		const entity = world.entities.find(
-			(candidate) => candidate.familyCode === 7,
-		);
-		if (!entity) throw new Error("expected office entity");
+		const sim = world.sims.find((candidate) => candidate.familyCode === 7);
+		if (!sim) throw new Error("expected office sim");
 
 		const result = resolveSimRouteBetweenFloors(
 			world,
-			entity,
+			sim,
 			10,
 			10,
 			0,
@@ -2392,35 +2382,35 @@ describe("Phase 4 runtime entities", () => {
 		);
 
 		expect(result).toBe(3);
-		expect(entity.tripCount).toBe(1);
-		expect(entity.accumulatedTicks).toBe(0);
+		expect(sim.tripCount).toBe(1);
+		expect(sim.accumulatedTicks).toBe(0);
 	});
 
-	it("seeds carrier waiters from active entities so elevator cars move", () => {
+	it("seeds carrier waiters from active sims so elevator cars move", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		setupOccupiedFloor(world, ledger);
 
 		handlePlaceTile(0, GROUND_Y - 1, "hotelSingle", world, ledger);
 		placeElevatorShaft(world, ledger, 0, 10, 15);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
-		const entity = world.entities[0];
-		if (!entity) throw new Error("expected hotel entity");
-		entity.stateCode = 0x05;
+		const sim = world.sims[0];
+		if (!sim) throw new Error("expected hotel sim");
+		sim.stateCode = 0x05;
 
 		populateCarrierRequests(world, { ...createTimeState(), dayTick: 123 });
 		const carrier = world.carriers[0];
 		if (!carrier) throw new Error("expected carrier");
-		const requestSlot = floorToSlot(carrier, entity.floorAnchor);
+		const requestSlot = floorToSlot(carrier, sim.floorAnchor);
 		expect(requestSlot).toBeGreaterThanOrEqual(0);
 		expect(carrier.secondaryRouteStatusByFloor[requestSlot]).toBeGreaterThan(0);
-		expect(entity.route.mode).toBe("carrier");
-		if (entity.route.mode === "carrier") {
-			expect(entity.route.source).toBe(entity.floorAnchor);
-			expect(entity.route.direction).toBe("down");
+		expect(sim.route.mode).toBe("carrier");
+		if (sim.route.mode === "carrier") {
+			expect(sim.route.source).toBe(sim.floorAnchor);
+			expect(sim.route.direction).toBe("down");
 		}
-		expect(entity.queueTick).toBe(123);
+		expect(sim.queueTick).toBe(123);
 	});
 
 	it("activates hotel checkout demand even at the default new-game star/daypart", () => {
@@ -2430,10 +2420,10 @@ describe("Phase 4 runtime entities", () => {
 
 		handlePlaceTile(0, GROUND_Y - 1, "hotelSingle", world, ledger);
 		placeElevatorShaft(world, ledger, 0, 10, 15);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
-		const entity = world.entities[0];
-		if (!entity) throw new Error("expected hotel entity");
+		const sim = world.sims[0];
+		if (!sim) throw new Error("expected hotel sim");
 
 		const newGameTime = {
 			...createNewGameTimeState(),
@@ -2442,21 +2432,21 @@ describe("Phase 4 runtime entities", () => {
 		};
 		// First advance: hotel activates and commutes to room
 		advanceSimRefreshStride(world, ledger, newGameTime);
-		expect(entity.stateCode).toBe(0x00); // STATE_COMMUTE
+		expect(sim.stateCode).toBe(0x00); // STATE_COMMUTE
 
 		// Simulate carrier arrival at hotel floor
 		onCarrierArrival(
 			world,
 			ledger,
 			newGameTime,
-			`${entity.floorAnchor}:${entity.homeColumn}:${entity.familyCode}:${entity.baseOffset}`,
-			entity.floorAnchor,
+			`${sim.floorAnchor}:${sim.homeColumn}:${sim.familyCode}:${sim.baseOffset}`,
+			sim.floorAnchor,
 		);
-		expect(entity.stateCode).toBe(0x01); // STATE_ACTIVE
+		expect(sim.stateCode).toBe(0x01); // STATE_ACTIVE
 
 		// Next advance: daypart >= 4 triggers departure
 		advanceSimRefreshStride(world, ledger, newGameTime);
-		expect(entity.stateCode).toBe(0x05); // STATE_DEPARTURE
+		expect(sim.stateCode).toBe(0x05); // STATE_DEPARTURE
 	});
 
 	it("queues office commuters from the lobby to their office floor", () => {
@@ -2466,12 +2456,10 @@ describe("Phase 4 runtime entities", () => {
 
 		handlePlaceTile(0, GROUND_Y - 1, "office", world, ledger);
 		placeElevatorShaft(world, ledger, 0, 10, 15);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
-		const entity = world.entities.find(
-			(candidate) => candidate.familyCode === 7,
-		);
-		if (!entity) throw new Error("expected office entity");
+		const sim = world.sims.find((candidate) => candidate.familyCode === 7);
+		if (!sim) throw new Error("expected office sim");
 
 		const activeTime = {
 			...createTimeState(),
@@ -2481,9 +2469,9 @@ describe("Phase 4 runtime entities", () => {
 			starCount: 4,
 		};
 		advanceSimRefreshStride(world, ledger, activeTime);
-		expect(entity.stateCode).toBe(0x60); // rental/opening transit
-		expect(entity.selectedFloor).toBe(10);
-		expect(entity.destinationFloor).toBe(entity.floorAnchor);
+		expect(sim.stateCode).toBe(0x60); // rental/opening transit
+		expect(sim.selectedFloor).toBe(10);
+		expect(sim.destinationFloor).toBe(sim.floorAnchor);
 		expect(world.placedObjects[`0,${GROUND_Y - 1}`]?.unitStatus).toBe(0);
 
 		populateCarrierRequests(world, activeTime);
@@ -2497,10 +2485,10 @@ describe("Phase 4 runtime entities", () => {
 			world,
 			ledger,
 			activeTime,
-			`${entity.floorAnchor}:${entity.homeColumn}:${entity.familyCode}:${entity.baseOffset}`,
-			entity.floorAnchor,
+			`${sim.floorAnchor}:${sim.homeColumn}:${sim.familyCode}:${sim.baseOffset}`,
+			sim.floorAnchor,
 		);
-		expect(entity.stateCode).toBe(0x05);
+		expect(sim.stateCode).toBe(0x05);
 		expect(world.placedObjects[`0,${GROUND_Y - 1}`]?.unitStatus).toBe(1);
 	});
 
@@ -2511,7 +2499,7 @@ describe("Phase 4 runtime entities", () => {
 
 		handlePlaceTile(0, GROUND_Y - 1, "office", world, ledger);
 		placeElevatorShaft(world, ledger, 0, 10, 15);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
 		const office = world.placedObjects[`0,${GROUND_Y - 1}`];
 		if (!office) throw new Error("expected office object");
@@ -2534,9 +2522,7 @@ describe("Phase 4 runtime entities", () => {
 		}
 
 		expect(
-			world.entities.every(
-				(entity) => entity.familyCode !== 7 || entity.stateCode === 0x20,
-			),
+			world.sims.every((sim) => sim.familyCode !== 7 || sim.stateCode === 0x20),
 		).toBe(true);
 	});
 
@@ -2546,24 +2532,22 @@ describe("Phase 4 runtime entities", () => {
 		setupOccupiedFloor(world, ledger);
 
 		handlePlaceTile(0, GROUND_Y - 1, "office", world, ledger);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
 		const office = world.placedObjects[`0,${GROUND_Y - 1}`];
-		const entity = world.entities.find(
-			(candidate) => candidate.familyCode === 7,
-		);
-		if (!office || !entity) throw new Error("expected office runtime state");
+		const sim = world.sims.find((candidate) => candidate.familyCode === 7);
+		if (!office || !sim) throw new Error("expected office runtime state");
 		office.evalActiveFlag = 1;
-		entity.stateCode = 0x00;
-		entity.selectedFloor = 10;
-		entity.destinationFloor = entity.floorAnchor;
-		entity.route = {
+		sim.stateCode = 0x00;
+		sim.selectedFloor = 10;
+		sim.destinationFloor = sim.floorAnchor;
+		sim.route = {
 			mode: "carrier",
 			carrierId: 0,
 			direction: "up",
 			source: 10,
 		};
-		entity.tripCount = 1;
+		sim.tripCount = 1;
 
 		onCarrierArrival(
 			world,
@@ -2574,11 +2558,11 @@ describe("Phase 4 runtime entities", () => {
 				daypartIndex: 1,
 				starCount: 4,
 			},
-			`${entity.floorAnchor}:${entity.homeColumn}:${entity.familyCode}:${entity.baseOffset}`,
-			entity.floorAnchor,
+			`${sim.floorAnchor}:${sim.homeColumn}:${sim.familyCode}:${sim.baseOffset}`,
+			sim.floorAnchor,
 		);
 
-		expect(entity.stateCode).toBe(0x21);
+		expect(sim.stateCode).toBe(0x21);
 		expect(office.evalLevel).toBe(0xff);
 		expect(office.evalActiveFlag).toBe(1);
 	});
@@ -2589,22 +2573,20 @@ describe("Phase 4 runtime entities", () => {
 		setupOccupiedFloor(world, ledger);
 
 		handlePlaceTile(0, GROUND_Y - 1, "office", world, ledger);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
-		const entity = world.entities.find(
-			(candidate) => candidate.familyCode === 7,
-		);
-		if (!entity) throw new Error("expected office entity");
-		entity.stateCode = 0x00;
-		entity.selectedFloor = 10;
-		entity.destinationFloor = entity.floorAnchor;
-		entity.route = {
+		const sim = world.sims.find((candidate) => candidate.familyCode === 7);
+		if (!sim) throw new Error("expected office sim");
+		sim.stateCode = 0x00;
+		sim.selectedFloor = 10;
+		sim.destinationFloor = sim.floorAnchor;
+		sim.route = {
 			mode: "carrier",
 			carrierId: 0,
 			direction: "up",
 			source: 10,
 		};
-		entity.lastDemandTick = 10;
+		sim.lastDemandTick = 10;
 
 		onCarrierArrival(
 			world,
@@ -2616,13 +2598,13 @@ describe("Phase 4 runtime entities", () => {
 				daypartIndex: 1,
 				starCount: 4,
 			},
-			`${entity.floorAnchor}:${entity.homeColumn}:${entity.familyCode}:${entity.baseOffset}`,
-			entity.floorAnchor,
+			`${sim.floorAnchor}:${sim.homeColumn}:${sim.familyCode}:${sim.baseOffset}`,
+			sim.floorAnchor,
 		);
 
-		expect(entity.tripCount).toBe(1);
-		expect(entity.accumulatedTicks).toBe(15);
-		expect(entity.lastDemandTick).toBe(0);
+		expect(sim.tripCount).toBe(1);
+		expect(sim.accumulatedTicks).toBe(15);
+		expect(sim.lastDemandTick).toBe(0);
 	});
 
 	it("keeps disconnected offices for rent instead of spawning commuters", () => {
@@ -2631,7 +2613,7 @@ describe("Phase 4 runtime entities", () => {
 		setupOccupiedFloor(world, ledger);
 
 		handlePlaceTile(0, GROUND_Y - 1, "office", world, ledger);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
 		const office = world.placedObjects[`0,${GROUND_Y - 1}`];
 		if (!office) throw new Error("expected office object");
@@ -2656,9 +2638,7 @@ describe("Phase 4 runtime entities", () => {
 		expect(office.evalActiveFlag).toBe(1);
 		expect(office.unitStatus).toBe(0x10);
 		expect(world.carriers).toHaveLength(0);
-		expect(world.entities.every((entity) => entity.route.mode === "idle")).toBe(
-			true,
-		);
+		expect(world.sims.every((sim) => sim.route.mode === "idle")).toBe(true);
 	});
 
 	it("does not create late-day office departure queues on fresh placement", () => {
@@ -2668,7 +2648,7 @@ describe("Phase 4 runtime entities", () => {
 
 		handlePlaceTile(0, GROUND_Y - 1, "office", world, ledger);
 		placeElevatorShaft(world, ledger, 0, 10, 15);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
 		const office = world.placedObjects[`0,${GROUND_Y - 1}`];
 		if (!office) throw new Error("expected office object");
@@ -2687,9 +2667,7 @@ describe("Phase 4 runtime entities", () => {
 		expect(office.evalActiveFlag).toBe(1);
 		expect(office.unitStatus).toBe(0x10);
 		expect(carrier.pendingRoutes).toHaveLength(0);
-		expect(world.entities.every((entity) => entity.route.mode === "idle")).toBe(
-			true,
-		);
+		expect(world.sims.every((sim) => sim.route.mode === "idle")).toBe(true);
 	});
 
 	it("queues office workers downward from the office floor on departure dispatch", () => {
@@ -2699,16 +2677,14 @@ describe("Phase 4 runtime entities", () => {
 
 		handlePlaceTile(0, GROUND_Y - 1, "office", world, ledger);
 		placeElevatorShaft(world, ledger, 0, 10, 15);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
-		const entity = world.entities.find(
-			(candidate) => candidate.familyCode === 7,
-		);
-		if (!entity) throw new Error("expected office entity");
-		entity.stateCode = 0x05;
-		entity.selectedFloor = entity.floorAnchor;
-		entity.destinationFloor = -1;
-		entity.route = { mode: "idle" };
+		const sim = world.sims.find((candidate) => candidate.familyCode === 7);
+		if (!sim) throw new Error("expected office sim");
+		sim.stateCode = 0x05;
+		sim.selectedFloor = sim.floorAnchor;
+		sim.destinationFloor = -1;
+		sim.route = { mode: "idle" };
 		const office = world.placedObjects[`0,${GROUND_Y - 1}`];
 		if (!office) throw new Error("expected office object");
 		office.unitStatus = 2;
@@ -2727,19 +2703,19 @@ describe("Phase 4 runtime entities", () => {
 		} finally {
 			Math.random = originalRandom;
 		}
-		expect(entity.stateCode).toBe(0x45);
-		expect(entity.selectedFloor).toBe(entity.floorAnchor);
-		expect(entity.destinationFloor).toBe(10);
+		expect(sim.stateCode).toBe(0x45);
+		expect(sim.selectedFloor).toBe(sim.floorAnchor);
+		expect(sim.destinationFloor).toBe(10);
 		expect(office.unitStatus).toBe(1);
 
 		populateCarrierRequests(world, endOfDayTime);
 		const carrier = world.carriers[0];
 		if (!carrier) throw new Error("expected carrier");
-		const requestSlot = floorToSlot(carrier, entity.floorAnchor);
+		const requestSlot = floorToSlot(carrier, sim.floorAnchor);
 		expect(requestSlot).toBeGreaterThanOrEqual(0);
 		expect(carrier.secondaryRouteStatusByFloor[requestSlot]).toBeGreaterThan(0);
 		expect(carrier.primaryRouteStatusByFloor[requestSlot]).toBe(0);
-		expect(entity.route.mode).toBe("carrier");
+		expect(sim.route.mode).toBe("carrier");
 	});
 
 	it("keeps office workers at work before the evening departure window", () => {
@@ -2749,15 +2725,13 @@ describe("Phase 4 runtime entities", () => {
 
 		handlePlaceTile(0, GROUND_Y - 1, "office", world, ledger);
 		placeElevatorShaft(world, ledger, 0, 10, 15);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
-		const entity = world.entities.find(
-			(candidate) => candidate.familyCode === 7,
-		);
+		const sim = world.sims.find((candidate) => candidate.familyCode === 7);
 		const office = world.placedObjects[`0,${GROUND_Y - 1}`];
-		if (!entity || !office) throw new Error("expected office runtime state");
-		entity.stateCode = 0x05;
-		entity.selectedFloor = entity.floorAnchor;
+		if (!sim || !office) throw new Error("expected office runtime state");
+		sim.stateCode = 0x05;
+		sim.selectedFloor = sim.floorAnchor;
 		office.unitStatus = 2;
 
 		advanceSimRefreshStride(world, ledger, {
@@ -2768,8 +2742,8 @@ describe("Phase 4 runtime entities", () => {
 			starCount: 4,
 		});
 
-		expect(entity.stateCode).toBe(0x05);
-		expect(entity.route.mode).toBe("idle");
+		expect(sim.stateCode).toBe(0x05);
+		expect(sim.route.mode).toBe("idle");
 		expect(office.unitStatus).toBe(2);
 	});
 
@@ -2780,12 +2754,10 @@ describe("Phase 4 runtime entities", () => {
 
 		handlePlaceTile(24, GROUND_Y - 1, "restaurant", world, ledger);
 		handlePlaceTile(0, GROUND_Y - 1, "condo", world, ledger);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
-		const entity = world.entities.find(
-			(candidate) => candidate.familyCode === 9,
-		);
-		if (!entity) throw new Error("expected condo entity");
+		const sim = world.sims.find((candidate) => candidate.familyCode === 9);
+		if (!sim) throw new Error("expected condo sim");
 		const cashBefore = ledger.cashBalance;
 
 		const activeTime = {
@@ -2798,7 +2770,7 @@ describe("Phase 4 runtime entities", () => {
 		advanceSimRefreshStride(world, ledger, activeTime);
 		expect(ledger.cashBalance).toBeGreaterThan(cashBefore);
 		expect(world.placedObjects[`0,${GROUND_Y - 1}`].unitStatus).toBe(0x08);
-		expect(entity.stateCode).toBe(0x62);
+		expect(sim.stateCode).toBe(0x62);
 	});
 
 	it("skips the unavailable-venue stress penalty for condos", () => {
@@ -2807,12 +2779,10 @@ describe("Phase 4 runtime entities", () => {
 		setupOccupiedFloor(world, ledger);
 
 		handlePlaceTile(0, GROUND_Y - 1, "condo", world, ledger);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
-		const entity = world.entities.find(
-			(candidate) => candidate.familyCode === 9,
-		);
-		if (!entity) throw new Error("expected condo entity");
+		const sim = world.sims.find((candidate) => candidate.familyCode === 9);
+		if (!sim) throw new Error("expected condo sim");
 
 		advanceSimRefreshStride(world, ledger, {
 			...createTimeState(),
@@ -2821,10 +2791,10 @@ describe("Phase 4 runtime entities", () => {
 			starCount: 4,
 		});
 
-		expect(entity.stateCode).toBe(0x27);
-		expect(entity.tripCount).toBe(0);
-		expect(entity.accumulatedTicks).toBe(0);
-		expect(entity.elapsedTicks).toBe(0);
+		expect(sim.stateCode).toBe(0x27);
+		expect(sim.tripCount).toBe(0);
+		expect(sim.accumulatedTicks).toBe(0);
+		expect(sim.elapsedTicks).toBe(0);
 	});
 
 	it("clears condo occupied flag and trip counters on failed refresh without a donor", () => {
@@ -2833,22 +2803,20 @@ describe("Phase 4 runtime entities", () => {
 		setupOccupiedFloor(world, ledger);
 
 		handlePlaceTile(0, GROUND_Y - 1, "condo", world, ledger);
-		rebuildRuntimeEntities(world);
+		rebuildRuntimeSims(world);
 
 		const condo = world.placedObjects[`0,${GROUND_Y - 1}`];
-		const entity = world.entities.find(
-			(candidate) => candidate.familyCode === 9,
-		);
-		if (!condo || !entity) throw new Error("expected condo runtime state");
+		const sim = world.sims.find((candidate) => candidate.familyCode === 9);
+		if (!condo || !sim) throw new Error("expected condo runtime state");
 		condo.unitStatus = 0;
 		condo.evalActiveFlag = 1;
-		for (const sibling of world.entities.filter(
+		for (const sibling of world.sims.filter(
 			(candidate) => candidate.familyCode === 9,
 		)) {
 			sibling.tripCount = 1;
 			sibling.accumulatedTicks = 1_000;
 		}
-		const entityIndex = world.entities.indexOf(entity);
+		const entityIndex = world.sims.indexOf(sim);
 
 		advanceSimRefreshStride(world, ledger, {
 			...createTimeState(),
@@ -2861,7 +2829,7 @@ describe("Phase 4 runtime entities", () => {
 		expect(condo.evalLevel).toBe(0);
 		expect(condo.evalActiveFlag).toBe(0);
 		expect(
-			world.entities
+			world.sims
 				.filter((candidate) => candidate.familyCode === 9)
 				.every(
 					(candidate) =>
@@ -2870,7 +2838,7 @@ describe("Phase 4 runtime entities", () => {
 		).toBe(true);
 	});
 
-	it("dispatches segment routes without waiting for the next entity stride", () => {
+	it("dispatches segment routes without waiting for the next sim stride", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
 		world.specialLinks[0] = {
@@ -2885,7 +2853,7 @@ describe("Phase 4 runtime entities", () => {
 		for (let floor = 10; floor <= 14; floor++) {
 			world.floorWalkabilityFlags[floor] = 1;
 		}
-		world.entities.push({
+		world.sims.push({
 			floorAnchor: 10,
 			homeColumn: 0,
 			baseOffset: 0,
@@ -2910,18 +2878,18 @@ describe("Phase 4 runtime entities", () => {
 			...createTimeState(),
 			dayTick: 321,
 		});
-		const entity = world.entities[0];
-		if (!entity) throw new Error("expected entity");
-		// Entity is now in-transit on the segment route with per-stop delay
+		const sim = world.sims[0];
+		if (!sim) throw new Error("expected sim");
+		// Sim is now in-transit on the segment route with per-stop delay
 		// 4 floors × 16 ticks (Escalator branch, stairs cost bit = 0) = 64; one tick decremented = 63
-		expect(entity.route.mode).toBe("segment");
-		expect(entity.transitTicksRemaining).toBe(63);
+		expect(sim.route.mode).toBe("segment");
+		expect(sim.transitTicksRemaining).toBe(63);
 	});
 
-	it("does not finalize segment routes for entities outside transport transit states", () => {
+	it("does not finalize segment routes for sims outside transport transit states", () => {
 		const world = makeWorld();
 		const ledger = makeLedger();
-		world.entities.push({
+		world.sims.push({
 			floorAnchor: 10,
 			homeColumn: 0,
 			baseOffset: 0,
@@ -2942,9 +2910,9 @@ describe("Phase 4 runtime entities", () => {
 		});
 
 		reconcileSimTransport(world, ledger, createTimeState());
-		expect(world.entities[0]?.selectedFloor).toBe(10);
-		expect(world.entities[0]?.route.mode).toBe("segment");
-		const route0 = world.entities[0]?.route;
+		expect(world.sims[0]?.selectedFloor).toBe(10);
+		expect(world.sims[0]?.route.mode).toBe("segment");
+		const route0 = world.sims[0]?.route;
 		if (route0?.mode === "segment") {
 			expect(route0.destination).toBe(14);
 		}
@@ -2957,7 +2925,7 @@ describe("Phase 4 runtime entities", () => {
 		world.carriers.push(carrier);
 		if (!carrier) throw new Error("expected carrier");
 		carrier.pendingRoutes.push({
-			entityId: "test",
+			simId: "test",
 			sourceFloor: 10,
 			destinationFloor: 15,
 			boarded: false,
@@ -2988,7 +2956,7 @@ describe("Phase 4 runtime entities", () => {
 		const carrier = makeCarrier(0, 0, 1, 10, 15, 2);
 		world.carriers.push(carrier);
 		carrier.pendingRoutes.push({
-			entityId: "test",
+			simId: "test",
 			sourceFloor: 10,
 			destinationFloor: 15,
 			boarded: false,
@@ -3054,10 +3022,10 @@ describe("Phase 4 runtime entities", () => {
 		const ledger = makeLedger();
 		setupOccupiedFloor(world, ledger);
 		handlePlaceTile(0, GROUND_Y - 1, "hotelSingle", world, ledger);
-		rebuildRuntimeEntities(world);
-		for (const entity of world.entities) {
-			entity.stateCode = 0x05;
-			entity.selectedFloor = 10;
+		rebuildRuntimeSims(world);
+		for (const sim of world.sims) {
+			sim.stateCode = 0x05;
+			sim.selectedFloor = 10;
 		}
 		const hotel = world.placedObjects[`0,${GROUND_Y - 1}`];
 		if (!hotel) throw new Error("expected hotel");

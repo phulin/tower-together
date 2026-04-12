@@ -40,7 +40,7 @@ export interface CarrierCar {
 	departureFlag: number;
 	departureTimestamp: number;
 	scheduleFlag: number;
-	/** Waiting entity count indexed by floor slot. */
+	/** Waiting sim count indexed by floor slot. */
 	waitingCount: number[];
 	destinationCountByFloor: number[];
 	nonemptyDestinationCount: number;
@@ -62,7 +62,7 @@ export interface CarrierFloorQueue {
 }
 
 export interface CarrierPendingRoute {
-	entityId: string;
+	simId: string;
 	sourceFloor: number;
 	destinationFloor: number;
 	boarded: boolean;
@@ -110,7 +110,7 @@ export interface CarrierRecord {
 	cars: CarrierCar[];
 }
 
-// ─── Runtime entities ────────────────────────────────────────────────────────
+// ─── Runtime sims ────────────────────────────────────────────────────────
 
 export type RouteState =
 	| { mode: "idle" }
@@ -123,7 +123,7 @@ export type RouteState =
 	  }
 	| { mode: "queued"; source: number };
 
-export interface EntityRecord {
+export interface SimRecord {
 	floorAnchor: number;
 	homeColumn: number;
 	baseOffset: number;
@@ -137,7 +137,7 @@ export interface EntityRecord {
 	queueTick: number;
 	/** Current elapsed ticks for the in-progress service visit (maps to low 10 bits of elapsed_packed). */
 	elapsedTicks: number;
-	/** Ticks remaining before the entity may retry routing (route-failure / wait-state delay). */
+	/** Ticks remaining before the sim may retry routing (route-failure / wait-state delay). */
 	routeRetryDelay: number;
 	transitTicksRemaining: number;
 	lastDemandTick: number;
@@ -234,8 +234,8 @@ export interface GateFlags {
 	routesViable: number;
 	/** Floor index of placed VIP suite; 0xffff = none. */
 	vipSuiteFloor: number;
-	/** Runtime index of cathedral entity; 0xffff = none. */
-	evalEntityIndex: number;
+	/** Runtime index of cathedral sim; 0xffff = none. */
+	evalSimIndex: number;
 	/** Number of placed recycling-center upper slices. */
 	recyclingCenterCount: number;
 	/** Set every 8 days while the tower is below 5-star rank. */
@@ -255,7 +255,7 @@ export function createGateFlags(): GateFlags {
 		recyclingAdequate: 0,
 		routesViable: 0,
 		vipSuiteFloor: 0xffff, // −1: no VIP suite
-		evalEntityIndex: 0xffff, // −1: no cathedral placed
+		evalSimIndex: 0xffff, // −1: no cathedral placed
 		recyclingCenterCount: 0,
 		facilityProgressOverride: 0,
 		family345SaleCount: 0,
@@ -409,8 +409,8 @@ export interface WorldState {
 	placedObjects: Record<string, PlacedObjectRecord>;
 	/** Sidecar records, indexed by PlacedObjectRecord.linkedRecordIndex. */
 	sidecars: SidecarRecord[];
-	/** Runtime entity population rebuilt from placed objects. */
-	entities: EntityRecord[];
+	/** Runtime sim population rebuilt from placed objects. */
+	sims: SimRecord[];
 	/** One CarrierRecord per elevator/escalator shaft. Rebuilt from cells on mutation. */
 	carriers: CarrierRecord[];
 	/** Special-link segment table (max MAX_SPECIAL_LINKS entries). Rebuilt from carriers. */

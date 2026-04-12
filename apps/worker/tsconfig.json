@@ -3,10 +3,11 @@
 		"target": "ES2022",
 		"module": "ES2022",
 		"moduleResolution": "bundler",
+		"skipLibCheck": true,
 		"lib": ["ES2022"],
 		"types": ["@cloudflare/workers-types"],
 		"strict": true,
 		"noEmit": true
 	},
-	"include": ["src/**/*.ts"]
+	"include": ["src"]
 }

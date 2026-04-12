@@ -1,8 +1,5 @@
 import { enqueueCarrierRoute } from "../carriers";
-import {
-	checkEvalCompletionAndAward,
-	processCathedralEntity,
-} from "../cathedral";
+import { checkEvalCompletionAndAward, processCathedralSim } from "../cathedral";
 import type { LedgerState } from "../ledger";
 import {
 	FAMILY_CONDO,
@@ -15,7 +12,7 @@ import {
 	FAMILY_RETAIL,
 } from "../resources";
 import { type RouteCandidate, selectBestRouteCandidate } from "../routing";
-import { processCondoEntity } from "./condo";
+import { processCondoSim } from "./condo";
 
 export {
 	closeCommercialVenues,
@@ -23,7 +20,7 @@ export {
 	resetCommercialVenueCycle,
 } from "./facility-refunds";
 
-import { checkoutHotelStay, processHotelEntity } from "./hotel";
+import { checkoutHotelStay, processHotelSim } from "./hotel";
 
 export {
 	handleExtendedVacancyExpiry,
@@ -35,9 +32,9 @@ export {
 import {
 	advanceOfficePresenceCounter,
 	nextOfficeReturnState,
-	processOfficeEntity,
+	processOfficeSim,
 } from "./office";
-import { clearEntityRoute, entityKey, findObjectForEntity } from "./population";
+import { clearSimRoute, findObjectForSim, simKey } from "./population";
 import { maybeApplyDistanceFeedback } from "./scoring";
 import {
 	CATHEDRAL_FAMILIES,
@@ -78,25 +75,16 @@ import {
 
 export { rebuildParkingDemandLog, tryAssignParkingService } from "./parking";
 export {
-	cleanupEntitiesForRemovedTile,
 	cleanupSimsForRemovedTile,
-	clearEntityRoute,
 	clearSimRoute,
-	entityKey,
-	findObjectForEntity,
 	findObjectForSim,
-	findSiblingEntities,
 	findSiblingSims,
-	rebuildRuntimeEntities,
 	rebuildRuntimeSims,
-	resetEntityRuntimeState,
 	resetSimRuntimeState,
 	simKey,
 } from "./population";
 export {
-	createEntityStateRecords,
 	createSimStateRecords,
-	type EntityStateRecord,
 	maybeApplyDistanceFeedback,
 	recomputeObjectOperationalStatus,
 	refreshOccupiedFlagAndTripCounters,
@@ -125,7 +113,7 @@ export {
 import type { TimeState } from "../time";
 import {
 	type CommercialVenueRecord,
-	type EntityRecord,
+	type SimRecord,
 	VENUE_CLOSED,
 	VENUE_DORMANT,
 	type WorldState,
@@ -145,10 +133,10 @@ function hasViableRouteBetweenFloors(
 
 export function releaseServiceRequest(
 	_world: WorldState,
-	entity: EntityRecord,
+	sim: SimRecord,
 ): void {
-	entity.destinationFloor = -1;
-	clearEntityRoute(entity);
+	sim.destinationFloor = -1;
+	clearSimRoute(sim);
 }
 
 function recomputeRoutesViableFlag(world: WorldState, time: TimeState): void {
@@ -198,7 +186,7 @@ function pickAvailableVenue(
  * Spec: reduce_elapsed_for_lobby_boarding.
  */
 function reduceElapsedForLobbyBoarding(
-	entity: EntityRecord,
+	sim: SimRecord,
 	sourceFloor: number,
 	world: WorldState,
 ): void {
@@ -206,17 +194,17 @@ function reduceElapsedForLobbyBoarding(
 	const lobbyHeight = Math.max(1, world.lobbyHeight ?? 1);
 	const discount = lobbyHeight >= 3 ? 50 : lobbyHeight === 2 ? 25 : 0;
 	if (discount === 0) return;
-	entity.elapsedTicks = Math.max(0, entity.elapsedTicks - discount);
+	sim.elapsedTicks = Math.max(0, sim.elapsedTicks - discount);
 }
 
 function completeSimTransitEvent(
-	entity: EntityRecord,
+	sim: SimRecord,
 	time: TimeState | undefined,
 ): void {
 	if (time) {
-		rebaseSimElapsedFromClock(entity, time);
+		rebaseSimElapsedFromClock(sim, time);
 	}
-	advanceSimTripCounters(entity);
+	advanceSimTripCounters(sim);
 }
 
 function reserveVenue(record: CommercialVenueRecord): void {
@@ -225,58 +213,58 @@ function reserveVenue(record: CommercialVenueRecord): void {
 }
 
 function beginCommercialVenueDwell(
-	entity: EntityRecord,
+	sim: SimRecord,
 	arrivalFloor: number,
 	returnState: number,
 	time: TimeState,
 ): void {
-	entity.destinationFloor = -1;
-	entity.selectedFloor = arrivalFloor;
-	clearEntityRoute(entity);
-	entity.venueReturnState = returnState;
-	entity.stateCode = COMMERCIAL_DWELL_STATE;
-	entity.lastDemandTick = time.dayTick;
+	sim.destinationFloor = -1;
+	sim.selectedFloor = arrivalFloor;
+	clearSimRoute(sim);
+	sim.venueReturnState = returnState;
+	sim.stateCode = COMMERCIAL_DWELL_STATE;
+	sim.lastDemandTick = time.dayTick;
 }
 
 function beginCommercialVenueTrip(
-	entity: EntityRecord,
+	sim: SimRecord,
 	destinationFloor: number,
 ): void {
-	entity.destinationFloor = destinationFloor;
-	entity.selectedFloor = entity.floorAnchor;
-	entity.stateCode = STATE_VENUE_TRIP;
+	sim.destinationFloor = destinationFloor;
+	sim.selectedFloor = sim.floorAnchor;
+	sim.stateCode = STATE_VENUE_TRIP;
 }
 
 export function finishCommercialVenueDwell(
-	entity: EntityRecord,
+	sim: SimRecord,
 	time: TimeState,
 	defaultState: number,
 ): boolean {
-	if (entity.stateCode !== COMMERCIAL_DWELL_STATE) return false;
-	if (time.dayTick - entity.lastDemandTick < COMMERCIAL_VENUE_DWELL_TICKS)
+	if (sim.stateCode !== COMMERCIAL_DWELL_STATE) return false;
+	if (time.dayTick - sim.lastDemandTick < COMMERCIAL_VENUE_DWELL_TICKS)
 		return true;
-	entity.selectedFloor = entity.floorAnchor;
-	entity.stateCode = entity.venueReturnState || defaultState;
-	entity.venueReturnState = 0;
+	sim.selectedFloor = sim.floorAnchor;
+	sim.stateCode = sim.venueReturnState || defaultState;
+	sim.venueReturnState = 0;
 	return true;
 }
 
 export function finishCommercialVenueTrip(
-	entity: EntityRecord,
+	sim: SimRecord,
 	returnState: number,
 ): boolean {
-	if (entity.stateCode !== STATE_VENUE_TRIP) return false;
-	if (entity.selectedFloor !== entity.destinationFloor) return true;
-	entity.destinationFloor = -1;
-	entity.selectedFloor = entity.floorAnchor;
-	entity.stateCode = returnState;
+	if (sim.stateCode !== STATE_VENUE_TRIP) return false;
+	if (sim.selectedFloor !== sim.destinationFloor) return true;
+	sim.destinationFloor = -1;
+	sim.selectedFloor = sim.floorAnchor;
+	sim.stateCode = returnState;
 	return true;
 }
 
 export function dispatchCommercialVenueVisit(
 	world: WorldState,
 	time: TimeState,
-	entity: EntityRecord,
+	sim: SimRecord,
 	options: {
 		venueFamilies: Set<number>;
 		returnState: number;
@@ -287,64 +275,64 @@ export function dispatchCommercialVenueVisit(
 ): boolean {
 	const venue = pickAvailableVenue(
 		world,
-		entity.floorAnchor,
+		sim.floorAnchor,
 		options.venueFamilies,
 	);
 	if (!venue) {
 		if (!options.skipPenaltyOnUnavailable) {
-			addDelayToCurrentSim(entity, 300);
-			advanceSimTripCounters(entity);
+			addDelayToCurrentSim(sim, 300);
+			advanceSimTripCounters(sim);
 		}
 		if (options.unavailableState !== undefined) {
-			entity.stateCode = options.unavailableState;
+			sim.stateCode = options.unavailableState;
 		}
 		return false;
 	}
 
 	// Route requirement: resolve route before reserving venue.
-	if (venue.floor !== entity.floorAnchor) {
-		const dirFlag = venue.floor > entity.floorAnchor ? 0 : 1;
+	if (venue.floor !== sim.floorAnchor) {
+		const dirFlag = venue.floor > sim.floorAnchor ? 0 : 1;
 		const routeResult = resolveSimRouteBetweenFloors(
 			world,
-			entity,
-			entity.floorAnchor,
+			sim,
+			sim.floorAnchor,
 			venue.floor,
 			dirFlag,
 			time,
 		);
 		if (routeResult === -1 || routeResult === 0) {
 			if (options.unavailableState !== undefined) {
-				entity.stateCode = options.unavailableState;
+				sim.stateCode = options.unavailableState;
 			}
 			return false;
 		}
 	}
 
 	reserveVenue(venue.record);
-	rebaseSimElapsedFromClock(entity, time);
-	advanceSimTripCounters(entity);
+	rebaseSimElapsedFromClock(sim, time);
+	advanceSimTripCounters(sim);
 	options.onVenueReserved?.();
-	if (venue.floor === entity.floorAnchor) {
-		beginCommercialVenueDwell(entity, venue.floor, options.returnState, time);
+	if (venue.floor === sim.floorAnchor) {
+		beginCommercialVenueDwell(sim, venue.floor, options.returnState, time);
 	} else {
-		beginCommercialVenueTrip(entity, venue.floor);
+		beginCommercialVenueTrip(sim, venue.floor);
 	}
 	return true;
 }
 
 export function handleCommercialVenueArrival(
-	entity: EntityRecord,
+	sim: SimRecord,
 	arrivalFloor: number,
 	returnState: number,
 	time: TimeState,
 ): boolean {
 	if (
-		entity.stateCode !== STATE_VENUE_TRIP ||
-		entity.destinationFloor !== arrivalFloor
+		sim.stateCode !== STATE_VENUE_TRIP ||
+		sim.destinationFloor !== arrivalFloor
 	) {
 		return false;
 	}
-	beginCommercialVenueDwell(entity, arrivalFloor, returnState, time);
+	beginCommercialVenueDwell(sim, arrivalFloor, returnState, time);
 	return true;
 }
 
@@ -353,30 +341,30 @@ export function advanceSimRefreshStride(
 	ledger: LedgerState,
 	time: TimeState,
 ): void {
-	if (world.entities.length === 0) return;
+	if (world.sims.length === 0) return;
 
 	const stride = time.dayTick % ENTITY_REFRESH_STRIDE;
-	for (let index = 0; index < world.entities.length; index++) {
+	for (let index = 0; index < world.sims.length; index++) {
 		if (index % ENTITY_REFRESH_STRIDE !== stride) continue;
-		const entity = world.entities[index];
+		const sim = world.sims[index];
 		// Spec: dispatch_sim_behavior calls rebase_sim_elapsed_from_clock every tick.
-		rebaseSimElapsedFromClock(entity, time);
-		finalizePendingRouteLeg(entity);
-		switch (entity.familyCode) {
+		rebaseSimElapsedFromClock(sim, time);
+		finalizePendingRouteLeg(sim);
+		switch (sim.familyCode) {
 			case FAMILY_HOTEL_SINGLE:
 			case FAMILY_HOTEL_TWIN:
 			case FAMILY_HOTEL_SUITE:
-				processHotelEntity(world, ledger, time, entity);
+				processHotelSim(world, ledger, time, sim);
 				break;
 			case FAMILY_OFFICE:
-				processOfficeEntity(world, ledger, time, entity);
+				processOfficeSim(world, ledger, time, sim);
 				break;
 			case FAMILY_CONDO:
-				processCondoEntity(world, ledger, time, entity);
+				processCondoSim(world, ledger, time, sim);
 				break;
 			default:
-				if (CATHEDRAL_FAMILIES.has(entity.familyCode)) {
-					processCathedralEntity(world, time, entity);
+				if (CATHEDRAL_FAMILIES.has(sim.familyCode)) {
+					processCathedralSim(world, time, sim);
 				}
 				break;
 		}
@@ -385,81 +373,81 @@ export function advanceSimRefreshStride(
 	recomputeRoutesViableFlag(world, time);
 }
 
-function shouldSeedElevatorDemand(entity: EntityRecord): boolean {
-	if (entity.routeRetryDelay > 0) return false;
-	if (entity.route.mode !== "idle") return false;
-	if (!ELEVATOR_DEMAND_STATES.has(entity.stateCode)) return false;
+function shouldSeedElevatorDemand(sim: SimRecord): boolean {
+	if (sim.routeRetryDelay > 0) return false;
+	if (sim.route.mode !== "idle") return false;
+	if (!ELEVATOR_DEMAND_STATES.has(sim.stateCode)) return false;
 	if (
-		!EVALUATABLE_FAMILIES.has(entity.familyCode) &&
-		!CATHEDRAL_FAMILIES.has(entity.familyCode)
+		!EVALUATABLE_FAMILIES.has(sim.familyCode) &&
+		!CATHEDRAL_FAMILIES.has(sim.familyCode)
 	) {
 		return false;
 	}
 	return true;
 }
 
-function getElevatorDemand(entity: EntityRecord): {
+function getElevatorDemand(sim: SimRecord): {
 	sourceFloor: number;
 	destinationFloor: number;
 	directionFlag: number;
 } | null {
-	// Active office/hotel/condo routes carry their destination on the entity.
+	// Active office/hotel/condo routes carry their destination on the sim.
 	if (
-		entity.destinationFloor >= 0 &&
-		(entity.stateCode === STATE_COMMUTE ||
-			entity.stateCode === STATE_COMMUTE_TRANSIT ||
-			entity.stateCode === STATE_ACTIVE_TRANSIT ||
-			entity.stateCode === STATE_VENUE_TRIP_TRANSIT ||
-			entity.stateCode === STATE_DEPARTURE_TRANSIT ||
-			entity.stateCode === STATE_MORNING_TRANSIT ||
-			entity.stateCode === STATE_AT_WORK_TRANSIT ||
-			entity.stateCode === STATE_VENUE_HOME_TRANSIT ||
-			entity.stateCode === STATE_DWELL_RETURN_TRANSIT)
+		sim.destinationFloor >= 0 &&
+		(sim.stateCode === STATE_COMMUTE ||
+			sim.stateCode === STATE_COMMUTE_TRANSIT ||
+			sim.stateCode === STATE_ACTIVE_TRANSIT ||
+			sim.stateCode === STATE_VENUE_TRIP_TRANSIT ||
+			sim.stateCode === STATE_DEPARTURE_TRANSIT ||
+			sim.stateCode === STATE_MORNING_TRANSIT ||
+			sim.stateCode === STATE_AT_WORK_TRANSIT ||
+			sim.stateCode === STATE_VENUE_HOME_TRANSIT ||
+			sim.stateCode === STATE_DWELL_RETURN_TRANSIT)
 	) {
 		return {
-			sourceFloor: entity.selectedFloor,
-			destinationFloor: entity.destinationFloor,
-			directionFlag: entity.destinationFloor > entity.selectedFloor ? 0 : 1,
+			sourceFloor: sim.selectedFloor,
+			destinationFloor: sim.destinationFloor,
+			directionFlag: sim.destinationFloor > sim.selectedFloor ? 0 : 1,
 		};
 	}
 
 	if (
-		entity.stateCode === STATE_CHECKOUT_QUEUE ||
-		entity.stateCode === STATE_DEPARTURE
+		sim.stateCode === STATE_CHECKOUT_QUEUE ||
+		sim.stateCode === STATE_DEPARTURE
 	) {
 		return {
-			sourceFloor: entity.selectedFloor,
+			sourceFloor: sim.selectedFloor,
 			destinationFloor: LOBBY_FLOOR,
 			directionFlag: 1,
 		};
 	}
 
-	if (entity.stateCode === STATE_VENUE_TRIP && entity.destinationFloor >= 0) {
+	if (sim.stateCode === STATE_VENUE_TRIP && sim.destinationFloor >= 0) {
 		return {
-			sourceFloor: entity.selectedFloor,
-			destinationFloor: entity.destinationFloor,
-			directionFlag: entity.destinationFloor > entity.selectedFloor ? 0 : 1,
+			sourceFloor: sim.selectedFloor,
+			destinationFloor: sim.destinationFloor,
+			directionFlag: sim.destinationFloor > sim.selectedFloor ? 0 : 1,
 		};
 	}
 
 	// Cathedral guest: outbound routes to eval zone
 	if (
-		CATHEDRAL_FAMILIES.has(entity.familyCode) &&
-		entity.stateCode === STATE_EVAL_OUTBOUND
+		CATHEDRAL_FAMILIES.has(sim.familyCode) &&
+		sim.stateCode === STATE_EVAL_OUTBOUND
 	) {
 		return {
-			sourceFloor: entity.selectedFloor,
+			sourceFloor: sim.selectedFloor,
 			destinationFloor: EVAL_ZONE_FLOOR,
 			directionFlag: 0,
 		};
 	}
 	// Cathedral guest: return routes to lobby
 	if (
-		CATHEDRAL_FAMILIES.has(entity.familyCode) &&
-		entity.stateCode === STATE_EVAL_RETURN
+		CATHEDRAL_FAMILIES.has(sim.familyCode) &&
+		sim.stateCode === STATE_EVAL_RETURN
 	) {
 		return {
-			sourceFloor: entity.selectedFloor,
+			sourceFloor: sim.selectedFloor,
 			destinationFloor: LOBBY_FLOOR,
 			directionFlag: 1,
 		};
@@ -511,73 +499,67 @@ function selectRouteForFamily(
  * Return codes mirror `resolveSimRouteBetweenFloors` from
  * ROUTING.md / SPEC.md:
  *
- *  -1 = no viable route (entity remains unrouted)
- *   0 = carrier queue full; entity[+8] = 0xff and entity[+7] = source floor,
- *       so the entity stays parked on the source floor and retries next tick
- *   1 = direct special-link leg accepted; entity[+8] = segment index,
- *       entity[+7] = post-link floor (the leg's destination)
- *   2 = queued onto a carrier; entity[+8] = 0x40 + id (up) or 0x58 + id (down),
- *       entity[+7] = source floor
+ *  -1 = no viable route (sim remains unrouted)
+ *   0 = carrier queue full; sim[+8] = 0xff and sim[+7] = source floor,
+ *       so the sim stays parked on the source floor and retries next tick
+ *   1 = direct special-link leg accepted; sim[+8] = segment index,
+ *       sim[+7] = post-link floor (the leg's destination)
+ *   2 = queued onto a carrier; sim[+8] = 0x40 + id (up) or 0x58 + id (down),
+ *       sim[+7] = source floor
  *   3 = same-floor success (treated as immediate arrival by the caller)
  */
 export type RouteResolution = -1 | 0 | 1 | 2 | 3;
 
 export function resolveSimRouteBetweenFloors(
 	world: WorldState,
-	entity: EntityRecord,
+	sim: SimRecord,
 	sourceFloor: number,
 	destinationFloor: number,
 	directionFlag: number,
 	time: TimeState | undefined,
 ): RouteResolution {
 	if (sourceFloor === destinationFloor) {
-		completeSimTransitEvent(entity, time);
+		completeSimTransitEvent(sim, time);
 		return 3;
 	}
 
 	// Family 0x0f (housekeeping) uses stairs-only routing (rejects escalators).
 	// All other families use local (escalator-preferred) routing.
-	const preferLocalMode = entity.familyCode !== 0x0f;
+	const preferLocalMode = sim.familyCode !== 0x0f;
 
 	const route = selectRouteForFamily(
 		world,
-		entity.familyCode,
+		sim.familyCode,
 		sourceFloor,
 		destinationFloor,
 		preferLocalMode,
 	);
 	if (!route) {
-		clearEntityRoute(entity);
-		entity.routeRetryDelay = 300;
-		addDelayToCurrentSim(entity, 300);
-		advanceSimTripCounters(entity);
+		clearSimRoute(sim);
+		sim.routeRetryDelay = 300;
+		addDelayToCurrentSim(sim, 300);
+		advanceSimTripCounters(sim);
 		return -1;
 	}
 
 	if (route.kind === "segment") {
-		maybeApplyDistanceFeedback(
-			world,
-			entity,
-			sourceFloor,
-			destinationFloor,
-			true,
-		);
-		entity.route = {
+		maybeApplyDistanceFeedback(world, sim, sourceFloor, destinationFloor, true);
+		sim.route = {
 			mode: "segment",
 			segmentId: route.id,
 			destination: destinationFloor,
 		};
-		entity.queueTick = time?.dayTick ?? entity.queueTick;
-		entity.destinationFloor = destinationFloor;
+		sim.queueTick = time?.dayTick ?? sim.queueTick;
+		sim.destinationFloor = destinationFloor;
 		// Per-stop transit delay: Escalator branch = 16 ticks/floor,
 		// Stairs branch = 35 ticks/floor.
 		const segment = world.specialLinks[route.id];
 		const isStairsBranch = segment ? (segment.flags & 1) !== 0 : false;
 		const perStopDelay = isStairsBranch ? 35 : 16;
-		entity.transitTicksRemaining =
+		sim.transitTicksRemaining =
 			Math.abs(destinationFloor - sourceFloor) * perStopDelay;
 		// Route-start timestamp: start the clock for elapsed tracking.
-		if (time) entity.lastDemandTick = time.dayTick;
+		if (time) sim.lastDemandTick = time.dayTick;
 		return 1;
 	}
 
@@ -585,235 +567,221 @@ export function resolveSimRouteBetweenFloors(
 		(candidate) => candidate.carrierId === route.id,
 	);
 	if (!carrier) {
-		clearEntityRoute(entity);
-		addDelayToCurrentSim(entity, 300);
-		advanceSimTripCounters(entity);
+		clearSimRoute(sim);
+		addDelayToCurrentSim(sim, 300);
+		advanceSimTripCounters(sim);
 		return -1;
 	}
 
 	const queued = enqueueCarrierRoute(
 		carrier,
-		entityKey(entity),
+		simKey(sim),
 		sourceFloor,
 		destinationFloor,
 		directionFlag,
 	);
 	if (!queued) {
-		// Queue full: entity remains parked here and retries after a short delay.
-		entity.route = { mode: "queued", source: sourceFloor };
-		entity.destinationFloor = destinationFloor;
-		entity.routeRetryDelay = 5;
-		addDelayToCurrentSim(entity, 5);
+		// Queue full: sim remains parked here and retries after a short delay.
+		sim.route = { mode: "queued", source: sourceFloor };
+		sim.destinationFloor = destinationFloor;
+		sim.routeRetryDelay = 5;
+		addDelayToCurrentSim(sim, 5);
 		return 0;
 	}
 
-	entity.route = {
+	sim.route = {
 		mode: "carrier",
 		carrierId: route.id,
 		direction: directionFlag === 0 ? "up" : "down",
 		source: sourceFloor,
 	};
-	entity.queueTick = time?.dayTick ?? entity.queueTick;
-	entity.destinationFloor = destinationFloor;
+	sim.queueTick = time?.dayTick ?? sim.queueTick;
+	sim.destinationFloor = destinationFloor;
 	// Spec: accumulate_elapsed_delay_into_current_sim for non-service carriers.
 	if (time && carrier.carrierMode !== 2) {
-		rebaseSimElapsedFromClock(entity, time);
-		reduceElapsedForLobbyBoarding(entity, sourceFloor, world);
+		rebaseSimElapsedFromClock(sim, time);
+		reduceElapsedForLobbyBoarding(sim, sourceFloor, world);
 	}
 	maybeApplyDistanceFeedback(
 		world,
-		entity,
+		sim,
 		sourceFloor,
 		destinationFloor,
 		carrier.carrierMode !== 2,
 	);
 	// Route-start timestamp: start the clock for elapsed tracking.
-	if (time) entity.lastDemandTick = time.dayTick;
+	if (time) sim.lastDemandTick = time.dayTick;
 	return 2;
 }
 
-function shouldFinalizeSegmentTrip(entity: EntityRecord): boolean {
+function shouldFinalizeSegmentTrip(sim: SimRecord): boolean {
 	return (
-		entity.stateCode === STATE_COMMUTE ||
-		entity.stateCode === STATE_COMMUTE_TRANSIT ||
-		entity.stateCode === STATE_ACTIVE_TRANSIT ||
-		entity.stateCode === STATE_VENUE_TRIP ||
-		entity.stateCode === STATE_VENUE_TRIP_TRANSIT ||
-		entity.stateCode === STATE_CHECKOUT_QUEUE ||
-		entity.stateCode === STATE_DEPARTURE ||
-		entity.stateCode === STATE_DEPARTURE_TRANSIT ||
-		entity.stateCode === STATE_MORNING_TRANSIT ||
-		entity.stateCode === STATE_AT_WORK_TRANSIT ||
-		entity.stateCode === STATE_VENUE_HOME_TRANSIT ||
-		entity.stateCode === STATE_DWELL_RETURN_TRANSIT
+		sim.stateCode === STATE_COMMUTE ||
+		sim.stateCode === STATE_COMMUTE_TRANSIT ||
+		sim.stateCode === STATE_ACTIVE_TRANSIT ||
+		sim.stateCode === STATE_VENUE_TRIP ||
+		sim.stateCode === STATE_VENUE_TRIP_TRANSIT ||
+		sim.stateCode === STATE_CHECKOUT_QUEUE ||
+		sim.stateCode === STATE_DEPARTURE ||
+		sim.stateCode === STATE_DEPARTURE_TRANSIT ||
+		sim.stateCode === STATE_MORNING_TRANSIT ||
+		sim.stateCode === STATE_AT_WORK_TRANSIT ||
+		sim.stateCode === STATE_VENUE_HOME_TRANSIT ||
+		sim.stateCode === STATE_DWELL_RETURN_TRANSIT
 	);
 }
 
-function finalizePendingRouteLeg(entity: EntityRecord): void {
-	if (entity.route.mode !== "segment") return;
-	if (entity.transitTicksRemaining > 0) {
-		entity.transitTicksRemaining -= 1;
+function finalizePendingRouteLeg(sim: SimRecord): void {
+	if (sim.route.mode !== "segment") return;
+	if (sim.transitTicksRemaining > 0) {
+		sim.transitTicksRemaining -= 1;
 		return;
 	}
-	entity.selectedFloor = entity.route.destination;
-	clearEntityRoute(entity);
+	sim.selectedFloor = sim.route.destination;
+	clearSimRoute(sim);
 }
 
-function dispatchEntityArrival(
+function dispatchSimArrival(
 	world: WorldState,
 	ledger: LedgerState,
 	time: TimeState,
-	entity: EntityRecord,
+	sim: SimRecord,
 	arrivalFloor: number,
 ): void {
-	if (
-		entity.destinationFloor >= 0 &&
-		arrivalFloor === entity.destinationFloor
-	) {
-		completeSimTransitEvent(entity, time);
+	if (sim.destinationFloor >= 0 && arrivalFloor === sim.destinationFloor) {
+		completeSimTransitEvent(sim, time);
 	}
-	entity.selectedFloor = arrivalFloor;
-	clearEntityRoute(entity);
+	sim.selectedFloor = arrivalFloor;
+	clearSimRoute(sim);
 
-	const object = findObjectForEntity(world, entity);
-	switch (entity.familyCode) {
+	const object = findObjectForSim(world, sim);
+	switch (sim.familyCode) {
 		case FAMILY_HOTEL_SINGLE:
 		case FAMILY_HOTEL_TWIN:
 		case FAMILY_HOTEL_SUITE:
 			// Arrived at room from check-in commute
-			if (
-				entity.stateCode === STATE_COMMUTE &&
-				arrivalFloor === entity.floorAnchor
-			) {
-				entity.destinationFloor = -1;
-				entity.selectedFloor = entity.floorAnchor;
-				entity.stateCode = STATE_ACTIVE;
+			if (sim.stateCode === STATE_COMMUTE && arrivalFloor === sim.floorAnchor) {
+				sim.destinationFloor = -1;
+				sim.selectedFloor = sim.floorAnchor;
+				sim.stateCode = STATE_ACTIVE;
+				return;
+			}
+			if (handleCommercialVenueArrival(sim, arrivalFloor, STATE_ACTIVE, time)) {
 				return;
 			}
 			if (
-				handleCommercialVenueArrival(entity, arrivalFloor, STATE_ACTIVE, time)
-			) {
-				return;
-			}
-			if (
-				(entity.stateCode === STATE_CHECKOUT_QUEUE ||
-					entity.stateCode === STATE_DEPARTURE) &&
+				(sim.stateCode === STATE_CHECKOUT_QUEUE ||
+					sim.stateCode === STATE_DEPARTURE) &&
 				arrivalFloor === LOBBY_FLOOR
 			) {
-				entity.destinationFloor = -1;
-				if (object) checkoutHotelStay(world, ledger, time, entity, object);
+				sim.destinationFloor = -1;
+				if (object) checkoutHotelStay(world, ledger, time, sim, object);
 			}
 			return;
 		case FAMILY_OFFICE:
 			if (
-				entity.stateCode === STATE_MORNING_TRANSIT &&
-				arrivalFloor === entity.floorAnchor
+				sim.stateCode === STATE_MORNING_TRANSIT &&
+				arrivalFloor === sim.floorAnchor
 			) {
 				if (object) advanceOfficePresenceCounter(object);
-				entity.destinationFloor = -1;
-				entity.selectedFloor = entity.floorAnchor;
-				entity.stateCode = STATE_DEPARTURE;
+				sim.destinationFloor = -1;
+				sim.selectedFloor = sim.floorAnchor;
+				sim.stateCode = STATE_DEPARTURE;
 				return;
 			}
 			if (
-				entity.stateCode === STATE_AT_WORK_TRANSIT &&
-				arrivalFloor === entity.floorAnchor
+				sim.stateCode === STATE_AT_WORK_TRANSIT &&
+				arrivalFloor === sim.floorAnchor
 			) {
 				if (object) advanceOfficePresenceCounter(object);
-				entity.destinationFloor = -1;
-				entity.selectedFloor = entity.floorAnchor;
-				entity.stateCode = STATE_DEPARTURE;
+				sim.destinationFloor = -1;
+				sim.selectedFloor = sim.floorAnchor;
+				sim.stateCode = STATE_DEPARTURE;
 				return;
 			}
 			if (
-				(entity.stateCode === STATE_VENUE_HOME_TRANSIT ||
-					entity.stateCode === STATE_DWELL_RETURN_TRANSIT) &&
-				arrivalFloor === entity.floorAnchor
+				(sim.stateCode === STATE_VENUE_HOME_TRANSIT ||
+					sim.stateCode === STATE_DWELL_RETURN_TRANSIT) &&
+				arrivalFloor === sim.floorAnchor
 			) {
 				if (object) advanceOfficePresenceCounter(object);
-				entity.destinationFloor = -1;
-				entity.selectedFloor = entity.floorAnchor;
-				entity.venueReturnState = 0;
-				entity.stateCode = nextOfficeReturnState(entity);
+				sim.destinationFloor = -1;
+				sim.selectedFloor = sim.floorAnchor;
+				sim.venueReturnState = 0;
+				sim.stateCode = nextOfficeReturnState(sim);
 				return;
 			}
 			if (
-				entity.stateCode === STATE_DEPARTURE_TRANSIT &&
+				sim.stateCode === STATE_DEPARTURE_TRANSIT &&
 				arrivalFloor === LOBBY_FLOOR
 			) {
-				entity.stateCode = STATE_PARKED;
-				entity.selectedFloor = LOBBY_FLOOR;
-				releaseServiceRequest(world, entity);
+				sim.stateCode = STATE_PARKED;
+				sim.selectedFloor = LOBBY_FLOOR;
+				releaseServiceRequest(world, sim);
 				return;
 			}
 			if (
-				entity.stateCode === STATE_COMMUTE_TRANSIT ||
-				entity.stateCode === STATE_ACTIVE_TRANSIT ||
-				entity.stateCode === STATE_VENUE_TRIP_TRANSIT
+				sim.stateCode === STATE_COMMUTE_TRANSIT ||
+				sim.stateCode === STATE_ACTIVE_TRANSIT ||
+				sim.stateCode === STATE_VENUE_TRIP_TRANSIT
 			) {
 				if (object) advanceOfficePresenceCounter(object);
-				entity.destinationFloor = -1;
-				entity.selectedFloor = entity.floorAnchor;
-				entity.stateCode = STATE_DEPARTURE;
+				sim.destinationFloor = -1;
+				sim.selectedFloor = sim.floorAnchor;
+				sim.stateCode = STATE_DEPARTURE;
 				return;
 			}
 			if (
-				entity.stateCode === STATE_DEPARTURE_TRANSIT ||
-				entity.stateCode === STATE_MORNING_TRANSIT ||
-				entity.stateCode === STATE_AT_WORK_TRANSIT ||
-				entity.stateCode === STATE_VENUE_HOME_TRANSIT ||
-				entity.stateCode === STATE_DWELL_RETURN_TRANSIT
+				sim.stateCode === STATE_DEPARTURE_TRANSIT ||
+				sim.stateCode === STATE_MORNING_TRANSIT ||
+				sim.stateCode === STATE_AT_WORK_TRANSIT ||
+				sim.stateCode === STATE_VENUE_HOME_TRANSIT ||
+				sim.stateCode === STATE_DWELL_RETURN_TRANSIT
 			) {
-				releaseServiceRequest(world, entity);
-				entity.stateCode = STATE_NIGHT_B;
+				releaseServiceRequest(world, sim);
+				sim.stateCode = STATE_NIGHT_B;
 				return;
 			}
 			// Arrived at office floor from morning commute
-			if (
-				entity.stateCode === STATE_COMMUTE &&
-				arrivalFloor === entity.floorAnchor
-			) {
-				entity.destinationFloor = -1;
-				entity.selectedFloor = entity.floorAnchor;
-				entity.stateCode = STATE_AT_WORK;
+			if (sim.stateCode === STATE_COMMUTE && arrivalFloor === sim.floorAnchor) {
+				sim.destinationFloor = -1;
+				sim.selectedFloor = sim.floorAnchor;
+				sim.stateCode = STATE_AT_WORK;
 				if (object) advanceOfficePresenceCounter(object);
 				return;
 			}
 			// Arrived at venue floor from venue trip
 			if (
-				handleCommercialVenueArrival(entity, arrivalFloor, STATE_AT_WORK, time)
+				handleCommercialVenueArrival(sim, arrivalFloor, STATE_AT_WORK, time)
 			) {
 				return;
 			}
 			// Arrived at lobby from evening departure
-			if (
-				entity.stateCode === STATE_DEPARTURE &&
-				arrivalFloor === LOBBY_FLOOR
-			) {
-				entity.destinationFloor = -1;
-				entity.selectedFloor = entity.floorAnchor;
-				entity.stateCode = STATE_PARKED;
+			if (sim.stateCode === STATE_DEPARTURE && arrivalFloor === LOBBY_FLOOR) {
+				sim.destinationFloor = -1;
+				sim.selectedFloor = sim.floorAnchor;
+				sim.stateCode = STATE_PARKED;
 			}
 			return;
 		case FAMILY_CONDO:
-			handleCommercialVenueArrival(entity, arrivalFloor, STATE_ACTIVE, time);
+			handleCommercialVenueArrival(sim, arrivalFloor, STATE_ACTIVE, time);
 			return;
 		default:
-			// Cathedral guest entities
-			if (CATHEDRAL_FAMILIES.has(entity.familyCode)) {
+			// Cathedral guest sims
+			if (CATHEDRAL_FAMILIES.has(sim.familyCode)) {
 				if (
-					entity.stateCode === STATE_EVAL_OUTBOUND &&
+					sim.stateCode === STATE_EVAL_OUTBOUND &&
 					arrivalFloor === EVAL_ZONE_FLOOR
 				) {
-					entity.stateCode = STATE_ARRIVED;
-					entity.destinationFloor = -1;
-					checkEvalCompletionAndAward(world, time, entity);
+					sim.stateCode = STATE_ARRIVED;
+					sim.destinationFloor = -1;
+					checkEvalCompletionAndAward(world, time, sim);
 				} else if (
-					entity.stateCode === STATE_EVAL_RETURN &&
+					sim.stateCode === STATE_EVAL_RETURN &&
 					arrivalFloor === LOBBY_FLOOR
 				) {
-					entity.stateCode = STATE_PARKED;
-					entity.destinationFloor = -1;
+					sim.stateCode = STATE_PARKED;
+					sim.destinationFloor = -1;
 				}
 			}
 			return;
@@ -824,28 +792,28 @@ export function populateCarrierRequests(
 	world: WorldState,
 	time?: TimeState,
 ): void {
-	for (const entity of world.entities) {
-		if (entity.routeRetryDelay > 0) entity.routeRetryDelay -= 1;
+	for (const sim of world.sims) {
+		if (sim.routeRetryDelay > 0) sim.routeRetryDelay -= 1;
 	}
 
 	const activeDemandIds = new Set<string>();
-	for (const entity of world.entities) {
-		// Entities already in-transit on a carrier or segment are active demand —
+	for (const sim of world.sims) {
+		// Sims already in-transit on a carrier or segment are active demand —
 		// their pending routes must not be pruned.
-		if (entity.route.mode === "carrier" || entity.route.mode === "segment") {
-			activeDemandIds.add(entityKey(entity));
+		if (sim.route.mode === "carrier" || sim.route.mode === "segment") {
+			activeDemandIds.add(simKey(sim));
 			continue;
 		}
-		if (!shouldSeedElevatorDemand(entity)) continue;
-		const demand = getElevatorDemand(entity);
+		if (!shouldSeedElevatorDemand(sim)) continue;
+		const demand = getElevatorDemand(sim);
 		if (!demand) continue;
-		activeDemandIds.add(entityKey(entity));
+		activeDemandIds.add(simKey(sim));
 		// Returns -1/0/1/2/3 per ROUTING.md. We don't need to branch here yet
-		// because each return code already leaves the entity in the correct
+		// because each return code already leaves the sim in the correct
 		// in-transit / wait / unrouted state.
 		resolveSimRouteBetweenFloors(
 			world,
-			entity,
+			sim,
 			demand.sourceFloor,
 			demand.destinationFloor,
 			demand.directionFlag,
@@ -855,15 +823,13 @@ export function populateCarrierRequests(
 
 	for (const carrier of world.carriers) {
 		carrier.pendingRoutes = carrier.pendingRoutes.filter(
-			(route) => route.boarded || activeDemandIds.has(route.entityId),
+			(route) => route.boarded || activeDemandIds.has(route.simId),
 		);
 		for (const car of carrier.cars) {
 			for (const slot of car.activeRouteSlots) {
 				if (!slot.active) continue;
 				if (
-					!carrier.pendingRoutes.some(
-						(route) => route.entityId === slot.routeId,
-					)
+					!carrier.pendingRoutes.some((route) => route.simId === slot.routeId)
 				) {
 					slot.active = false;
 					slot.routeId = "";
@@ -878,16 +844,16 @@ export function populateCarrierRequests(
 		}
 	}
 
-	for (const entity of world.entities) {
-		if (!activeDemandIds.has(entityKey(entity))) {
-			entity.route = ROUTE_IDLE;
+	for (const sim of world.sims) {
+		if (!activeDemandIds.has(simKey(sim))) {
+			sim.route = ROUTE_IDLE;
 		}
 	}
 }
 
 /**
  * Invoked synchronously by `tickAllCarriers` (via the `onArrival` callback)
- * when a carrier unloads an entity at its destination, mirroring the binary's
+ * when a carrier unloads an sim at its destination, mirroring the binary's
  * `dispatch_destination_queue_entries` path which calls the family state
  * handler directly inside the carrier tick. The post-tick
  * `reconcileSimTransport` sweep is still consulted for any arrivals that
@@ -901,11 +867,9 @@ export function onCarrierArrival(
 	routeId: string,
 	arrivalFloor: number,
 ): void {
-	const entity = world.entities.find(
-		(candidate) => entityKey(candidate) === routeId,
-	);
-	if (!entity) return;
-	dispatchEntityArrival(world, ledger, time, entity, arrivalFloor);
+	const sim = world.sims.find((candidate) => simKey(candidate) === routeId);
+	if (!sim) return;
+	dispatchSimArrival(world, ledger, time, sim, arrivalFloor);
 }
 
 export function reconcileSimTransport(
@@ -913,20 +877,14 @@ export function reconcileSimTransport(
 	ledger: LedgerState,
 	time: TimeState,
 ): void {
-	for (const entity of world.entities) {
-		if (entity.route.mode !== "segment") continue;
-		if (!shouldFinalizeSegmentTrip(entity)) continue;
-		if (entity.transitTicksRemaining > 0) {
-			entity.transitTicksRemaining -= 1;
+	for (const sim of world.sims) {
+		if (sim.route.mode !== "segment") continue;
+		if (!shouldFinalizeSegmentTrip(sim)) continue;
+		if (sim.transitTicksRemaining > 0) {
+			sim.transitTicksRemaining -= 1;
 			continue;
 		}
-		dispatchEntityArrival(
-			world,
-			ledger,
-			time,
-			entity,
-			entity.route.destination,
-		);
+		dispatchSimArrival(world, ledger, time, sim, sim.route.destination);
 	}
 
 	const completed = new Set<string>();
@@ -935,13 +893,9 @@ export function reconcileSimTransport(
 		carrier.completedRouteIds = [];
 	}
 
-	for (const entity of world.entities) {
-		if (entity.destinationFloor < 0) continue;
-		if (!completed.has(entityKey(entity))) continue;
-		dispatchEntityArrival(world, ledger, time, entity, entity.destinationFloor);
+	for (const sim of world.sims) {
+		if (sim.destinationFloor < 0) continue;
+		if (!completed.has(simKey(sim))) continue;
+		dispatchSimArrival(world, ledger, time, sim, sim.destinationFloor);
 	}
 }
-
-export const advanceEntityRefreshStride = advanceSimRefreshStride;
-export const resolveEntityRouteBetweenFloors = resolveSimRouteBetweenFloors;
-export const reconcileEntityTransport = reconcileSimTransport;

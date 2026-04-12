@@ -1,4 +1,4 @@
-# sims/ — Runtime sim entities
+# sims/ — Runtime sim sims
 
 Family-specific state machines and shared runtime helpers for the placed-object-derived sim population. No I/O, Cloudflare, or Phaser dependencies.
 
@@ -11,7 +11,7 @@ Runtime sim facade: refresh stride orchestration, venue visits, transport routin
 Shared runtime sim state codes, transit-bit helpers (`0x40` flag + base-code mask), family sets, floor sentinels, route idle value, population tables, and unit-status thresholds.
 
 ### `population.ts`
-Population construction and cleanup for placed-object-derived sims, sim-key lookup helpers, route clearing, runtime reset, and legacy entity-named compatibility aliases.
+Population construction and cleanup for placed-object-derived sims, sim-key lookup helpers, route clearing, runtime reset, and legacy sim-named compatibility aliases.
 
 ### `trip-counters.ts`
 Elapsed-time rebasing, trip counter advancement, current-trip delay accounting, and facility-wide counter reset helpers.

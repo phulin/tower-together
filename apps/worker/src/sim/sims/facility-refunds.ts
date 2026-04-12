@@ -14,7 +14,7 @@ import {
 	type WorldState,
 	yToFloor,
 } from "../world";
-import { clearEntityRoute } from "./population";
+import { clearSimRoute } from "./population";
 import {
 	STATE_PARKED,
 	UNIT_STATUS_CONDO_VACANT,
@@ -112,13 +112,13 @@ export function refundUnhappyFacilities(
 			object.activationTickCount = 0;
 			object.needsRefreshFlag = 1;
 			const [x, y] = key.split(",").map(Number);
-			for (const entity of world.entities) {
-				if (entity.homeColumn === x && entity.floorAnchor === yToFloor(y)) {
-					entity.stateCode = STATE_PARKED;
-					entity.selectedFloor = entity.floorAnchor;
-					entity.destinationFloor = -1;
-					entity.venueReturnState = 0;
-					clearEntityRoute(entity);
+			for (const sim of world.sims) {
+				if (sim.homeColumn === x && sim.floorAnchor === yToFloor(y)) {
+					sim.stateCode = STATE_PARKED;
+					sim.selectedFloor = sim.floorAnchor;
+					sim.destinationFloor = -1;
+					sim.venueReturnState = 0;
+					clearSimRoute(sim);
 				}
 			}
 			continue;
