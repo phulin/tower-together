@@ -1,6 +1,11 @@
 import { FAMILY_PARKING } from "../resources";
 import type { TimeState } from "../time";
-import type { ServiceRequestEntry, SimRecord, WorldState } from "../world";
+import {
+	type ServiceRequestEntry,
+	type SimRecord,
+	sampleRng,
+	type WorldState,
+} from "../world";
 import {
 	advanceSimTripCounters,
 	rebaseSimElapsedFromClock,
@@ -38,9 +43,7 @@ export function tryAssignParkingService(
 ): boolean {
 	if (world.parkingDemandLog.length === 0) return false;
 	const idx =
-		world.parkingDemandLog[
-			Math.floor(Math.random() * world.parkingDemandLog.length)
-		];
+		world.parkingDemandLog[sampleRng(world) % world.parkingDemandLog.length];
 	const rec = world.sidecars[idx] as ServiceRequestEntry | undefined;
 	if (!rec || rec.kind !== "service_request") return false;
 	rebaseSimElapsedFromClock(sim, time);

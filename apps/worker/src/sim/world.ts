@@ -23,6 +23,14 @@ export function isValidLobbyY(y: number): boolean {
 	return floorsAboveGround >= 0 && floorsAboveGround % 15 === 0;
 }
 
+// ─── PRNG ────────────────────────────────────────────────────────────────────
+
+/** Sample a 15-bit LCG value from the world RNG and advance its state. */
+export function sampleRng(world: WorldState): number {
+	world.rngState = (world.rngState * 0x15a4e35 + 1) & 0x7fff;
+	return world.rngState;
+}
+
 // ─── Carrier types ────────────────────────────────────────────────────────────
 
 export interface CarrierCar {
@@ -425,6 +433,8 @@ export interface WorldState {
 	transferGroupCache: number[];
 	/** Sidecar indices of uncovered parking spaces feeding the demand log. */
 	parkingDemandLog: number[];
+	/** LCG state for general-purpose simulation randomness. */
+	rngState: number;
 	/** Bomb/fire/VIP event state. */
 	eventState: EventState;
 	/** Pending notifications emitted during the current tick (drained by the transport layer). */

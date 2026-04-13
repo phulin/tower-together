@@ -35,6 +35,7 @@ import {
 	isValidLobbyY,
 	type PlacedObjectRecord,
 	type ServiceRequestEntry,
+	sampleRng,
 	UNDERGROUND_Y,
 	VENUE_DORMANT,
 	VENUE_PARTIAL,
@@ -169,7 +170,7 @@ function allocSidecar(
 			ownerSubtypeIndex: x,
 			pairedSubtypeIndex: 0xff,
 			familySelectorOrSingleLinkFlag:
-				tileType === "entertainment" ? Math.floor(Math.random() * 14) : 0xff,
+				tileType === "entertainment" ? sampleRng(world) % 14 : 0xff,
 			linkAgeCounter: 0,
 			upperBudget: 0,
 			lowerBudget: 0,

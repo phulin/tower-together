@@ -1,7 +1,12 @@
 import { addCashflowFromFamilyResource, type LedgerState } from "../ledger";
 import { FAMILY_FAST_FOOD, FAMILY_OFFICE } from "../resources";
 import type { TimeState } from "../time";
-import type { PlacedObjectRecord, SimRecord, WorldState } from "../world";
+import {
+	type PlacedObjectRecord,
+	type SimRecord,
+	sampleRng,
+	type WorldState,
+} from "../world";
 import {
 	clearSimRoute,
 	dispatchCommercialVenueVisit,
@@ -161,7 +166,7 @@ export function processOfficeSim(
 		// daypart >= 3 → no dispatch
 		if (time.daypartIndex >= 3) return;
 		if (time.daypartIndex === 0) {
-			if (Math.floor(Math.random() * 12) !== 0) return;
+			if (sampleRng(world) % 12 !== 0) return;
 		}
 
 		// 3-day cashflow (first sim triggers income once per 3-day cycle)
@@ -228,11 +233,10 @@ export function processOfficeSim(
 			return;
 		}
 		if (sim.baseOffset === 0) {
-			if (time.daypartIndex === 0 && Math.floor(Math.random() * 12) !== 0)
-				return;
+			if (time.daypartIndex === 0 && sampleRng(world) % 12 !== 0) return;
 		} else {
 			if (time.daypartIndex < 3) return;
-			if (Math.floor(Math.random() * 12) !== 0) return;
+			if (sampleRng(world) % 12 !== 0) return;
 		}
 		const routeResult = resolveSimRouteBetweenFloors(
 			world,
@@ -271,7 +275,7 @@ export function processOfficeSim(
 		}
 		// Gate: daypart 3 → 1/12 chance; dayparts 0–2 → no dispatch
 		if (time.daypartIndex === 3) {
-			if (Math.floor(Math.random() * 12) !== 0) return;
+			if (sampleRng(world) % 12 !== 0) return;
 		} else {
 			return;
 		}
@@ -359,7 +363,7 @@ export function processOfficeSim(
 	// --- Evening departure — in transit to lobby, handled by carrier system ---
 	if (state === STATE_DEPARTURE) {
 		if (time.daypartIndex < 4) return;
-		if (time.daypartIndex === 4 && Math.floor(Math.random() * 6) !== 0) {
+		if (time.daypartIndex === 4 && sampleRng(world) % 6 !== 0) {
 			return;
 		}
 		decrementOfficePresenceCounter(object, time);

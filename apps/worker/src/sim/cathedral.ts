@@ -16,7 +16,7 @@ import {
 	STATE_PARKED,
 } from "./sims/states";
 import type { TimeState } from "./time";
-import type { SimRecord, WorldState } from "./world";
+import { type SimRecord, sampleRng, type WorldState } from "./world";
 
 // 5 floor types × 8 slots
 const EVAL_SIM_COUNT = 40;
@@ -80,7 +80,7 @@ export function processCathedralSim(
 				if (time.dayTick <= 0x50) return;
 				if (time.dayTick <= 0xf0) {
 					// 1/12 chance per tick
-					if (Math.floor(Math.random() * 12) !== 0) return;
+					if (sampleRng(world) % 12 !== 0) return;
 				}
 				// After tick 0xf0, guaranteed dispatch
 			} else if (time.daypartIndex >= 1) {

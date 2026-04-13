@@ -84,6 +84,7 @@ export function createInitialSnapshot(
 			transferGroupEntries: createEmptyTransferGroupEntries(),
 			transferGroupCache: new Array(GRID_HEIGHT).fill(0),
 			parkingDemandLog: [],
+			rngState: 1,
 			eventState: createEventState(),
 			pendingNotifications: [],
 			pendingPrompts: [],
@@ -169,6 +170,7 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 			transferGroupEntries: [],
 			transferGroupCache: [],
 			parkingDemandLog: [],
+			rngState: 1,
 			eventState: createEventState(),
 			pendingNotifications: [],
 			pendingPrompts: [],
@@ -273,6 +275,7 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	if (snapshot.world.transferGroupCache.length !== GRID_HEIGHT) {
 		snapshot.world.transferGroupCache = new Array(GRID_HEIGHT).fill(0);
 	}
+	snapshot.world.rngState ??= 1;
 	snapshot.world.eventState ??= createEventState();
 	snapshot.world.eventState.bombSearchLowerBound ??= -1;
 	snapshot.world.eventState.bombSearchUpperBound ??= -1;
@@ -412,6 +415,7 @@ export function hydrateSnapshot(raw: SimSnapshot): SimSnapshot {
 		raw.pairingPendingFlag ??= 0;
 		raw.evalScore ??= -1;
 	}
+	snapshot.world.rngState ??= 1;
 	snapshot.world.eventState ??= createEventState();
 
 	rebuildSpecialLinks(snapshot.world);
@@ -462,6 +466,7 @@ export function serializeSimState(
 			) as WorldState["transferGroupEntries"],
 			transferGroupCache: [...world.transferGroupCache],
 			parkingDemandLog: [...world.parkingDemandLog],
+			rngState: world.rngState,
 			eventState: JSON.parse(
 				JSON.stringify(world.eventState),
 			) as WorldState["eventState"],

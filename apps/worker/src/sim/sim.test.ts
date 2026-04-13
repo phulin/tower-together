@@ -103,6 +103,7 @@ function makeWorld(_opts?: { cash?: number }): WorldState {
 		floorWalkabilityFlags: new Array(GRID_HEIGHT).fill(0),
 		transferGroupEntries: [],
 		transferGroupCache: new Array(GRID_HEIGHT).fill(0),
+		rngState: 1,
 		eventState: createEventState(),
 		parkingDemandLog: [],
 		pendingNotifications: [],
@@ -2523,20 +2524,14 @@ describe("Phase 4 runtime sims", () => {
 		if (!office) throw new Error("expected office object");
 		office.evalActiveFlag = 1;
 
-		const originalRandom = Math.random;
-		Math.random = () => 0;
-		try {
-			for (let dayTick = 0; dayTick < 16; dayTick++) {
-				advanceSimRefreshStride(world, ledger, {
-					...createTimeState(),
-					dayCounter: 3,
-					daypartIndex: 3,
-					dayTick,
-					starCount: 4,
-				});
-			}
-		} finally {
-			Math.random = originalRandom;
+		for (let dayTick = 0; dayTick < 16; dayTick++) {
+			advanceSimRefreshStride(world, ledger, {
+				...createTimeState(),
+				dayCounter: 3,
+				daypartIndex: 3,
+				dayTick,
+				starCount: 4,
+			});
 		}
 
 		expect(
@@ -2714,13 +2709,8 @@ describe("Phase 4 runtime sims", () => {
 			dayTick: 0,
 			starCount: 4,
 		};
-		const originalRandom = Math.random;
-		Math.random = () => 0;
-		try {
-			advanceSimRefreshStride(world, ledger, endOfDayTime);
-		} finally {
-			Math.random = originalRandom;
-		}
+		world.rngState = 31; // seed where first sampleRng output is divisible by 6
+		advanceSimRefreshStride(world, ledger, endOfDayTime);
 		expect(sim.stateCode).toBe(0x45);
 		expect(sim.selectedFloor).toBe(sim.floorAnchor);
 		expect(sim.destinationFloor).toBe(10);
