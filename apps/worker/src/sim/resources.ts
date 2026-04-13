@@ -130,7 +130,7 @@ export const YEN_1001: Record<string, number[]> = {
 	hotelSingle: [30, 20, 15, 5],
 	hotelTwin: [30, 20, 15, 5],
 	hotelSuite: [30, 20, 15, 5],
-	office: [150, 100, 50, 20],
+	office: [15, 10, 5, 2],
 	condo: [2000, 1500, 1000, 400],
 	retail: [200, 150, 100, 40],
 };

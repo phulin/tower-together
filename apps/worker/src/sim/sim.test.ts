@@ -1205,8 +1205,8 @@ describe("YEN tables", () => {
 		expect(YEN_1001.hotelSingle).toEqual([30, 20, 15, 5]);
 	});
 
-	it("YEN_1001 office payout: [150, 100, 50, 20]", () => {
-		expect(YEN_1001.office).toEqual([150, 100, 50, 20]);
+	it("YEN_1001 office payout: [15, 10, 5, 2]", () => {
+		expect(YEN_1001.office).toEqual([15, 10, 5, 2]);
 	});
 
 	it("YEN_1001 condo payout: [2000, 1500, 1000, 400]", () => {
@@ -2359,7 +2359,7 @@ describe("Phase 4 runtime sims", () => {
 		advanceSimRefreshStride(world, ledger, {
 			...createTimeState(),
 			dayCounter: 3,
-			daypartIndex: 1,
+			daypartIndex: 2,
 			starCount: 4,
 		});
 
@@ -2373,7 +2373,7 @@ describe("Phase 4 runtime sims", () => {
 			...createTimeState(),
 			dayTick: 64,
 			dayCounter: 3,
-			daypartIndex: 1,
+			daypartIndex: 2,
 			starCount: 4,
 		});
 		expect(officeEntity.stateCode).toBe(0x05);
@@ -2507,7 +2507,7 @@ describe("Phase 4 runtime sims", () => {
 			`${sim.floorAnchor}:${sim.homeColumn}:${sim.familyCode}:${sim.baseOffset}`,
 			sim.floorAnchor,
 		);
-		expect(sim.stateCode).toBe(0x01);
+		expect(sim.stateCode).toBe(0x00);
 		expect(world.placedObjects[`0,${GROUND_Y - 1}`]?.unitStatus).toBe(1);
 	});
 

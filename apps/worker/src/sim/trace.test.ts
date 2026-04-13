@@ -30,9 +30,7 @@ import { GROUND_Y } from "./world";
 // ─── State code constants ────────────────────────────────────────────────────
 
 const STATE_ACTIVE = 0x01;
-const STATE_DEPARTURE = 0x05;
 const STATE_MORNING_GATE = 0x20;
-const STATE_AT_WORK = 0x21;
 const STATE_NIGHT_B = 0x26;
 const STATE_PARKED = 0x27;
 const STATE_MORNING_TRANSIT = 0x60;
@@ -166,20 +164,18 @@ describe("reference trace: 4 offices + 2 stairs", () => {
 		const sim = buildTraceTower();
 		const cashBefore = sim.cash;
 		advanceTo(sim, 200);
-		// 3 offices activated by tick 200 → 3 × $100k = $300k
-		// (reference trace: $30k — 10x difference in payout table)
-		expect(sim.cash).toBe(cashBefore + 300_000);
+		// 3 offices activated by tick 200 → 3 × $10k = $30k
+		expect(sim.cash).toBe(cashBefore + 30_000);
 	});
 
 	it("all 4 offices generate income by tick 500", () => {
 		const sim = buildTraceTower();
 		advanceTo(sim, 500);
-		// 4 offices × $100k = $400k income
-		// (reference trace: $40k total by tick 233)
-		expect(sim.cash).toBe(1_999_000 + 400_000);
+		// 4 offices × $10k = $40k income
+		expect(sim.cash).toBe(1_999_000 + 40_000);
 	});
 
-	it("sims transition through morning → transit → night-b lifecycle", () => {
+	it("sims transition through morning → active → night-b lifecycle", () => {
 		const sim = buildTraceTower();
 
 		// At tick 200: some sims dispatched, some still in morning gate
@@ -187,24 +183,25 @@ describe("reference trace: 4 offices + 2 stairs", () => {
 		let counts = countByState(sim.simsToArray());
 		expect(stateCount(counts, STATE_MORNING_GATE)).toBeGreaterThan(0);
 		expect(
-			stateCount(counts, STATE_NIGHT_B, STATE_MORNING_TRANSIT),
+			stateCount(counts, STATE_ACTIVE, STATE_MORNING_TRANSIT),
 		).toBeGreaterThan(0);
 
-		// By tick 600: all sims have reached night-b
-		// (In the reference trace, sims would be in lunch-start/at-work/from-lunch states
-		// instead of night-b, because the original sim keeps venue-unavailable sims working.)
-		advanceTo(sim, 600);
+		// By tick 900: most sims have left active states (night-b, parked, or departing)
+		advanceTo(sim, 900);
 		counts = countByState(sim.simsToArray());
-		expect(stateCount(counts, STATE_NIGHT_B)).toBe(24);
+		expect(stateCount(counts, STATE_ACTIVE)).toBe(0);
+		expect(stateCount(counts, STATE_MORNING_GATE)).toBe(0);
 	});
 
 	it("sims return to morning gate after dayTick > 2300", () => {
 		const sim = buildTraceTower();
 
-		// By tick 2300 (totalTicks = 97 + 2300 - 30 = 2367), still in night-b
+		// By tick 2300 (totalTicks = 97 + 2300 - 30 = 2367), all in night-b or parked
 		advanceTo(sim, 2367);
 		let counts = countByState(sim.simsToArray());
-		expect(stateCount(counts, STATE_NIGHT_B)).toBe(24);
+		expect(
+			stateCount(counts, STATE_NIGHT_B) + stateCount(counts, STATE_PARKED),
+		).toBe(24);
 
 		// By tick 2400 (totalTicks ~2467), sims reactivate to morning gate
 		advanceTo(sim, 2467);
@@ -236,32 +233,17 @@ describe("reference trace: 4 offices + 2 stairs", () => {
 
 	// ── xfail: known divergences from the reference trace ──────────────────
 
-	it.fails("xfail: office income matches reference trace ($10k/office, not $100k)", () => {
-		const sim = buildTraceTower();
-		advanceTo(sim, 200);
-		// Reference trace: tick 133 cash=$2,029,000 → $30k income (3 offices × $10k)
-		// Our sim: $300k income (3 offices × $100k) due to YEN_1001 payout being 10x
-		expect(sim.cash).toBe(1_999_000 + 30_000);
-	});
-
-	it.fails("xfail: venue-unavailable sims follow full daily lifecycle instead of night-b", () => {
+	it.fails("xfail: venue-unavailable sims stay in working states instead of night-b", () => {
 		const sim = buildTraceTower();
 
 		// Reference trace at tick 633 (daypart 1):
 		//   [from-lunch:16 to-office:4 lunch-start:3 T-to-lunch:1]
 		// Sims cycle through active states even without fast-food venues.
-		advanceTo(sim, 700);
+		// Our sim: sims dispatch venue visits, fail, and land in night-b.
+		advanceTo(sim, 900);
 		const counts = countByState(sim.simsToArray());
 
-		// In the reference, sims are in working/departure states, NOT night-b
-		const workingStates = stateCount(
-			counts,
-			STATE_ACTIVE,
-			STATE_AT_WORK,
-			STATE_DEPARTURE,
-			STATE_PARKED,
-		);
-		expect(workingStates).toBeGreaterThan(0);
+		// In the reference, no sims are in night-b by end of day
 		expect(stateCount(counts, STATE_NIGHT_B)).toBe(0);
 	});
 

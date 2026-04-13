@@ -103,8 +103,9 @@ function finalizeOfficeFloorArrival(
 	sim.stateCode = nextState;
 }
 
-function nextOfficeMorningState(): number {
-	return STATE_ACTIVE;
+function nextOfficeMorningState(sim: SimRecord): number {
+	// Spec 0x20 same-floor: occupant 0 → 0x00, occupant != 0 → 0x01
+	return sim.baseOffset === 0 ? STATE_COMMUTE : STATE_ACTIVE;
 }
 
 export function nextOfficeReturnState(sim: SimRecord): number {
@@ -222,7 +223,7 @@ export function processOfficeSim(
 		advanceOfficePresenceCounter(object);
 		sim.destinationFloor = -1;
 		sim.selectedFloor = sim.floorAnchor;
-		sim.stateCode = nextOfficeMorningState();
+		sim.stateCode = nextOfficeMorningState(sim);
 		return;
 	}
 
@@ -336,6 +337,9 @@ export function processOfficeSim(
 			sim.selectedFloor = sim.floorAnchor;
 			return;
 		}
+		// Spec gate: daypart 0 → wait; daypart 1 → 1/12 chance; dayparts 2–3 → dispatch
+		if (time.daypartIndex === 0) return;
+		if (time.daypartIndex === 1 && sampleRng(world) % 12 !== 0) return;
 
 		dispatchCommercialVenueVisit(world, time, sim, {
 			venueFamilies: new Set([FAMILY_FAST_FOOD]),
@@ -407,7 +411,7 @@ export function handleOfficeSimArrival(
 		sim.stateCode === STATE_MORNING_TRANSIT &&
 		arrivalFloor === sim.floorAnchor
 	) {
-		finalizeOfficeFloorArrival(sim, object, nextOfficeMorningState());
+		finalizeOfficeFloorArrival(sim, object, nextOfficeMorningState(sim));
 		return;
 	}
 
