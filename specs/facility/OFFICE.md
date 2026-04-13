@@ -421,9 +421,14 @@ The presence counter is `unit_status` cycled within the active band (values `1..
 
 | Context | Behavior |
 |---|---|
-| state `0x05` first dispatch | decrement counter immediately, regardless of route result |
+| state `0x00` first dispatch (not `0x40`) | decrement counter immediately, regardless of route result |
+| state `0x01` first dispatch (not `0x41`) | decrement counter immediately, regardless of route result |
+| state `0x02` first dispatch (not `0x42`) | decrement counter immediately, regardless of route result |
+| state `0x05` first dispatch (not `0x45`) | decrement counter immediately, regardless of route result |
 
-The decrement happens on evening departure initiation, not on lobby arrival.
+All four base states call `decrement_office_presence_counter` on their **first dispatch** (base state, not continuation/in-transit alias). The dispatch handler checks `[BP-4] == base_state_code` at each handler's exit and jumps to the shared decrement call at `1228:2a59` when the check passes. Continuation states (`0x4x`) have different `[BP-4]` values and skip the decrement.
+
+The counter therefore tracks real-time worker presence in the office: it decrements whenever a worker begins a route leg away from the office, and increments whenever a worker arrives back.
 
 ## Parity: In-Transit Queue Arrival Handler
 
@@ -442,3 +447,54 @@ States `0x40` / `0x41` / `0x42` are successful queued arrivals onto the office f
 - `entity[+8] >= 0x40`: queued-car continuation, handled later by queue-drain logic and this callback
 
 Workers are staggered by the gate table, not by a bulk "queue all six workers" scheduler. Occupant `0` is the early-morning special case in state `0x00`; occupants `1..5` wait until the daypart-3 random gate. In the fresh-rental `0x20` path, each of the six existing worker entities is checked independently on its stride tick.
+
+## Parity: No Fast Food Available (Lunch Fallback)
+
+When state `0x01` dispatches and no fast-food venue exists (or all are dormant/closed), `select_random_commercial_venue_record_for_floor(2, origin_floor)` returns `-1`. The system degrades gracefully:
+
+### Venue Lookup Failure Path
+
+1. `route_sim_to_commercial_venue` stores the `-1` venue index into `entity[+6]` (becomes `0xff` as a byte).
+2. `get_current_commercial_venue_destination_floor` reads `entity[+6]` as a signed byte (`-1`); since negative, it returns floor `10` (lobby) as the fallback destination.
+3. `resolve_sim_route_between_floors` routes from the office floor to floor `10` (lobby).
+
+### Route to Lobby Succeeds (Typical)
+
+If the route resolves (result `0`/`1`/`2`):
+- `entity[+5]` = `0x41` (in-transit to "venue", actually heading to lobby)
+- `decrement_office_presence_counter` fires (first dispatch from `0x01`)
+- Worker travels to the lobby
+
+**On arrival via stairs/direct route** (`entity[+8] < 0x40`):
+- Dispatch handler runs for state `0x41` (shares handler with `0x01`)
+- `route_sim_to_commercial_venue` re-enters with state `0x41` (not `0x01`), reads `entity[+6]` = `-1` → destination floor `10` (lobby)
+- Source floor = `entity[+7]` (current position, already at lobby)
+- Same-floor route (result `3`) → `acquire_commercial_venue_slot(entity, -1)`
+- `acquire_commercial_venue_slot` guards on `facility_slot_index >= 0`; for `-1`, skips all processing and returns `3`
+- `route_sim_to_commercial_venue` sees acquire result `3` → writes `entity[+5]` = `0x22` (return from lunch)
+- State `0x22` dispatches: `release_commercial_venue_slot(entity, -1)` guards on `facility_slot_index < 0`, sets `entity[+7]` = `10` (lobby), returns `1`
+- Route resolves from lobby back to office floor → worker returns to office
+- On arrival: `advance_office_presence_counter`, then `occupant_index == 1` → `0x00`, else → `0x05`
+
+**On arrival via elevator** (`entity[+8] >= 0x40`, queued-car callback):
+- `dispatch_sim_behavior` fires for state `0x41` → `advance_office_presence_counter` → state `0x05`
+- Worker skips the lunch cycle entirely and enters evening departure
+
+### Route to Lobby Fails (Edge Case)
+
+If `resolve_sim_route_between_floors` returns `-1` (no path to lobby):
+- `route_sim_to_commercial_venue` handles the failure specially for state `0x01`:
+  - `entity[+5]` = `0x41`, `entity[+6]` = `0xff`, `entity[+7]` = `origin_floor`, `entity[+8]` = `0xff`
+  - Returns `0x40` (not `-1`), so the caller does not see a failure
+- `decrement_office_presence_counter` still fires
+- Worker enters state `0x41` with `entity[+8]` = `0xff` (fake queued-car sentinel)
+- After route delay elapses: `dispatch_queued_route_until_request` → `dispatch_sim_behavior` fires for `0x41` → `advance_office_presence_counter` → state `0x05`
+
+### Net Effect
+
+In all cases, the worker **never gets stuck**. The presence counter remains balanced (decrement on dispatch, advance on arrival/callback). The worker either does a wasted round-trip to the lobby or skips directly to evening departure (`0x05`).
+
+The key guard functions are:
+- `get_current_commercial_venue_destination_floor`: returns floor `10` for negative `entity[+6]`
+- `acquire_commercial_venue_slot`: returns `3` (success) for `facility_slot_index < 0`
+- `release_commercial_venue_slot`: sets `entity[+7]` = `10` and returns `1` for `facility_slot_index < 0`

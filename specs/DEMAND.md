@@ -84,6 +84,10 @@ Night: states 0x25/0x26/0x27 park until `g_day_tick > 2300`, then → 0x20. The 
 runtime reset parks office workers in `0x27` and clears route fields; it does not respawn
 them at the office floor or lobby floor.
 
+`0x4x` and `0x6x` are in-transit state aliases, not a generic "elevator bit." Runtime byte
+`+8` determines whether the in-transit state is continuing on a direct route (`+8 < 0x40`)
+or in the queued-car path (`+8 >= 0x40`).
+
 ### Gate Table (Binary-Verified)
 
 Gate address: `1228:1cb5` (refresh handler), jump table at `1228:2005`.
@@ -149,6 +153,9 @@ Route-result state writes for the core office commute states:
 | `0x05/0x45` | `-1` | write `0x26` and release service request |
 | `0x05/0x45` | `0`, `1`, or `2` | write `0x45` |
 | `0x05/0x45` | `3` | write `0x27` and release service request |
+| `0x00/0x40` | *(all results, first dispatch only)* | call `decrement_office_presence_counter` — fires when base state is `0x00`, not `0x40` |
+| `0x01/0x41` | *(all results, first dispatch only)* | call `decrement_office_presence_counter` — fires when base state is `0x01`, not `0x41` |
+| `0x02/0x42` | *(all results, first dispatch only)* | call `decrement_office_presence_counter` — fires when base state is `0x02`, not `0x42` |
 | `0x05/0x45` | *(all results, first dispatch only)* | call `decrement_office_presence_counter` — fires when base state is `0x05`, not `0x45` |
 
 ### Demand Profile

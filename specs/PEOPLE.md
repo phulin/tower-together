@@ -122,7 +122,7 @@ transit-completion events — NOT per-tick:
 
 | Call site | When |
 |-----------|------|
-| `dispatch_sim_behavior` | elevator arrival (queue drain delivers sim to destination floor) |
+| `dispatch_sim_behavior` | queued-car arrival callback for in-transit states |
 | `resolve_sim_route_between_floors` | same-floor route success (result 3) |
 | `resolve_sim_route_between_floors` | route failure (result −1) |
 | `finalize_runtime_route_state` | route leg completion / cancellation |
@@ -137,7 +137,7 @@ directly, bypassing `dispatch_sim_behavior` and the trip-counter pipeline entire
 ### Trip-Counter Functions
 
 1. **`rebase_sim_elapsed_from_clock`** — called from `dispatch_sim_behavior`
-   (elevator arrival) and `cancel_runtime_route_request`:
+   (queued-car arrival callback) and `cancel_runtime_route_request`:
    - `elapsed = (elapsed_packed & 0x3ff) + g_day_tick - last_trip_tick`
    - clamp to 300
    - store back: `elapsed_packed = (elapsed_packed & 0xfc00) | elapsed`
@@ -342,8 +342,10 @@ dirty. Fires on every worker arrival: elevator delivery (`dispatch_sim_behavior`
 0x21/0x22/0x23.
 
 `decrement_office_presence_counter` (`1228:698a`): decrements `unit_status`; if the value
-reaches 0 AND daypart ≥ 4, resets to 8. Always marks dirty. Fires on state 0x05 first
-dispatch only (evening departure initiation), regardless of route result.
+reaches 0 AND daypart ≥ 4, resets to 8. Always marks dirty. Fires on first dispatch from
+**all four base states** (`0x00`, `0x01`, `0x02`, `0x05`), not just `0x05`. Continuation
+states (`0x40`/`0x41`/`0x42`/`0x45`) do not decrement. The dispatch handler checks the
+saved base state code at each handler's exit and calls decrement when the check passes.
 
 The presence counter is `unit_status` cycled within the active band (1–8). The same field
 holds deactivation values (0x10, 0x18) in the vacant bands. See OFFICE.md for full call-site
