@@ -59,9 +59,19 @@ function finalizeCondoSale(
 
 /**
  * dispatch_0x20 (MORNING_GATE) per condo-handler-decomp / spec PEOPLE.md
- * §0x20/0x60. Routes the sim toward the lobby; the SALE point fires when the
- * unit is still vacant and resolve returned 0/1/2/3. Per-leg progression is
- * driven by re-entry to handleCondoMorningTransit on subsequent strides.
+ * §0x20/0x60. Routes the new resident from the lobby UP to the unit; the
+ * SALE point fires when the unit is still vacant and resolve returned
+ * 0/1/2/3. Per-leg progression is driven by re-entry to
+ * handleCondoMorningTransit on subsequent strides.
+ *
+ * Binary 1228:3b71 (state-0x20 handler) pushes:
+ *   source_floor = 0xa (LOBBY, hardcoded at 1228:3bb2 for state==0x20)
+ *   target_floor = sim's home floor ([BP+0xa] = floorAnchor)
+ * The state-0x20 trip is "lobby → home", not "home → lobby". The earlier
+ * wiring had the args reversed, which made resolve enqueue a DOWN call
+ * from the home floor (stamping secondaryRouteStatusByFloor[homeSlot]=1)
+ * and pulled the elevator car up to the home floor before any rider
+ * boarded.
  *
  * Transition table (matches binary + spec):
  *   rc=-1 + sold     → INC unit_status → 0x04 (CHECKOUT_QUEUE)
@@ -80,12 +90,12 @@ function dispatchCondoMorningGate(
 	sim: SimRecord,
 	object: PlacedObjectRecord,
 ): void {
-	const directionFlag = sim.floorAnchor > LOBBY_FLOOR ? 0 : 1;
+	const directionFlag = sim.floorAnchor > LOBBY_FLOOR ? 1 : 0;
 	const result = resolveSimRouteBetweenFloors(
 		world,
 		sim,
-		sim.floorAnchor,
 		LOBBY_FLOOR,
+		sim.floorAnchor,
 		directionFlag,
 		time,
 	);
@@ -104,7 +114,7 @@ function dispatchCondoMorningGate(
 
 	if (result === 3) {
 		sim.destinationFloor = -1;
-		sim.selectedFloor = LOBBY_FLOOR;
+		sim.selectedFloor = sim.floorAnchor;
 		sim.stateCode = STATE_CHECKOUT_QUEUE;
 		return;
 	}
@@ -148,10 +158,12 @@ function handleCondoMorningTransit(
 ): void {
 	if (sim.route.mode === "carrier") return;
 	const sourceFloor = sim.selectedFloor;
-	const targetFloor = LOBBY_FLOOR;
+	const targetFloor = sim.floorAnchor;
 	// Alias state 0x60 (MORNING_TRANSIT): in the binary `emit_distance_feedback`
 	// is `0` here. Distance feedback was already applied by the base state
-	// 0x20 dispatch.
+	// 0x20 dispatch. Per binary 1228:3b71 the trip target is the sim's home
+	// floor ([BP+0xa] = floorAnchor) — same as state 0x20 — with the source
+	// taken from the in-transit local (sim.selectedFloor) on the 0x60 alias.
 	const result = resolveSimRouteBetweenFloors(
 		world,
 		sim,
@@ -174,7 +186,7 @@ function handleCondoMorningTransit(
 
 	if (result === 3) {
 		sim.destinationFloor = -1;
-		sim.selectedFloor = LOBBY_FLOOR;
+		sim.selectedFloor = sim.floorAnchor;
 		sim.stateCode = STATE_CHECKOUT_QUEUE;
 		return;
 	}
@@ -696,9 +708,14 @@ export function handleCondoSimArrival(
 	arrivalFloor: number,
 	time: TimeState,
 ): void {
-	if (sim.stateCode === STATE_MORNING_TRANSIT && arrivalFloor === LOBBY_FLOOR) {
+	if (
+		sim.stateCode === STATE_MORNING_TRANSIT &&
+		arrivalFloor === sim.floorAnchor
+	) {
+		// Binary 1228:3b71 state-0x20 trip target is sim.floorAnchor (home),
+		// not LOBBY: morning gate is the new resident moving lobby → home.
 		sim.destinationFloor = -1;
-		sim.selectedFloor = LOBBY_FLOOR;
+		sim.selectedFloor = sim.floorAnchor;
 		sim.stateCode = STATE_CHECKOUT_QUEUE;
 		return;
 	}

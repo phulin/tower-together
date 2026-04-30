@@ -1,0 +1,18 @@
+{
+	"floor_extent": {
+		"0": { "left": 80, "right": 240 },
+		"1": { "left": 80, "right": 240 },
+		"2": { "left": 80, "right": 240 },
+		"3": { "left": 80, "right": 240 },
+		"4": { "left": 80, "right": 240 }
+	},
+	"facilities": [
+		{ "type": "office", "floor": 1, "left": 100 },
+		{ "type": "office", "floor": 1, "left": 109 },
+		{ "type": "office", "floor": 2, "left": 100 },
+		{ "type": "office", "floor": 2, "left": 109 },
+		{ "type": "condo", "floor": 3, "left": 100 },
+		{ "type": "condo", "floor": 3, "left": 116 },
+		{ "type": "elevator", "bottom": 0, "top": 3, "left": 150 }
+	]
+}
