@@ -834,6 +834,7 @@ export function dispatchSimArrival(
 	sim: SimRecord,
 	arrivalFloor: number,
 ): void {
+	const arrivedViaCarrier = sim.route.mode === "carrier";
 	sim.selectedFloor = arrivalFloor;
 	clearSimRoute(sim);
 	switch (sim.familyCode) {
@@ -850,7 +851,7 @@ export function dispatchSimArrival(
 			handleOfficeSimArrival(world, time, sim, arrivalFloor);
 			return;
 		case FAMILY_CONDO:
-			handleCondoSimArrival(sim, arrivalFloor, time);
+			handleCondoSimArrival(sim, arrivalFloor, time, arrivedViaCarrier);
 			return;
 		case FAMILY_RESTAURANT:
 		case FAMILY_FAST_FOOD:

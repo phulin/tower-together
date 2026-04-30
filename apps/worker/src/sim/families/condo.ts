@@ -57,6 +57,7 @@ export function dispatchObjectFamilyCondoStateHandler(
 	sim: SimRecord,
 	arrivalFloor: number,
 	time: TimeState,
+	arrivedViaCarrier: boolean,
 ): void {
-	_handleCondoSimArrival(sim, arrivalFloor, time);
+	_handleCondoSimArrival(sim, arrivalFloor, time, arrivedViaCarrier);
 }

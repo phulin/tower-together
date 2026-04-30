@@ -1,6 +1,7 @@
 import { addCashflowFromFamilyResource, type LedgerState } from "../ledger";
 import { addToPopulationBucket } from "../progression";
 import { FAMILY_CONDO } from "../resources";
+import { advanceSimTripCounters } from "../stress/trip-counters";
 import { preDay4, type TimeState } from "../time";
 import {
 	type PlacedObjectRecord,
@@ -707,19 +708,31 @@ export function handleCondoSimArrival(
 	sim: SimRecord,
 	arrivalFloor: number,
 	time: TimeState,
+	arrivedViaCarrier: boolean,
 ): void {
+	// Binary's per-stride 0x60/0x40/0x41/0x61/0x62 handler re-resolves(target,
+	// target)=3 on arrival, draining stress via advance_sim_trip_counters at
+	// 1218:0046. The carrier-delivery shortcut (queue/dispatch-arrivals.ts)
+	// invokes this dispatcher instead of running the per-stride handler, so
+	// the advance must fire here for carrier-routed arrivals. Stair/segment
+	// arrivals reach this dispatcher via the per-stride handler's rc=3 →
+	// dispatchSimArrival path, where resolve already advanced trip counters,
+	// so we gate on `arrivedViaCarrier` (captured pre-clearSimRoute) to avoid
+	// double-counting.
 	if (
 		sim.stateCode === STATE_MORNING_TRANSIT &&
 		arrivalFloor === sim.floorAnchor
 	) {
 		// Binary 1228:3b71 state-0x20 trip target is sim.floorAnchor (home),
 		// not LOBBY: morning gate is the new resident moving lobby → home.
+		if (arrivedViaCarrier) advanceSimTripCounters(sim);
 		sim.destinationFloor = -1;
 		sim.selectedFloor = sim.floorAnchor;
 		sim.stateCode = STATE_CHECKOUT_QUEUE;
 		return;
 	}
 	if (sim.stateCode === STATE_COMMUTE_TRANSIT && arrivalFloor === LOBBY_FLOOR) {
+		if (arrivedViaCarrier) advanceSimTripCounters(sim);
 		sim.destinationFloor = -1;
 		sim.selectedFloor = LOBBY_FLOOR;
 		sim.stateCode = STATE_AT_WORK;
@@ -733,6 +746,7 @@ export function handleCondoSimArrival(
 		// No-venue fallback arrival: binary 1238:0000 state-0x01 lobby path
 		// (acquire_slot(-1)=3 fall-through) lands in state 0x22 (VENUE_TRIP).
 		// The existing 0x22/0x62 handler then unwinds via 0x04 (CHECKOUT_QUEUE).
+		if (arrivedViaCarrier) advanceSimTripCounters(sim);
 		sim.destinationFloor = -1;
 		sim.selectedFloor = LOBBY_FLOOR;
 		sim.stateCode = STATE_VENUE_TRIP;
@@ -746,6 +760,7 @@ export function handleCondoSimArrival(
 		// (binary release_commercial_venue_slot gates on service_duration when
 		// facilitySlot >= 0; stale CHECKOUT_QUEUE marker from a prior fake-lunch
 		// must not short-circuit the dwell).
+		if (arrivedViaCarrier) advanceSimTripCounters(sim);
 		sim.destinationFloor = -1;
 		sim.selectedFloor = arrivalFloor;
 		sim.stateCode = STATE_VENUE_TRIP;
@@ -759,6 +774,7 @@ export function handleCondoSimArrival(
 	) {
 		// Spec PEOPLE.md §0x21/0x61: arrived → INC unit_status → 0x04. Re-entry
 		// to ACTIVE happens via STATE_TRANSITION (0x04 → 0x10 → 0x01).
+		if (arrivedViaCarrier) advanceSimTripCounters(sim);
 		sim.destinationFloor = -1;
 		sim.selectedFloor = sim.floorAnchor;
 		sim.stateCode = STATE_CHECKOUT_QUEUE;
@@ -771,6 +787,7 @@ export function handleCondoSimArrival(
 		// Binary family-9 dispatch table: state 0x22/0x62 fail/arrived →
 		// INC unit_status → 0x04 (CHECKOUT_QUEUE). Arrival here is the
 		// "arrived" branch.
+		if (arrivedViaCarrier) advanceSimTripCounters(sim);
 		sim.destinationFloor = -1;
 		sim.selectedFloor = sim.floorAnchor;
 		sim.stateCode = STATE_CHECKOUT_QUEUE;
