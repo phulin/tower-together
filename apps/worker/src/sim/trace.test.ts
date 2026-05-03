@@ -111,6 +111,7 @@ const FIXTURE_TILE_MAP: Record<string, string> = {
 	security: "security",
 	housekeeping: "housekeeping",
 	medical: "medical",
+	cathedral: "cathedral",
 	lobby: "lobby",
 };
 
@@ -129,6 +130,11 @@ const TRACE_SIM_KEY_TO_FAMILY: Record<string, number> = {
 	suite: 5,
 	security: 14,
 	housekeeping: 15,
+	"cathedral-a": 0x24,
+	"cathedral-b": 0x24,
+	"cathedral-c": 0x24,
+	"cathedral-d": 0x24,
+	"cathedral-e": 0x24,
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -307,6 +313,8 @@ function prepareFromTrace(spec: BuildSpec, trace: TraceEntry[]): TowerSim {
 	// Seed cash, rng state, and rng count from the day -1 baseline (trace[0]).
 	const snap = sim.saveState();
 	snap.ledger.cashBalance = trace[0].cash;
+	snap.world.starCount = trace[0].stars;
+	snap.world.currentPopulation = trace[0].population;
 	if (trace[0].rng_calls !== undefined) {
 		snap.world.rngCallCount = trace[0].rng_calls;
 		snap.world.rngState = computeRngState(1, trace[0].rng_calls);
@@ -370,6 +378,61 @@ const FIXTURE_NAMES = [
 	"offices",
 	"sky_office",
 ];
+
+describe("trace: cathedral recovered path", () => {
+	it("activates the 40 evaluation visitors at checkpoint 0 without a star gate", () => {
+		const floorExtent = Object.fromEntries(
+			Array.from({ length: 104 }, (_, floor) => [
+				String(floor),
+				{ left: 80, right: 180 },
+			]),
+		);
+		const sim = TowerSim.create(
+			"trace-cathedral",
+			"Trace Cathedral",
+			"perfect-parity",
+		);
+		placeTilesFromSpec(sim, {
+			floor_extent: floorExtent,
+			facilities: [{ type: "cathedral", floor: 103, left: 100 }],
+		});
+
+		const before = sim.simsToArray();
+		assert.equal(before.length, 40);
+		assert.deepEqual(
+			Object.fromEntries(
+				[...new Set(before.map((s) => s.familyCode))].map((family) => [
+					family,
+					before.filter((s) => s.familyCode === family).length,
+				]),
+			),
+			{ 36: 40 },
+		);
+		assert.deepEqual(
+			Object.fromEntries(
+				[...new Set(before.map((s) => s.stateCode))].map((state) => [
+					state,
+					before.filter((s) => s.stateCode === state).length,
+				]),
+			),
+			{ 39: 40 },
+		);
+
+		advanceTo(sim, traceTickToTotalTicks(0, 0));
+
+		const after = sim.simsToArray();
+		assert.equal(sim.starCount, 1);
+		assert.deepEqual(
+			Object.fromEntries(
+				[...new Set(after.map((s) => s.stateCode))].map((state) => [
+					state,
+					after.filter((s) => s.stateCode === state).length,
+				]),
+			),
+			{ 32: 40 },
+		);
+	});
+});
 
 describe.each(FIXTURE_NAMES)("trace: build_%s", (fixtureName) => {
 	const { spec, trace: rawTrace } = loadFixture(fixtureName);

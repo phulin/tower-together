@@ -92,7 +92,8 @@ export const ENTITY_POPULATION_BY_TYPE: Record<number, number> = {
 	// Party hall lower (0x1e) — 40-slot occupant span; upper half (0x1d) is
 	// never activated and gets no sims. Binary `get_span_size_for_family` = 0x28.
 	[FAMILY_PARTY_HALL_LOWER]: 40,
-	// Cathedral guest sims: 5 floor types x 8 slots = 40 guests.
+	// Cathedral object slices: 5 floor types x 8 slots = 40 guests. Runtime
+	// family is normalized to 0x24 when sims are rebuilt.
 	36: 8, // 0x24
 	37: 8, // 0x25
 	38: 8, // 0x26

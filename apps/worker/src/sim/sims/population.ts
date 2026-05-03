@@ -229,6 +229,9 @@ export function rebuildRuntimeSims(world: WorldState): void {
 
 	for (const [key, object] of sortedEntries) {
 		const familyCode = object.objectTypeCode;
+		const runtimeFamilyCode = CATHEDRAL_FAMILIES.has(familyCode)
+			? FAMILY_CATHEDRAL_BASE
+			: familyCode;
 		const isMedical = familyCode === FAMILY_MEDICAL;
 		const population = ENTITY_POPULATION_BY_TYPE[familyCode] ?? 0;
 		if (population === 0 && !isMedical) continue;
@@ -257,7 +260,7 @@ export function rebuildRuntimeSims(world: WorldState): void {
 				floorAnchor,
 				x,
 				j,
-				familyCode,
+				runtimeFamilyCode,
 				population,
 				facilitySlot,
 			);

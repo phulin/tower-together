@@ -343,7 +343,7 @@ export interface GateFlags {
 	routesViable: number;
 	/** Floor index of placed VIP suite; 0xffff = none. */
 	vipSuiteFloor: number;
-	/** Runtime index of cathedral sim; 0xffff = none. */
+	/** Cathedral/evaluation placed-object index/floor sentinel; 0xffff = none. */
 	evalSimIndex: number;
 	/** Number of placed recycling-center upper slices. */
 	recyclingCenterCount: number;

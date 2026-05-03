@@ -12,6 +12,7 @@ import {
 	CARRIER_EXTEND_FLOOR_COST,
 	CINEMA_CLASSIC_MOVIE_COST,
 	CINEMA_NEW_MOVIE_COST,
+	FAMILY_CATHEDRAL_BASE,
 	FAMILY_CINEMA,
 	FAMILY_CINEMA_LOWER,
 	FAMILY_CINEMA_STAIRS_LOWER,
@@ -114,6 +115,8 @@ export type SimCommand =
 // ─── Infrastructure tiles (no PlacedObjectRecord) ─────────────────────────────
 
 const INFRASTRUCTURE_TILES = new Set(["floor", "stairs"]);
+const CATHEDRAL_ANCHOR_LOGICAL_FLOOR = 103;
+const CATHEDRAL_SLICE_COUNT = 5;
 
 // Families whose rentLevel initialises to 1; all others initialise to 4 (no payout).
 const VARIANT_INIT_ONE_FAMILIES = new Set([3, 4, 5, 7, 9, FAMILY_RETAIL]);
@@ -168,6 +171,113 @@ function makePlacedObject(
 		housekeepingClaimedFlag: 0,
 		vipFlag,
 	};
+}
+
+function placeCathedralStack(
+	x: number,
+	y: number,
+	world: WorldState,
+	ledger: LedgerState,
+	freeBuild: boolean,
+): CommandResult {
+	const tileType = "cathedral";
+	const tileWidth = TILE_WIDTHS[tileType] ?? 28;
+	const cost = TILE_COSTS[tileType] ?? 0;
+	const logicalFloor = GROUND_Y - y;
+
+	if (logicalFloor !== CATHEDRAL_ANCHOR_LOGICAL_FLOOR) {
+		return { accepted: false, reason: "Cathedral must be placed on floor 103" };
+	}
+	if (
+		world.gateFlags.evalSimIndex >= 0 &&
+		world.gateFlags.evalSimIndex !== 0xffff
+	) {
+		return { accepted: false, reason: "Cathedral already placed" };
+	}
+	if (x + tileWidth - 1 >= world.width) {
+		return { accepted: false, reason: "Out of bounds" };
+	}
+	if (!freeBuild && cost > ledger.cashBalance) {
+		return { accepted: false, reason: "Insufficient funds" };
+	}
+
+	const rows = Array.from({ length: CATHEDRAL_SLICE_COUNT }, (_, i) => y + i);
+	for (const rowY of rows) {
+		if (rowY < 0 || rowY >= world.height) {
+			return { accepted: false, reason: "Out of bounds" };
+		}
+		for (let dx = 0; dx < tileWidth; dx++) {
+			const key = `${x + dx},${rowY}`;
+			if (world.cellToAnchor[key]) {
+				return { accepted: false, reason: "Cell already occupied" };
+			}
+			const existing = world.cells[key];
+			if (existing && existing !== "floor") {
+				return { accepted: false, reason: "Cell already occupied" };
+			}
+		}
+	}
+
+	const bottomY = y + CATHEDRAL_SLICE_COUNT - 1;
+	const supportY = bottomY + 1;
+	for (let dx = 0; dx < tileWidth; dx++) {
+		if (
+			supportY < 0 ||
+			supportY >= world.height ||
+			!world.cells[`${x + dx},${supportY}`]
+		) {
+			return { accepted: false, reason: "No support" };
+		}
+	}
+
+	for (const rowY of rows) {
+		for (let dx = 0; dx < tileWidth; dx++) {
+			delete world.cells[`${x + dx},${rowY}`];
+		}
+	}
+
+	const visualAnchorKey = `${x},${y}`;
+	const patch: CellPatch[] = [];
+	for (let slice = 0; slice < CATHEDRAL_SLICE_COUNT; slice++) {
+		const rowY = bottomY - slice;
+		const familyCode = FAMILY_CATHEDRAL_BASE + slice;
+		const objectKey = `${x},${rowY}`;
+		for (let dx = 0; dx < tileWidth; dx++) {
+			const key = `${x + dx},${rowY}`;
+			world.cells[key] = tileType;
+			if (key !== visualAnchorKey) world.cellToAnchor[key] = visualAnchorKey;
+			patch.push({
+				x: x + dx,
+				y: rowY,
+				tileType,
+				isAnchor: key === visualAnchorKey,
+			});
+		}
+		world.placedObjects[objectKey] = {
+			leftTileIndex: x,
+			rightTileIndex: x + tileWidth - 1,
+			objectTypeCode: familyCode,
+			unitStatus: 0,
+			linkedRecordIndex: -1,
+			auxValueOrTimer: 0,
+			evalLevel: 0xff,
+			evalScore: -1,
+			dirtyFlag: 1,
+			occupiedFlag: 1,
+			activationTickCount: 0,
+			rentLevel: 4,
+			housekeepingClaimedFlag: 0,
+			vipFlag: false,
+		};
+	}
+
+	world.gateFlags.evalSimIndex = yToFloor(bottomY);
+	if (!freeBuild) ledger.cashBalance -= cost;
+
+	for (const rowY of rows) fillRowGaps(rowY, world, patch);
+	runGlobalRebuilds(world, ledger);
+
+	return { accepted: true, patch, economyChanged: cost > 0 };
 }
 
 /** Allocate a sidecar for tiles that need one. Returns index or −1. */
@@ -916,6 +1026,10 @@ export function handlePlaceTile(
 		);
 	}
 
+	if (normalizedTileType === "cathedral") {
+		return placeCathedralStack(x, y, world, ledger, freeBuild);
+	}
+
 	if (
 		normalizedTileType === "recyclingCenter" ||
 		normalizedTileType === "recyclingCenterUpper" ||
@@ -1342,7 +1456,12 @@ export function handleRemoveTile(
 	const [ax, ay] = anchorKey.split(",").map(Number);
 	const tileWidth = TILE_WIDTHS[tileType] ?? 1;
 	const isTwoFloor = tileType === "cinema" || tileType === "partyHall";
-	const occupiedRows = isTwoFloor ? [ay, ay + 1] : [ay];
+	const isCathedral = tileType === "cathedral";
+	const occupiedRows = isCathedral
+		? Array.from({ length: CATHEDRAL_SLICE_COUNT }, (_, i) => ay + i)
+		: isTwoFloor
+			? [ay, ay + 1]
+			: [ay];
 	// "Above" for turnToFloor considers the row above the topmost occupied row.
 	const topRow = occupiedRows[0];
 	// The lowest occupied row decides neighbour-in-row (left/right) logic and
@@ -1376,12 +1495,18 @@ export function handleRemoveTile(
 	// Entertainment venues (cinema / party hall) store 4 / 2 sub-records that
 	// share one sidecar; collect all records referencing the same sidecar
 	// within the placement footprint before deleting.
-	const subRecordKeys = isTwoFloor
-		? Object.keys(world.placedObjects).filter((key) => {
-				const [kx, ky] = key.split(",").map(Number);
-				return ky >= ay && ky <= ay + 1 && kx >= ax && kx <= ax + tileWidth - 1;
-			})
-		: [anchorKey];
+	const subRecordKeys =
+		isTwoFloor || isCathedral
+			? Object.keys(world.placedObjects).filter((key) => {
+					const [kx, ky] = key.split(",").map(Number);
+					return (
+						ky >= ay &&
+						ky <= occupiedRows[occupiedRows.length - 1] &&
+						kx >= ax &&
+						kx <= ax + tileWidth - 1
+					);
+				})
+			: [anchorKey];
 
 	const freedSidecars = new Set<number>();
 	for (const key of subRecordKeys) {
@@ -1400,6 +1525,7 @@ export function handleRemoveTile(
 		}
 		delete world.placedObjects[key];
 	}
+	if (isCathedral) world.gateFlags.evalSimIndex = 0xffff;
 
 	cleanupSimsForRemovedTile(world, ax, ay);
 

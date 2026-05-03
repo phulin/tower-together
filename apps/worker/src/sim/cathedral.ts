@@ -21,19 +21,20 @@ import { type SimRecord, sampleRng, type WorldState } from "./world";
 // 5 floor types × 8 slots
 const EVAL_SIM_COUNT = 40;
 
+function isEvalPlaced(world: WorldState): boolean {
+	return (
+		world.gateFlags.evalSimIndex >= 0 &&
+		world.gateFlags.evalSimIndex !== NO_EVAL_ENTITY
+	);
+}
+
 /**
  * Activate cathedral guest sims at the day-start checkpoint.
- * Forces all cathedral sim slots into the morning-gate state
- * if a cathedral is placed and the tower is above 2 stars.
+ * Forces all cathedral sim slots into the morning-gate state if a cathedral is
+ * placed. The binary does not apply a star-count gate here.
  */
 export function activateEvalSims(world: WorldState): void {
-	if (
-		world.gateFlags.evalSimIndex < 0 ||
-		world.gateFlags.evalSimIndex === NO_EVAL_ENTITY
-	) {
-		return;
-	}
-	if (world.starCount <= 2) return;
+	if (!isEvalPlaced(world)) return;
 
 	for (const sim of world.sims) {
 		if (!CATHEDRAL_FAMILIES.has(sim.familyCode)) continue;
@@ -51,6 +52,12 @@ export function activateEvalSims(world: WorldState): void {
  * Sims in the arrived state are advanced to the return state.
  */
 export function dispatchEvalMiddayReturn(world: WorldState): void {
+	if (!isEvalPlaced(world)) return;
+	for (const object of Object.values(world.placedObjects)) {
+		if (!CATHEDRAL_FAMILIES.has(object.objectTypeCode)) continue;
+		object.auxValueOrTimer = 0;
+		object.dirtyFlag = 1;
+	}
 	for (const sim of world.sims) {
 		if (!CATHEDRAL_FAMILIES.has(sim.familyCode)) continue;
 		if (sim.stateCode === STATE_ARRIVED) {
@@ -58,6 +65,61 @@ export function dispatchEvalMiddayReturn(world: WorldState): void {
 			sim.selectedFloor = EVAL_ZONE_FLOOR;
 			sim.destinationFloor = LOBBY_FLOOR;
 		}
+	}
+}
+
+function dispatchOutbound(
+	world: WorldState,
+	time: TimeState,
+	sim: SimRecord,
+): void {
+	const isFreshDispatch = sim.stateCode === STATE_MORNING_GATE;
+	const sourceFloor = isFreshDispatch ? LOBBY_FLOOR : sim.originFloor;
+	const directionFlag = isFreshDispatch ? 1 : 0;
+	sim.selectedFloor = sourceFloor;
+	sim.destinationFloor = EVAL_ZONE_FLOOR;
+	const result = resolveSimRouteBetweenFloors(
+		world,
+		sim,
+		sourceFloor,
+		EVAL_ZONE_FLOOR,
+		directionFlag,
+		time,
+		{ emitDistanceFeedback: isFreshDispatch },
+	);
+	if (result === 3) {
+		sim.stateCode = STATE_ARRIVED;
+		checkEvalCompletionAndAward(world, time, sim);
+	} else if (result >= 0) {
+		sim.stateCode = STATE_EVAL_OUTBOUND;
+	} else {
+		sim.stateCode = STATE_PARKED;
+	}
+}
+
+function dispatchReturn(
+	world: WorldState,
+	time: TimeState,
+	sim: SimRecord,
+): void {
+	const isFreshDispatch = sim.stateCode === STATE_DEPARTURE;
+	const sourceFloor = isFreshDispatch ? EVAL_ZONE_FLOOR : sim.originFloor;
+	const directionFlag = isFreshDispatch ? 1 : 0;
+	sim.selectedFloor = sourceFloor;
+	sim.destinationFloor = LOBBY_FLOOR;
+	const result = resolveSimRouteBetweenFloors(
+		world,
+		sim,
+		sourceFloor,
+		LOBBY_FLOOR,
+		directionFlag,
+		time,
+		{ emitDistanceFeedback: isFreshDispatch },
+	);
+	if (result === 0 || result === 1 || result === 2) {
+		sim.stateCode = STATE_EVAL_RETURN;
+	} else {
+		sim.stateCode = STATE_PARKED;
 	}
 }
 
@@ -70,48 +132,25 @@ export function processCathedralSim(
 		case STATE_MORNING_GATE: {
 			// Gate: weekendFlag must be 1
 			if (time.weekendFlag !== 1) {
-				if (time.daypartIndex >= 1) {
-					sim.stateCode = STATE_PARKED; // missed dispatch window
-				}
 				return;
 			}
-			// Stagger: daypart 0 has probabilistic dispatch
 			if (time.daypartIndex === 0) {
-				if (time.dayTick <= 0x50) return;
-				if (time.dayTick <= 0xf0) {
-					// 1/12 chance per tick
-					if (sampleRng(world) % 12 !== 0) return;
+				if (time.dayTick > 0x50 && sampleRng(world) % 12 === 0) {
+					dispatchOutbound(world, time, sim);
 				}
-				// After tick 0xf0, guaranteed dispatch
-			} else if (time.daypartIndex >= 1) {
-				sim.stateCode = STATE_PARKED; // missed
+				if (time.dayTick > 0xf0) {
+					dispatchOutbound(world, time, sim);
+				}
 				return;
 			}
-
-			// Dispatch: route from lobby to eval zone
-			sim.selectedFloor = LOBBY_FLOOR;
-			sim.destinationFloor = EVAL_ZONE_FLOOR;
-			const result = resolveSimRouteBetweenFloors(
-				world,
-				sim,
-				LOBBY_FLOOR,
-				EVAL_ZONE_FLOOR,
-				0,
-				time,
-			);
-			if (result === 3) {
-				sim.stateCode = STATE_ARRIVED;
-				checkEvalCompletionAndAward(world, time, sim);
-			} else if (result >= 0) {
-				sim.stateCode = STATE_EVAL_OUTBOUND; // in transit to eval zone
-			} else {
-				sim.stateCode = STATE_PARKED; // route failure → parked
+			if (time.daypartIndex >= 1) {
+				sim.stateCode = STATE_PARKED;
 			}
 			return;
 		}
 
 		case STATE_EVAL_OUTBOUND:
-			// In transit to eval zone; arrival handled by dispatchSimArrival
+			if (sim.route.mode !== "carrier") dispatchOutbound(world, time, sim);
 			return;
 
 		case STATE_ARRIVED:
@@ -119,30 +158,12 @@ export function processCathedralSim(
 			return;
 
 		case STATE_DEPARTURE: {
-			// Midday return: route from eval zone to lobby
-			if (sim.route.mode !== "idle") return; // already routed
-			sim.selectedFloor = EVAL_ZONE_FLOOR;
-			sim.destinationFloor = LOBBY_FLOOR;
-			const returnResult = resolveSimRouteBetweenFloors(
-				world,
-				sim,
-				EVAL_ZONE_FLOOR,
-				LOBBY_FLOOR,
-				1,
-				time,
-			);
-			if (returnResult === 3) {
-				sim.stateCode = STATE_PARKED;
-			} else if (returnResult >= 0) {
-				sim.stateCode = STATE_EVAL_RETURN; // in transit back to lobby
-			} else {
-				sim.stateCode = STATE_PARKED;
-			}
+			dispatchReturn(world, time, sim);
 			return;
 		}
 
 		case STATE_EVAL_RETURN:
-			// In transit back to lobby; arrival handled by dispatchSimArrival
+			if (sim.route.mode !== "carrier") dispatchReturn(world, time, sim);
 			return;
 
 		case STATE_PARKED:
@@ -159,12 +180,7 @@ export function checkEvalCompletionAndAward(
 	time: TimeState,
 	arrivedSim: SimRecord,
 ): void {
-	if (
-		world.gateFlags.evalSimIndex < 0 ||
-		world.gateFlags.evalSimIndex === NO_EVAL_ENTITY
-	) {
-		return;
-	}
+	if (!isEvalPlaced(world)) return;
 	if (time.dayTick >= 800) return;
 
 	// Count sims that arrived at eval zone
@@ -183,20 +199,22 @@ export function checkEvalCompletionAndAward(
 		return;
 	}
 
-	// All 40 arrived — check ledger tier > star_count for tower promotion
+	// All 40 arrived — check ledger tier > star_count for tower promotion.
 	const tierThresholds = [300, 1000, 5000, 10_000, 15_000];
-	const ledgerTotal = Object.values(world.placedObjects).reduce(
-		(sum, obj) => sum + (obj.activationTickCount ?? 0),
-		0,
-	);
+	const ledgerTotal = world.currentPopulation;
 	let tier = 1;
 	for (let index = 0; index < tierThresholds.length; index++) {
-		if (ledgerTotal > tierThresholds[index]) tier = index + 2;
+		if (ledgerTotal >= tierThresholds[index]) tier = index + 2;
 	}
 
 	if (tier > world.starCount) {
 		// Tower promotion: star_count := 6
 		world.starCount = 6;
+		for (const object of Object.values(world.placedObjects)) {
+			if (!CATHEDRAL_FAMILIES.has(object.objectTypeCode)) continue;
+			object.auxValueOrTimer = 2;
+			object.dirtyFlag = 1;
+		}
 	}
 }
 

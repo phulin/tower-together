@@ -27,6 +27,7 @@ export const TILE_WIDTHS: Record<string, number> = {
 	// Entertainment (families 0x12/0x1d)
 	cinema: 31,
 	partyHall: 27,
+	cathedral: 28,
 	// Services
 	recyclingCenter: 25, // virtual two-floor stack placement
 	recyclingCenterUpper: 25, // family 0x14 upper slice
@@ -58,6 +59,7 @@ export const TILE_COSTS: Record<string, number> = {
 	condo: 80_000,
 	cinema: 500_000,
 	partyHall: 100_000,
+	cathedral: 3_000_000,
 	recyclingCenter: 500_000, // combined cost
 	recyclingCenterUpper: 500_000,
 	recyclingCenterLower: 0,
@@ -121,6 +123,7 @@ export const TILE_STAR_REQUIREMENTS: Record<string, number> = {
 	recyclingCenterLower: 3,
 	medical: 3,
 	metro: 4,
+	cathedral: 5,
 };
 
 export function getTileStarRequirement(tileType: string): number {
@@ -180,12 +183,12 @@ export const FAMILY_PARTY_HALL = 29;
 export const FAMILY_PARTY_HALL_LOWER = 30;
 export const FAMILY_CINEMA_STAIRS_UPPER = 34;
 export const FAMILY_CINEMA_STAIRS_LOWER = 35;
+export const FAMILY_CATHEDRAL_ANCHOR = 0x21;
 export const FAMILY_HOUSEKEEPING = 15;
 export const FAMILY_MEDICAL = 13;
-// Cathedral guests occupy 5 family codes (one per cathedral floor slice). All
-// five share the parking-style state machine at 1228:5b5a / 1228:5cd2 and
-// route via `handle_family_parking_outbound_route` (1228:5ddd) /
-// `handle_family_parking_return_route` (1228:5e7e), both passenger-mode.
+// Cathedral placed objects occupy 5 type codes (one per cathedral floor slice).
+// Runtime visitors all use family 0x24 and share the parking-style state
+// machine at 1228:5b5a / 1228:5cd2, routing through 1228:5ddd / 1228:5e7e.
 export const FAMILY_CATHEDRAL_BASE = 0x24;
 export const FAMILY_CATHEDRAL_MAX = 0x28;
 
@@ -212,6 +215,7 @@ export const FAMILY_CODE_TO_TILE: Record<number, string> = {
 	[FAMILY_PARTY_HALL]: "partyHall",
 	[FAMILY_HOUSEKEEPING]: "housekeeping",
 	[FAMILY_MEDICAL]: "medical",
+	[FAMILY_CATHEDRAL_ANCHOR]: "cathedral",
 };
 
 export const LEGACY_VIP_TILE_TO_STANDARD: Record<string, string> = {
