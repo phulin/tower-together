@@ -92,6 +92,20 @@ interface TraceEntry {
 		}
 	>;
 	carriers?: TraceCarrier[];
+	fire?: {
+		flags: number;
+		fire_active: boolean;
+		bomb_active: boolean;
+		security_count: number;
+		eval_entity_idx: number;
+		fire_floor: number;
+		fire_tile: number;
+		fire_start_tick: number;
+		rescue_countdown: number;
+		helicopter_extinguish_pos: number;
+		fire_left_pos: Record<string, number>;
+		fire_right_pos: Record<string, number>;
+	};
 }
 
 // ─── Fixture tile name → sim tile name mapping ─────────────────────────────
@@ -431,6 +445,123 @@ describe("trace: cathedral recovered path", () => {
 			),
 			{ 32: 40 },
 		);
+	});
+});
+
+describe("trace: build_fire (force-armed fire from binary)", () => {
+	// build_fire: tower with security on F1 + offices on F11-13. The emulator
+	// fast-forwards to day 83 / tick 0, writes star_count=3 and security_count=1,
+	// then directly calls trigger_fire_event. Trace dumps capture spread,
+	// helicopter prompt (declined), cleanup, and post-cleanup steady state.
+	it("matches binary fire spread + cleanup", () => {
+		const { spec, trace } = loadFixture("fire");
+		if (trace.length === 0) return;
+
+		const sim = TowerSim.create("trace-fire", "Trace Fire", "perfect-parity");
+		placeTilesFromSpec(sim, spec);
+
+		// Seed time + economy + event state from trace[0] (the binary's
+		// post-force-trigger snapshot). The TS sim has no force-trigger entry
+		// point, so we mimic it by writing fire state directly.
+		const seed = trace[0];
+		const fire = seed.fire;
+		if (!fire) throw new Error("fixture must include fire state");
+
+		const snap = sim.saveState();
+		snap.time.dayCounter = seed.day;
+		snap.time.dayTick = seed.tick;
+		snap.time.daypartIndex = seed.daypart;
+		snap.time.weekendFlag = seed.day % 3 === 2 ? 1 : 0;
+		snap.world.starCount = seed.stars;
+		snap.world.currentPopulation = seed.population;
+		snap.ledger.cashBalance = seed.cash;
+		snap.world.eventState.disableNewsEvents = true;
+		snap.world.eventState.gameStateFlags = fire.flags;
+		snap.world.eventState.fireFloor = fire.fire_floor;
+		snap.world.eventState.fireTile = fire.fire_tile;
+		snap.world.eventState.fireStartTick = fire.fire_start_tick;
+		snap.world.eventState.rescueCountdown = fire.rescue_countdown;
+		snap.world.eventState.helicopterExtinguishPos =
+			fire.helicopter_extinguish_pos;
+		snap.world.eventState.fireLeftPos = snap.world.eventState.fireLeftPos.map(
+			() => 0xffff,
+		);
+		snap.world.eventState.fireRightPos = snap.world.eventState.fireRightPos.map(
+			() => 0xffff,
+		);
+		for (const [k, v] of Object.entries(fire.fire_left_pos)) {
+			snap.world.eventState.fireLeftPos[Number(k)] = Number(v);
+		}
+		for (const [k, v] of Object.entries(fire.fire_right_pos)) {
+			snap.world.eventState.fireRightPos[Number(k)] = Number(v);
+		}
+
+		const seeded = TowerSim.fromSnapshot(snap);
+		// Establish totalTicks baseline so advanceTo can compute relative steps.
+		const baseTotal = seeded.simTime;
+
+		for (let entryIdx = 1; entryIdx < trace.length; entryIdx++) {
+			const entry = trace[entryIdx];
+			// Advance by the dayTick delta from previous entry. The fire fixture
+			// stays on days 83-84, so dayTick deltas + day rollover suffice.
+			const prev = trace[entryIdx - 1];
+			let delta: number;
+			if (entry.day === prev.day) {
+				delta = entry.tick - prev.tick;
+			} else {
+				// rollover: prev.day → entry.day. dayCounter increments at tick 2300.
+				delta = DAY_TICK_MAX - prev.tick + entry.tick;
+			}
+			for (let i = 0; i < delta; i++) seeded.step();
+
+			const ctx = `entry ${entryIdx} day=${entry.day} tick=${entry.tick}`;
+			const ours = seeded.saveState();
+			const ourFire = ours.world.eventState;
+			const refFire = entry.fire;
+			if (!refFire) throw new Error(`trace entry ${entryIdx} missing fire`);
+
+			assert.equal(
+				ourFire.gameStateFlags,
+				refFire.flags,
+				`gameStateFlags at ${ctx}`,
+			);
+			assert.equal(
+				ourFire.fireFloor,
+				refFire.fire_floor,
+				`fireFloor at ${ctx}`,
+			);
+			assert.equal(ourFire.fireTile, refFire.fire_tile, `fireTile at ${ctx}`);
+			assert.equal(
+				ourFire.fireStartTick,
+				refFire.fire_start_tick,
+				`fireStartTick at ${ctx}`,
+			);
+			assert.equal(
+				ourFire.helicopterExtinguishPos,
+				refFire.helicopter_extinguish_pos,
+				`helicopterExtinguishPos at ${ctx}`,
+			);
+			// Per-floor front comparison: collapse 120-entry arrays into the
+			// same {floor: pos} sparse map the emulator dumps (omit 0xffff and 0).
+			const ourLeft: Record<string, number> = {};
+			const ourRight: Record<string, number> = {};
+			for (let f = 0; f < ourFire.fireLeftPos.length; f++) {
+				const v = ourFire.fireLeftPos[f];
+				if (v !== 0xffff) ourLeft[String(f)] = v;
+			}
+			for (let f = 0; f < ourFire.fireRightPos.length; f++) {
+				const v = ourFire.fireRightPos[f];
+				if (v !== 0xffff) ourRight[String(f)] = v;
+			}
+			assert.deepEqual(ourLeft, refFire.fire_left_pos, `fireLeftPos at ${ctx}`);
+			assert.deepEqual(
+				ourRight,
+				refFire.fire_right_pos,
+				`fireRightPos at ${ctx}`,
+			);
+		}
+		// Ensure we actually advanced (sanity check that delta loop ran).
+		assert.ok(seeded.simTime > baseTotal, "test never stepped");
 	});
 });
 

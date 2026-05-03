@@ -1,0 +1,52 @@
+{
+	"floor_extent": {
+		"0": { "left": 80, "right": 140 },
+		"1": { "left": 80, "right": 140 },
+		"2": { "left": 80, "right": 140 },
+		"3": { "left": 80, "right": 140 },
+		"4": { "left": 80, "right": 140 },
+		"5": { "left": 80, "right": 140 },
+		"6": { "left": 80, "right": 140 },
+		"7": { "left": 80, "right": 140 },
+		"8": { "left": 80, "right": 140 },
+		"9": { "left": 80, "right": 140 },
+		"10": { "left": 80, "right": 140 },
+		"11": { "left": 80, "right": 140 },
+		"12": { "left": 80, "right": 140 },
+		"13": { "left": 80, "right": 140 }
+	},
+	"facilities": [
+		{ "type": "security", "floor": 1, "left": 90 },
+		{ "type": "office", "floor": 11, "left": 100 },
+		{ "type": "office", "floor": 11, "left": 109 },
+		{ "type": "office", "floor": 11, "left": 118 },
+		{ "type": "office", "floor": 12, "left": 100 },
+		{ "type": "office", "floor": 12, "left": 109 },
+		{ "type": "office", "floor": 12, "left": 118 },
+		{ "type": "office", "floor": 13, "left": 100 },
+		{ "type": "office", "floor": 13, "left": 109 },
+		{ "type": "office", "floor": 13, "left": 118 },
+		{ "type": "elevator", "bottom": 0, "top": 13, "left": 130, "cars": 2 }
+	],
+	"config": {
+		"dump_interval": 50,
+		"max_ticks": 3500,
+		"start_day": 83,
+		"start_day_tick": 0,
+		"ds_overrides": {
+			"star_count": 3,
+			"cash_balance": 5000000,
+			"daypart_index": 0,
+			"eval_entity_idx": 65535,
+			"security_count": 1
+		},
+		"ds_override_widths": {
+			"cash_balance": 32,
+			"daypart_index": 8
+		},
+		"dialog_responses": {
+			"0xbc4": 1
+		},
+		"force_fire": true
+	}
+}
