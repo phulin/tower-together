@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "vitest";
 import { TowerSim } from "./index";
 import { DAY_TICK_MAX, DAY_TICK_NEW_DAY, NEW_GAME_DAY_TICK } from "./time";
-import { GROUND_Y } from "./world";
+import { GROUND_Y, type WorldState } from "./world";
 
 const fixtureDir = `${fileURLToPath(new URL(".", import.meta.url))}fixtures`;
 
@@ -613,6 +613,49 @@ describe("trace: build_fire (force-armed fire from binary)", () => {
 		}
 		// Ensure we actually advanced (sanity check that delta loop ran).
 		assert.ok(seeded.simTime > baseTotal, "test never stepped");
+
+		// Post-fire coherence smoke check (the "game breaks after day-84 fire"
+		// regression): advance well past cleanup and verify no sim points at
+		// a destroyed facility, cash didn't go negative, and the fire flag
+		// stays cleared. This is what would have caught the original bug.
+		for (let i = 0; i < 200; i++) seeded.step();
+		const post = seeded.saveState();
+		assert.equal(
+			post.world.eventState.gameStateFlags & 8,
+			0,
+			"fire flag re-armed after cleanup",
+		);
+		assert.equal(
+			post.world.eventState.fireRescueHelpers.length,
+			0,
+			"firefighter helpers not drained at cleanup",
+		);
+		for (const sim of post.world.sims) {
+			if (sim.familyCode === 0) continue;
+			// Sims with a non-trivial home pointer must point to a real
+			// placed object. Floor-anchor + home column should resolve.
+			const objY = sim.floorAnchor;
+			let home: WorldState["placedObjects"][string] | null = null;
+			for (const [key, rec] of Object.entries(post.world.placedObjects)) {
+				const [, yStr] = key.split(",");
+				if (Number(yStr) !== objY) continue;
+				if (
+					sim.homeColumn >= rec.leftTileIndex &&
+					sim.homeColumn <= rec.rightTileIndex
+				)
+					home = rec;
+			}
+			if (home === null) continue;
+			assert.equal(
+				home.objectTypeCode,
+				sim.familyCode,
+				`orphaned sim post-fire: family=${sim.familyCode} home=${sim.floorAnchor},${sim.homeColumn}`,
+			);
+		}
+		assert.ok(
+			post.ledger.cashBalance >= 0,
+			`cash went negative post-fire: ${post.ledger.cashBalance}`,
+		);
 	});
 });
 

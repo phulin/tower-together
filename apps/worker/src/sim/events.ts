@@ -1,5 +1,9 @@
 import { applyRemoveElevatorCar } from "./commands";
 import { type LedgerState, removeCashflowFromFamilyResource } from "./ledger";
+import {
+	rebuildParkingCoverage,
+	rebuildParkingDemandLog,
+} from "./sims/parking";
 import type { TimeState } from "./time";
 import {
 	type EventState,
@@ -204,6 +208,15 @@ function applyTeardownSideEffects(
 		if (sim.homeColumn < left || sim.homeColumn > right) continue;
 		sim.familyCode = 0;
 		sim.stateCode = 0;
+	}
+	// Parking ramp coverage rebuild — binary `delete_placed_object_and_release_sidecars`
+	// post-pass at 1200:36ec calls `rebuild_parking_ramp_coverage_and_demand_history`
+	// (11a0:07b5) when the deleted family is 0x2c (ramp) or 0x0b (lobby). TS
+	// doesn't store lobby in placedObjects, so only the ramp branch is
+	// reachable here.
+	if (family === 0x2c) {
+		rebuildParkingCoverage(world);
+		rebuildParkingDemandLog(world);
 	}
 }
 
