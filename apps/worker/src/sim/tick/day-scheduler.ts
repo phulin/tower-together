@@ -74,11 +74,17 @@ export interface SimState {
 // ─── Checkpoint bodies ────────────────────────────────────────────────────────
 
 function checkpointStartOfDay(s: SimState): void {
-	// Binary: update_periodic_facility_progress_override — every 8th day
-	// (dayCounter % 8 === 4), if tower is below 5 stars, enable the override
-	// seed slot. Cleared at midday (0x640).
-	if (s.time.dayCounter % 8 === 4 && s.world.starCount < 5) {
+	// Binary: update_periodic_facility_progress_override (1020:0df8) — every
+	// 8th day (dayCounter % 8 === 4), if tower is below 5 stars, enable the
+	// override seed slot AND set bit 0x10 in g_game_state_flags. Cleared at
+	// midday (0x640) by clear_facility_progress_override (1020:0e1c).
+	if (
+		s.time.dayCounter % 8 === 4 &&
+		s.world.starCount < 5 &&
+		(s.world.eventState.gameStateFlags & 0x10) === 0
+	) {
 		s.world.gateFlags.facilityProgressOverride = 1;
+		s.world.eventState.gameStateFlags |= 0x10;
 	}
 	// Medical daily flag: latched to 1 at day-start when starCount > 2.
 	// Cleared by failed medical trips during the day; gates star 3→4 and 4→5.
@@ -149,8 +155,12 @@ function checkpointEntertainmentPhase1(_s: SimState): void {
 }
 
 function checkpointMidday(_s: SimState): void {
-	// Binary: clear_facility_progress_override — disable override seed slot.
-	_s.world.gateFlags.facilityProgressOverride = 0;
+	// Binary: clear_facility_progress_override (1020:0e1c) — disable override
+	// seed slot AND clear bit 0x10 in g_game_state_flags (gated on bit set).
+	if ((_s.world.eventState.gameStateFlags & 0x10) !== 0) {
+		_s.world.gateFlags.facilityProgressOverride = 0;
+		_s.world.eventState.gameStateFlags &= ~0x10;
+	}
 	// Spec execution order at checkpoint 0x640:
 	// 0. rebuild_type6_facility_records (binary 1208:xxx): restaurant per-cycle
 	//    seeding — reopens restaurants, refills remainingCapacity to 10, resets

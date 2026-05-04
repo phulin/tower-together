@@ -579,11 +579,32 @@ function advanceFireSpread(
 		if (time.dayTick < ignitionTick) continue;
 
 		// Lazy ignition for non-fireFloor entries (the fireFloor itself was
-		// eager-initialized by `tryTriggerFireEvent`).
+		// eager-initialized by `tryTriggerFireEvent`). Binary trace shows
+		// the previous floor's fronts get cleared simultaneously with the
+		// next floor's ignition — fire moves upward one floor at a time,
+		// it doesn't accumulate on multiple floors. Mirror that here.
 		if (es.fireLeftPos[floor] === 0xffff && es.fireRightPos[floor] === 0xffff) {
 			if (time.dayTick === ignitionTick) {
 				es.fireLeftPos[floor] = es.fireTile;
 				es.fireRightPos[floor] = es.fireTile;
+				if (floor > es.fireFloor) {
+					es.fireLeftPos[floor - 1] = 0xffff;
+					es.fireRightPos[floor - 1] = 0xffff;
+					// Re-dispatch firefighter helpers to the new floor
+					// (binary equivalent: reactivate retired helpers when
+					// a new floor ignites). Reset position to the spawn
+					// column (right + 12) so they walk fresh into the
+					// arrival window.
+					const bounds = floorTileBoundsForFloor(world, floor);
+					if (bounds) {
+						for (const helper of es.fireRescueHelpers) {
+							helper.floor = floor;
+							helper.column = bounds.right + 12;
+							helper.status = 0;
+							helper.windupRemaining = 0;
+						}
+					}
+				}
 			}
 			continue;
 		}
@@ -734,11 +755,13 @@ function advanceFireRescueHelper(
 	if (helper.status === 3) return; // done
 
 	if (helper.status === 1) {
-		// Winding up to extinguish; on countdown to 0 fire the asymmetric clear.
+		// Winding up to extinguish; on countdown to 0 fire the asymmetric clear
+		// then retire — binary trace shows each helper extinguishes one front
+		// per spawn cycle and waits for re-dispatch.
 		helper.windupRemaining--;
 		if (helper.windupRemaining <= 0) {
 			extinguishFireFrontAtTile(es, helper.floor, helper.column);
-			helper.status = 0; // resume walking afterward
+			helper.status = 3;
 		}
 		return;
 	}
