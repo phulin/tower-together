@@ -620,6 +620,31 @@ export interface EventState {
 	pendingCarrierEditY: number;
 	/** When true, suppress triggerRandomNewsEvent (trace-test only). */
 	disableNewsEvents?: boolean;
+	/**
+	 * Firefighter rescue helpers, spawned by the binary's
+	 * `initialize_service_response_entities(8)` (1100:033d) when the player
+	 * declines the helicopter rescue prompt. The binary repurposes the slot-0
+	 * occupant of each placed security office; we store an abstract record per
+	 * helper here. Each helper walks right-to-left at one tile per tick on its
+	 * spawn floor; when its column enters the fire's arrival window
+	 * `[left, left+6) ∪ [right+6, right+12)` it pauses for an extinguish-delay
+	 * wind-up then calls the asymmetric front clear. Drained when fire
+	 * resolves (binary `initialize_service_response_entities(0)`).
+	 */
+	fireRescueHelpers: FireRescueHelper[];
+}
+
+export interface FireRescueHelper {
+	/** Internal floor (binary index) the helper patrols. Set on spawn from the
+	 * helper's home security office's floor. */
+	floor: number;
+	/** Current tile column. Decrements toward 0 each `walk_delay` tick. */
+	column: number;
+	/** Helper status: 0=walking, 1=winding-up extinguish, 2=relocating to
+	 * another floor with active fire, 3=idle/done. */
+	status: number;
+	/** Wind-up countdown (ticks remaining until front clear fires). */
+	windupRemaining: number;
 }
 
 export function createEventState(): EventState {
@@ -642,6 +667,7 @@ export function createEventState(): EventState {
 		bombSearchScanTile: -1,
 		pendingCarrierEditColumn: -1,
 		pendingCarrierEditY: -1,
+		fireRescueHelpers: [],
 	};
 }
 

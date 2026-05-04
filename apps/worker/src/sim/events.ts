@@ -526,6 +526,12 @@ export function tickFireEvent(
 	// Normal fire spread
 	advanceFireSpread(world, ledger, time);
 
+	// Firefighter rescue helpers walk + asymmetric clear (binary
+	// `firefighter_sim_per_tick_handler` 1100:0bd3). Helpers are spawned by
+	// the prompt-decline path; if no helpers exist yet (e.g. before the
+	// player has answered) this is a no-op.
+	tickFireRescueHelpers(world, time);
+
 	// Check helicopter prompt timing
 	if (
 		es.helicopterExtinguishPos === 0 &&
@@ -539,12 +545,13 @@ export function tickFireEvent(
 		});
 	}
 
-	// Check resolution. Binary uses exact-equals at 10d0:0049 — `dayTick >=`
-	// would fire every tick after 2000, but the binary cleanup happens once
-	// at the boundary and then fast-forwards dayTick to 1500 (so the comparison
-	// never re-triggers). Using `>=` here corrupts cleanup state if the boundary
-	// is missed; using `===` matches the binary edge.
-	if (isFireExhausted(es) || time.dayTick === 2000) {
+	// Check resolution. Binary uses exact-equals at 10d0:0049 — cleanup
+	// happens once at dayTick==2000 and fast-forwards to 1500. The
+	// `isFireExhausted` shortcut a previous TS revision added is NOT in the
+	// binary; the fire stays active until the timed cleanup so that
+	// firefighter helpers + vertical delay ignitions on later floors can
+	// still play out. Removing the shortcut matches binary parity.
+	if (time.dayTick === 2000) {
 		resolveFireEvent(world, time);
 	}
 }
@@ -561,7 +568,12 @@ function advanceFireSpread(
 	// ignitions on un-burned floors are governed by the per-floor array
 	// state, not by the live-floor scan. Match that.
 	for (let floor = 0; floor < GRID_HEIGHT; floor++) {
-		const floorDelay = Math.abs(floor - es.fireFloor) * FIRE_VERTICAL_DELAY;
+		// Vertical spread propagates only upward in the binary trace —
+		// fire on internal floor 11 ignites floor 12 at +80 ticks but
+		// never floor 10 (the lobby/ground floor). Skip floors below the
+		// fire floor.
+		if (floor < es.fireFloor) continue;
+		const floorDelay = (floor - es.fireFloor) * FIRE_VERTICAL_DELAY;
 		const ignitionTick = es.fireStartTick + floorDelay;
 
 		if (time.dayTick < ignitionTick) continue;
@@ -646,14 +658,6 @@ function advanceHelicopterExtinguish(world: WorldState, time: TimeState): void {
 	}
 }
 
-function isFireExhausted(es: EventState): boolean {
-	for (let floor = 0; floor < GRID_HEIGHT; floor++) {
-		if (es.fireLeftPos[floor] !== 0xffff) return false;
-		if (es.fireRightPos[floor] !== 0xffff) return false;
-	}
-	return true;
-}
-
 function resolveFireEvent(world: WorldState, time: TimeState): void {
 	const es = world.eventState;
 	es.gameStateFlags &= ~8; // clear fire flag
@@ -661,9 +665,154 @@ function resolveFireEvent(world: WorldState, time: TimeState): void {
 	es.fireRightPos.fill(0xffff);
 	es.helicopterExtinguishPos = 0;
 	es.rescueCountdown = 0;
+	// `initialize_service_response_entities(0)` — drain firefighter helpers
+	// when fire resolves (binary `finalize_fire_event_cleanup` 10f0:02a1).
+	es.fireRescueHelpers = [];
 	if (time.dayTick < 1500) {
 		(time as { dayTick: number }).dayTick = 1500;
 		(time as { daypartIndex: number }).daypartIndex = Math.floor(1500 / 400);
+	}
+}
+
+// ─── Firefighter rescue helpers (`initialize_service_response_entities(8)` /
+// `firefighter_sim_per_tick_handler`) ─────────────────────────────────────────
+//
+// Tuning words at DS:0xe640/0xe64e (loaded from runtime resource): walk_delay=1,
+// extinguish_delay=5. Spawn count = number of placed FAMILY_SECURITY anchors
+// (one helper per security office). Movement: right-to-left from each office's
+// rightmost tile, one tile per `walk_delay` tick on the office's floor.
+//
+// Arrival predicate (`FUN_10f0_076c`): tile in the **inner** half of either
+// front — `[left, left+6) ∪ [right+6, right+12)`. On arrival the helper waits
+// `extinguish_delay` ticks then calls the asymmetric clear (10f0:07d8 wider
+// predicate `[left, left+12) ∪ [right, right+12)`).
+
+const FIRE_WALK_DELAY = 1; // DS:0xe640 (g_tuning_fire_walk_delay)
+const FIRE_EXTINGUISH_DELAY = 5; // DS:0xe64e (g_tuning_fire_extinguish_delay)
+
+/**
+ * Spawn one firefighter helper per placed FAMILY_SECURITY anchor. Mirrors
+ * the binary's `initialize_service_response_entities(8)` (1100:033d) which
+ * walks the security-office table and seeds the slot-0 occupant. Idempotent
+ * — replaces any existing helpers (a fresh decline starts a new patrol).
+ */
+function spawnFireRescueHelpers(world: WorldState): void {
+	const helpers: WorldState["eventState"]["fireRescueHelpers"] = [];
+	for (const [key, record] of Object.entries(world.placedObjects)) {
+		if (record.objectTypeCode !== 0x0e) continue; // FAMILY_SECURITY
+		const [, yStr] = key.split(",");
+		const officeFloor = GRID_HEIGHT - 1 - Number(yStr);
+		// Spawn off the right edge of the office's floor and walk left.
+		// Binary observation: helpers start at `floor_right_extent + 12` (one
+		// fire spread-window past the rightmost cell), so they walk INTO the
+		// fire's right arrival window `[right+6, right+12)` from outside the
+		// building. With walk_delay=1, extinguish_delay=5 this exactly
+		// reproduces the trace's tick-36 clear on a [80,140) floor extent.
+		const bounds = floorTileBoundsForFloor(world, officeFloor);
+		const spawnColumn = bounds ? bounds.right + 12 : record.rightTileIndex;
+		helpers.push({
+			floor: officeFloor,
+			column: spawnColumn,
+			status: 0,
+			windupRemaining: 0,
+		});
+	}
+	world.eventState.fireRescueHelpers = helpers;
+}
+
+/**
+ * Per-tick advance for one firefighter helper. Mirrors
+ * `firefighter_sim_per_tick_handler` (1100:0bd3) walk + arrival + wind-up
+ * + asymmetric clear.
+ */
+function advanceFireRescueHelper(
+	world: WorldState,
+	helper: WorldState["eventState"]["fireRescueHelpers"][number],
+	time: TimeState,
+): void {
+	const es = world.eventState;
+	if (helper.status === 3) return; // done
+
+	if (helper.status === 1) {
+		// Winding up to extinguish; on countdown to 0 fire the asymmetric clear.
+		helper.windupRemaining--;
+		if (helper.windupRemaining <= 0) {
+			extinguishFireFrontAtTile(es, helper.floor, helper.column);
+			helper.status = 0; // resume walking afterward
+		}
+		return;
+	}
+
+	// Walking. Move one tile per FIRE_WALK_DELAY ticks. With walk_delay=1
+	// we move every tick. (When walk_delay > 1 we'd need a per-helper
+	// cadence counter, but the binary's tuning is 1 here.)
+	if (time.dayTick % FIRE_WALK_DELAY !== 0) return;
+
+	const left = es.fireLeftPos[helper.floor];
+	const right = es.fireRightPos[helper.floor];
+	const leftActive = left !== 0xffff;
+	const rightActive = right !== 0xffff;
+	if (!leftActive && !rightActive) {
+		// No active front on this floor — try to relocate. Look for any other
+		// floor with a live front and move there. (Binary
+		// `move_bomb_search_response_sim_to_floor`.) When no fire is active
+		// anywhere right now, just idle this tick — helper stays alive until
+		// fire resolves so it can reactivate when a vertical-delay ignition
+		// brings up a new floor.
+		for (let f = 0; f < GRID_HEIGHT; f++) {
+			if (es.fireLeftPos[f] !== 0xffff || es.fireRightPos[f] !== 0xffff) {
+				if (f !== helper.floor) {
+					helper.floor = f;
+					// Reset column to spawn-side for the new floor so the
+					// arrival predicate has room to engage as fronts spread.
+					const bounds = floorTileBoundsForFloor(world, f);
+					helper.column = bounds ? bounds.right + 12 : helper.column;
+				}
+				return;
+			}
+		}
+		return;
+	}
+
+	// Arrival predicate (FUN_10f0_076c): inner half of either front
+	const inLeftWindow =
+		leftActive && helper.column >= left && helper.column < left + 6;
+	const inRightWindow =
+		rightActive && helper.column >= right + 6 && helper.column < right + 12;
+	if (inLeftWindow || inRightWindow) {
+		helper.status = 1;
+		helper.windupRemaining = FIRE_EXTINGUISH_DELAY;
+		return;
+	}
+
+	if (helper.column > 0) {
+		helper.column -= 1;
+	}
+}
+
+/**
+ * Asymmetric front clear at a tile (`extinguish_fire_front_at_tile` 10f0:07d8).
+ * Wider window than the arrival predicate: `[left, left+12)` for left front,
+ * `[right, right+12)` for right front. Either match writes 0xffff.
+ */
+function extinguishFireFrontAtTile(
+	es: EventState,
+	floor: number,
+	tile: number,
+): void {
+	const left = es.fireLeftPos[floor];
+	if (left !== 0xffff && tile >= left && tile < left + 12) {
+		es.fireLeftPos[floor] = 0xffff;
+	}
+	const right = es.fireRightPos[floor];
+	if (right !== 0xffff && tile >= right && tile < right + 12) {
+		es.fireRightPos[floor] = 0xffff;
+	}
+}
+
+function tickFireRescueHelpers(world: WorldState, time: TimeState): void {
+	for (const helper of world.eventState.fireRescueHelpers) {
+		advanceFireRescueHelper(world, helper, time);
 	}
 }
 
@@ -766,9 +915,17 @@ export function handlePromptResponse(
 	}
 
 	if (promptId.startsWith("fire_")) {
-		if (!accepted) return true; // declined helicopter — fire spreads naturally
 		const es = world.eventState;
 		if ((es.gameStateFlags & 8) === 0) return true; // fire already resolved
+		if (!accepted) {
+			// Decline path mirrors the binary's `resolve_fire_rescue_followup`
+			// (10f0:0149) IDOK branch: spawn one firefighter helper per placed
+			// security office (`initialize_service_response_entities(8)`). The
+			// helpers walk right-to-left from each office's column and clear
+			// fire fronts on arrival.
+			spawnFireRescueHelpers(world);
+			return true;
+		}
 		const bounds = floorTileBoundsForFloor(world, es.fireFloor);
 		if (bounds && ledger.cashBalance >= HELICOPTER_RESCUE_COST) {
 			ledger.cashBalance -= HELICOPTER_RESCUE_COST;

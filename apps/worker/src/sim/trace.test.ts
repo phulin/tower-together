@@ -500,6 +500,14 @@ describe("trace: build_fire (force-armed fire from binary)", () => {
 		// Establish totalTicks baseline so advanceTo can compute relative steps.
 		const baseTotal = seeded.simTime;
 
+		// At tick fireStartTick + helicopter_prompt_delay = 2 the binary fires
+		// the rescue dialog and (in this fixture) records IDOK = decline. The
+		// test bypasses the worker prompt queue (we seeded fire already active),
+		// so simulate the decline by submitting a prompt_response at that tick
+		// — that triggers spawnFireRescueHelpers like the binary does.
+		const declineAtTick = fire.fire_start_tick + 2;
+		let declineSubmitted = false;
+
 		for (let entryIdx = 1; entryIdx < trace.length; entryIdx++) {
 			const entry = trace[entryIdx];
 			// Advance by the dayTick delta from previous entry. The fire fixture
@@ -512,7 +520,20 @@ describe("trace: build_fire (force-armed fire from binary)", () => {
 				// rollover: prev.day → entry.day. dayCounter increments at tick 2300.
 				delta = DAY_TICK_MAX - prev.tick + entry.tick;
 			}
-			for (let i = 0; i < delta; i++) seeded.step();
+			for (let i = 0; i < delta; i++) {
+				seeded.step();
+				if (
+					!declineSubmitted &&
+					seeded.saveState().time.dayTick >= declineAtTick
+				) {
+					seeded.submitCommand({
+						type: "prompt_response",
+						promptId: `fire_${seed.day}`,
+						accepted: false,
+					});
+					declineSubmitted = true;
+				}
+			}
 
 			const ctx = `entry ${entryIdx} day=${entry.day} tick=${entry.tick}`;
 			const ours = seeded.saveState();
