@@ -28,16 +28,9 @@ import {
 } from "../world";
 import { findObjectForSim, findSiblingSims, simKey } from "./population";
 import {
-	CATHEDRAL_FAMILIES,
 	ENTITY_POPULATION_BY_TYPE,
 	EVALUATABLE_FAMILIES,
 	HOTEL_FAMILIES,
-	STATE_ACTIVE,
-	STATE_COMMUTE,
-	STATE_DEPARTURE,
-	STATE_EVAL_OUTBOUND,
-	STATE_PARKED,
-	STATE_VENUE_TRIP,
 	UNIT_STATUS_CONDO_OCCUPIED,
 	UNIT_STATUS_HOTEL_SOLD_OUT,
 	UNIT_STATUS_OFFICE_OCCUPIED,
@@ -368,31 +361,11 @@ function simStressLevel(
 	return currentTripStressLevel(world, time, sim);
 }
 
-function shouldEmitDistanceFeedback(sim: SimRecord): boolean {
-	switch (sim.familyCode) {
-		case FAMILY_HOTEL_SINGLE:
-		case FAMILY_HOTEL_TWIN:
-		case FAMILY_HOTEL_SUITE:
-			return sim.stateCode !== STATE_VENUE_TRIP;
-		case FAMILY_OFFICE:
-			return (
-				sim.stateCode === STATE_COMMUTE || sim.stateCode === STATE_DEPARTURE
-			);
-		case FAMILY_CONDO:
-			return sim.stateCode === STATE_ACTIVE || sim.stateCode === STATE_PARKED;
-		default:
-			if (CATHEDRAL_FAMILIES.has(sim.familyCode)) {
-				return sim.stateCode === STATE_EVAL_OUTBOUND;
-			}
-			return false;
-	}
-}
-
 function distanceFeedbackPenalty(
-	sourceFloor: number,
-	destinationFloor: number,
+	routeHeightMetric: number,
+	targetHeightMetric: number,
 ): number {
-	const delta = Math.abs(destinationFloor - sourceFloor);
+	const delta = Math.abs(routeHeightMetric - targetHeightMetric);
 	if (delta >= 125) return 60;
 	if (delta > 79) return 30;
 	return 0;
@@ -401,13 +374,15 @@ function distanceFeedbackPenalty(
 export function maybeApplyDistanceFeedback(
 	_world: WorldState,
 	sim: SimRecord,
-	sourceFloor: number,
-	destinationFloor: number,
+	routeHeightMetric: number,
+	targetHeightMetric: number,
 	canApplyForRouteKind: boolean,
 ): void {
 	if (!canApplyForRouteKind) return;
-	if (!shouldEmitDistanceFeedback(sim)) return;
-	const penalty = distanceFeedbackPenalty(sourceFloor, destinationFloor);
+	const penalty = distanceFeedbackPenalty(
+		routeHeightMetric,
+		targetHeightMetric,
+	);
 	if (penalty === 0) return;
 	addDelayToCurrentSim(sim, penalty);
 }

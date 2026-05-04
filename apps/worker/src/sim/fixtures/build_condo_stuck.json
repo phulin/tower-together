@@ -1,0 +1,16 @@
+{
+	"config": { "maxTicks": 10000 },
+	"floor_extent": {
+		"0": { "left": 80, "right": 240 },
+		"1": { "left": 80, "right": 240 },
+		"2": { "left": 80, "right": 240 },
+		"3": { "left": 80, "right": 240 }
+	},
+	"facilities": [
+		{ "type": "condo", "floor": 3, "left": 100 },
+		{ "type": "condo", "floor": 3, "left": 116 },
+		{ "type": "condo", "floor": 3, "left": 132 },
+		{ "type": "condo", "floor": 3, "left": 148 },
+		{ "type": "elevator", "bottom": 0, "top": 3, "left": 200, "cars": 1 }
+	]
+}

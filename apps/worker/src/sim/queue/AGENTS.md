@@ -26,10 +26,10 @@ One binary function per file; each file header carries its `SEG:OFFSET name`.
 `dispatchCarrierCarArrivals` (1218:07a6), `dispatchDestinationQueueEntries` (1218:0883). Gated on `dwellCounter == 5`. Phase 7: invokes `dispatchSimArrival` inline per unloaded slot, matching the binary's direct call into `dispatch_object_family_*_state_handler`.
 
 ### `process-travel.ts`
-`processUnitTravelQueue` (1218:0351), `assignRequestToRuntimeRoute` (1218:0d4e). Phase 5b: transfer-floor failure at `clearSimRouteById` strips the 0x40 in-transit bit via `setSimInTransit(sim, false)` (gated to `dispatch_sim_behavior` families) so the sim's family refresh handler re-dispatches on the next stride. Phase 7: `boardWaitingRoutes` applies `rebaseSimElapsedFromClock` + `reduceElapsedForLobbyBoarding` inline for non-service carriers, replacing the old `onBoarding` callback.
+`processUnitTravelQueue` (1218:0351), `assignRequestToRuntimeRoute` (1218:0d4e). Phase 5b: transfer-floor failure at `clearSimRouteById` strips the 0x40 in-transit bit via `setSimInTransit(sim, false)` (gated to `dispatch_sim_behavior` families) so the sim's family refresh handler re-dispatches on the next stride. `assignRequestToRuntimeRoute` invokes `accumulateElapsedDelayIntoCurrentSim` for non-service carriers, matching the binary's assignment-time stress accumulation.
 
 ### `resolve.ts`
-`resolveSimRouteBetweenFloors` (1218:0000). Return codes -1/0/1/2/3; same-floor returns 3. Phase 5b: every `sim.route = ...` write is paired with a state-bit update — `setSimInTransit(sim, true)` for segment/carrier, `setSimWaiting(sim, true)` for queue-full — gated to the `dispatch_sim_behavior` families (hotel / office / condo / restaurant / fast-food / retail).
+`resolveSimRouteBetweenFloors` (1218:0000). Return codes -1/0/1/2/3; same-floor returns 3. Applies binary long-distance feedback from route height metric to target height metric on segment/carrier success when the caller's `emitDistanceFeedback` flag is set. Phase 5b: every `sim.route = ...` write is paired with a state-bit update — `setSimInTransit(sim, true)` for segment/carrier, `setSimWaiting(sim, true)` for queue-full — gated to the `dispatch_sim_behavior` families (hotel / office / condo / restaurant / fast-food / retail).
 
 ### `route-record.test.ts`
 Unit test for the size-40 silent wrap quirk.

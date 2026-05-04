@@ -26,7 +26,7 @@ Family 33: real `gateObjectFamilyRecyclingCenterLowerStateHandler` (1228:4d5b) +
 Family 36: gate (1228:5b5a) + dispatch (1228:5cd2). Re-exports the demand-log helpers; state-machine gate/dispatch are TODO stubs.
 
 ### `entertainment.ts`
-Family 18/29 guest: real `gateEntertainmentGuestState` (1228:5231) + `dispatchEntertainmentGuestState` (1228:53ad) + four inner helper functions (phase consumption, linked-half routing, service acquisition, release/return).
+Family 18/29 guest: real `gateEntertainmentGuestState` (1228:5231) + `dispatchEntertainmentGuestState` (1228:53ad) + four inner helper functions (phase consumption, linked-half routing, service acquisition, release/return). Resolver calls pass the entertainment link anchor as the target height metric so split sub-records match binary distance-feedback thresholds.
 
 ### `housekeeping.ts`
 Family 15: real `gateHousekeepingRoomClaimState` (1228:5f39) + `updateObjectFamilyHousekeepingConnectionState` (1228:602b) + `activateObjectFamilyHousekeepingConnectionState` (1228:6480). Delegates to `processHousekeepingSim` / `handleHousekeepingSimArrival`. HK uses low-valued states (0..4) that don't overlap the 0x20/0x40 bits.

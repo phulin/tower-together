@@ -278,11 +278,12 @@ export function resolveSimRouteBetweenFloors(
 		// With per-tile placement (extent_minus_one = 0 for a 2-floor stair tile),
 		// (flags >> 1) + 1 == 1, so each leg advances exactly one floor.
 		if (emitDistanceFeedback) {
+			const segment = world.specialLinks[route.id];
 			maybeApplyDistanceFeedback(
 				world,
 				sim,
-				sourceFloor,
-				destinationFloor,
+				segment?.heightMetric ?? targetHeightMetric,
+				targetHeightMetric,
 				true,
 			);
 		}
@@ -368,9 +369,9 @@ export function resolveSimRouteBetweenFloors(
 		maybeApplyDistanceFeedback(
 			world,
 			sim,
-			sourceFloor,
-			destinationFloor,
-			carrier.carrierMode !== 2,
+			carrier.column,
+			targetHeightMetric,
+			carrier.carrierMode !== 0,
 		);
 	}
 	if (time) sim.lastDemandTick = time.dayTick;

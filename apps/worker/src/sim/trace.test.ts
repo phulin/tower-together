@@ -384,6 +384,7 @@ const FIXTURE_NAMES = [
 	"commercial",
 	"condo",
 	"condo_office_elevator",
+	"condo_stuck",
 	"dense_hotel",
 	"dense_office",
 	"elevator",

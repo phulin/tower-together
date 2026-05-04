@@ -101,6 +101,13 @@ function findEntertainmentLink(
 	return null;
 }
 
+function entertainmentTargetHeightMetric(
+	link: EntertainmentLinkRecord | null,
+	sim: SimRecord,
+): number {
+	return link?.ownerSubtypeIndex ?? sim.homeColumn;
+}
+
 /**
  * Binary `try_consume_entertainment_phase_budget` @ 1188:0ce9.
  *
@@ -398,7 +405,10 @@ function handleEntertainmentPhaseConsumption(
 		venueFloor,
 		directionFlag,
 		time,
-		{ emitDistanceFeedback: isFreshDispatch },
+		{
+			emitDistanceFeedback: isFreshDispatch,
+			targetHeightMetric: entertainmentTargetHeightMetric(link, sim),
+		},
 	);
 
 	switch (result) {
@@ -457,7 +467,10 @@ function handleEntertainmentLinkedHalfRouting(
 		LOBBY_FLOOR,
 		directionFlag,
 		time,
-		{ emitDistanceFeedback: isFreshDispatch },
+		{
+			emitDistanceFeedback: isFreshDispatch,
+			targetHeightMetric: entertainmentTargetHeightMetric(link, sim),
+		},
 	);
 
 	switch (result) {
@@ -591,7 +604,10 @@ function handleEntertainmentServiceAcquisition(
 		destFloor,
 		directionFlag,
 		time,
-		{ emitDistanceFeedback: isFreshDispatch },
+		{
+			emitDistanceFeedback: isFreshDispatch,
+			targetHeightMetric: entertainmentTargetHeightMetric(link, sim),
+		},
 	);
 
 	switch (result) {
@@ -647,6 +663,7 @@ function handleEntertainmentServiceReleaseReturn(
 	time: TimeState,
 	sim: SimRecord,
 ): void {
+	const link = findEntertainmentLink(world, sim);
 	if (sim.stateCode === ENT_STATE_VENUE_DWELL) {
 		// Binary `release_commercial_venue_slot` (11b0:0fae). On entry:
 		//   - slotIdx < 0 (sentinel 0xff/0xfe): skip the venue table and write
@@ -688,7 +705,10 @@ function handleEntertainmentServiceReleaseReturn(
 		LOBBY_FLOOR,
 		directionFlag,
 		time,
-		{ emitDistanceFeedback: isFreshDispatch },
+		{
+			emitDistanceFeedback: isFreshDispatch,
+			targetHeightMetric: entertainmentTargetHeightMetric(link, sim),
+		},
 	);
 
 	switch (result) {

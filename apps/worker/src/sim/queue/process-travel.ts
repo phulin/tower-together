@@ -27,9 +27,8 @@ import {
 	FAMILY_RETAIL,
 } from "../resources";
 import { setSimInTransit } from "../sim-access/state-bits";
+import { accumulateElapsedDelayIntoCurrentSim } from "../stress/accumulate-elapsed";
 import { addDelayToCurrentSim } from "../stress/add-delay";
-import { reduceElapsedForLobbyBoarding } from "../stress/lobby-reduction";
-import { rebaseSimElapsedFromClock } from "../stress/rebase-elapsed";
 
 const STATE_BIT_FAMILIES = new Set<number>([
 	FAMILY_HOTEL_SINGLE,
@@ -54,16 +53,15 @@ import type { RouteRequestRing } from "./route-record";
 const REQUEUE_FAILURE_DELAY = 0;
 
 /**
- * Binary: at boarding, `assign_request_to_runtime_route` (1218:0d4e)
- * invokes `accumulate_elapsed_delay_into_current_sim` for the boarding
- * sim, which rebases `elapsed_packed` from the clock and applies the
- * lobby discount. Promoted into the inline boarding path in Phase 7
- * (replacing the old `onBoarding` callback).
+ * Binary `assign_request_to_runtime_route` (1218:0d4e) invokes
+ * `accumulate_elapsed_delay_into_current_sim` for the assigned sim,
+ * which rebases `elapsed_packed` from the clock and applies the lobby
+ * discount for the request source floor.
  *
  * Only non-service carriers (mode != 2) perform the rebase; service
  * carriers do not update sim stress.
  */
-function applyBoardingStressUpdate(
+function applyAssignmentStressUpdate(
 	world: WorldState,
 	time: TimeState,
 	carrier: CarrierRecord,
@@ -77,8 +75,7 @@ function applyBoardingStressUpdate(
 			routeId,
 	);
 	if (!sim) return;
-	rebaseSimElapsedFromClock(sim, time);
-	reduceElapsedForLobbyBoarding(sim, sourceFloor, world);
+	accumulateElapsedDelayIntoCurrentSim(world, time, sim, sourceFloor);
 }
 
 function getScheduleIndex(time: TimeState): number {
@@ -130,6 +127,7 @@ function clearSimRouteById(world: WorldState, simId: string): void {
  */
 export function assignRequestToRuntimeRoute(
 	world: WorldState,
+	time: TimeState,
 	carrier: CarrierRecord,
 	car: CarrierCar,
 	route: CarrierRecord["pendingRoutes"][number],
@@ -168,6 +166,15 @@ export function assignRequestToRuntimeRoute(
 		route.assignedCarIndex = carIndex;
 	}
 	const stored = addRouteSlot(carrier, car, route);
+	if (stored) {
+		applyAssignmentStressUpdate(
+			world,
+			time,
+			carrier,
+			route.simId,
+			route.sourceFloor,
+		);
+	}
 	if (stored && carIndex !== undefined && car.dwellCounter === 0) {
 		recomputeCarTargetAndDirection(carrier, car, carIndex);
 	}
@@ -269,7 +276,9 @@ function drainFloorQueueForCar(
 				continue;
 			}
 			assignmentAttempts += 1;
-			if (assignRequestToRuntimeRoute(world, carrier, car, route, carIndex)) {
+			if (
+				assignRequestToRuntimeRoute(world, time, carrier, car, route, carIndex)
+			) {
 				remainingSlots -= 1;
 			}
 		}
@@ -292,13 +301,10 @@ function drainFloorQueueForCar(
 
 // Boarding-only half. Mirrors the per-slot board step inside
 // process_unit_travel_queue (1218:0351) — moves riders from active-route
-// slots (populated by drainFloorQueueForCar) onto the car. Phase 7: the
-// `onBoarding` callback has been inlined — the binary's boarding path
-// invokes `accumulate_elapsed_delay_into_current_sim` (stress rebase +
-// lobby discount) directly inside this loop.
+// slots (populated by drainFloorQueueForCar) onto the car. Stress
+// accumulation belongs to `assignRequestToRuntimeRoute`, matching binary
+// `assign_request_to_runtime_route` (1218:0d4e), not this board step.
 function boardWaitingRoutes(
-	world: WorldState,
-	time: TimeState,
 	carrier: CarrierRecord,
 	car: CarrierCar,
 	carIndex: number,
@@ -319,15 +325,6 @@ function boardWaitingRoutes(
 		route.boarded = true;
 		slot.boarded = true;
 		car.assignedCount += 1;
-		// Binary: 1218:0d4e assign_request_to_runtime_route invokes
-		// accumulate_elapsed_delay_into_current_sim at boarding time.
-		applyBoardingStressUpdate(
-			world,
-			time,
-			carrier,
-			route.simId,
-			route.sourceFloor,
-		);
 		const destinationSlot = floorToSlot(carrier, route.destinationFloor);
 		if (destinationSlot >= 0) {
 			const prev = car.destinationCountByFloor[destinationSlot] ?? 0;
@@ -368,7 +365,7 @@ export function processUnitTravelQueue(
 	if ((car.dwellCounter & 1) !== 0) {
 		drainFloorQueueForCar(world, carrier, car, carIndex, time);
 	}
-	boardWaitingRoutes(world, time, carrier, car, carIndex);
+	boardWaitingRoutes(carrier, car, carIndex);
 	if (
 		car.dwellCounter === 1 &&
 		time.dayCounter === 1 &&
@@ -391,7 +388,7 @@ export function processUnitTravelQueue(
 	) {
 		recomputeCarTargetAndDirection(carrier, car, carIndex);
 		drainFloorQueueForCar(world, carrier, car, carIndex, time);
-		boardWaitingRoutes(world, time, carrier, car, carIndex);
+		boardWaitingRoutes(carrier, car, carIndex);
 	}
 	if (
 		car.dwellCounter === 0 &&
