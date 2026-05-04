@@ -1,15 +1,17 @@
 // 11b8:12d2 isFloorSpanWalkableForLocalRoute
-// 11b8:1392 isFloorSpanWalkableForExpressRoute
+// 11b8:1392 isFloorSpanWalkableForHousekeepingRoute
 // 11b8:0ccf isFloorWithinSpecialLinkSpan
 //
 // Geometric walkability / membership checks used by the route scorer and
 // the selector in `select-candidate.ts`.
 //
-// Note: `isFloorSpanWalkableForExpressRoute` was previously named
-// `isFloorSpanWalkableForHousekeepingRoute` in the TS tree. The rename
-// matches the binary map; behavior is unchanged.
-// TODO(11b8:1392): verify the behavior matches binary express-route gate —
-// current TS implementation only checks the stairs bit (&2) for each floor.
+// Bit semantics of `floorWalkabilityFlags[floor]`:
+//   bit 0x1 = escalator present on floor
+//   bit 0x2 = stairs present on floor
+// The local-route gate is escalator-tolerant (bit 0x1, ≤2-floor stair gap).
+// The housekeeping-route gate demands continuous stairs (bit 0x2, no gap),
+// and is invoked only from the !is_passenger_route branch in
+// select_best_route_candidate (object family 0x0f, janitors).
 
 import type { WorldState } from "../world";
 
@@ -22,7 +24,9 @@ export function isFloorSpanWalkableForLocalRoute(
 	const upper = Math.max(fromFloor, toFloor);
 	if (upper - lower >= 7) return false;
 	let seenGap = false;
-	for (let floor = lower; floor <= upper; floor++) {
+	// Binary 11b8:12d2 iterates [lower, upper) — the target floor is not
+	// flag-tested here.
+	for (let floor = lower; floor < upper; floor++) {
 		const flags = world.floorWalkabilityFlags[floor] ?? 0;
 		if (flags === 0) return false;
 		if ((flags & 1) === 0) {
@@ -33,7 +37,7 @@ export function isFloorSpanWalkableForLocalRoute(
 	return true;
 }
 
-export function isFloorSpanWalkableForExpressRoute(
+export function isFloorSpanWalkableForHousekeepingRoute(
 	world: WorldState,
 	fromFloor: number,
 	toFloor: number,
@@ -41,7 +45,7 @@ export function isFloorSpanWalkableForExpressRoute(
 	if (Math.abs(toFloor - fromFloor) >= 7) return false;
 	// Binary quirk: the counter increments once per floor and fails when >= 3,
 	// so only up to 3 intermediate floors (exclusive of the target) are checked.
-	// Floors beyond the 3rd are not validated for bit 1.
+	// Floors beyond the 3rd are not validated for bit 2 (stairs).
 	let count = 0;
 	if (fromFloor < toFloor) {
 		for (let floor = fromFloor; floor < toFloor; floor++) {

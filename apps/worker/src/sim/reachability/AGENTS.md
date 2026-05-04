@@ -11,7 +11,7 @@ One binary function per file; each file header carries its `SEG:OFFSET name`.
 `rebuildSpecialLinkRouteRecords` (11b8:06a4), `scanSpecialLinkSpanBound` (11b8:0763).
 
 ### `span-checks.ts`
-`isFloorSpanWalkableForLocalRoute` (11b8:12d2), `isFloorSpanWalkableForExpressRoute` (11b8:1392), `isFloorWithinSpecialLinkSpan` (11b8:0ccf).
+`isFloorSpanWalkableForLocalRoute` (11b8:12d2), `isFloorSpanWalkableForHousekeepingRoute` (11b8:1392), `isFloorWithinSpecialLinkSpan` (11b8:0ccf).
 
 ### `mask-tests.ts`
 `testCarrierTransferReachability` (11b8:0f33), `testSpecialLinkTransferReachability` (11b8:0fe6), `chooseTransferFloorFromCarrierReachability` (11b8:0e41).

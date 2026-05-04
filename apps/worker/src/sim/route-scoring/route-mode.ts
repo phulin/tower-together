@@ -3,7 +3,7 @@
 // Binary: reads a pixel-column height metric from the facility subtype record
 // for the current sim. The value is passed as `targetHeightMetric` into the
 // route scorers (score_carrier_transfer_route, score_local_route_segment,
-// score_express_route_segment) via select_best_route_candidate.
+// score_housekeeping_route_segment) via select_best_route_candidate.
 //
 // The Ghidra-assigned name "get_current_sim_route_mode" is misleading — the
 // return value is not a mode enum but a height reference used for distance

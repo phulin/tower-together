@@ -1,10 +1,9 @@
 // 11b8:18fb scoreLocalRouteSegment
+// 11b8:19a8 scoreHousekeepingRouteSegment
 //
-// Cost for a direct stairs/escalator segment. Also hosts
-// `scoreHousekeepingRouteSegment`, which rejects non-stairs segments.
-// The binary has a separate `scoreExpressRouteSegment` at 11b8:19a8
-// (see `score-express.ts`) — the housekeeping scorer below is
-// structurally similar to express-mode scoring (stairs-only gate).
+// Cost for a direct stairs/escalator segment, plus the stairs-only
+// housekeeping variant (called from the !is_passenger_route branch in
+// select_best_route_candidate).
 
 import type { WorldState } from "../world";
 import { ROUTE_COST_INFINITE, STAIRS_ROUTE_EXTRA_COST } from "./constants";
@@ -26,13 +25,6 @@ export function scoreLocalRouteSegment(
 	return isStairs ? distance + STAIRS_ROUTE_EXTRA_COST : distance;
 }
 
-/**
- * TODO(11b8): the binary separates "express walk" (escalator-only) and
- * "housekeeping walk" (stairs-only) into distinct scorers. The current
- * TS only has this stairs-only path; it lives here alongside the local
- * scorer for now, and should split into `score-express.ts` if/when the
- * behavior actually diverges.
- */
 export function scoreHousekeepingRouteSegment(
 	segment: WorldState["specialLinks"][number],
 	fromFloor: number,

@@ -279,9 +279,9 @@ Addresses use the segmented `SEG:OFFSET` form.
 | `11b8:0be2`   | `score_special_link_route`             | Cost for stairs/escalator link.                            |
 | `11b8:168e`   | `score_carrier_transfer_route`         | Cost for elevator with transfer stop.                      |
 | `11b8:18fb`   | `score_local_route_segment`            | Cost for same-segment walk.                                |
-| `11b8:19a8`   | `score_express_route_segment`          | Cost for express elevator segment.                         |
-| `11b8:12d2`   | `is_floor_span_walkable_for_local_route`  | Geometric gate.                                         |
-| `11b8:1392`   | `is_floor_span_walkable_for_express_route`| Geometric gate.                                         |
+| `11b8:19a8`   | `score_housekeeping_route_segment`     | Cost for stairs-only segment (housekeeping path).          |
+| `11b8:12d2`   | `is_floor_span_walkable_for_local_route`       | Geometric gate (escalator-tolerant).               |
+| `11b8:1392`   | `is_floor_span_walkable_for_housekeeping_route`| Geometric gate (continuous stairs).                |
 | `11b8:0ccf`   | `is_floor_within_special_link_span`    | Membership test.                                           |
 | `11b8:0f33`   | `test_carrier_transfer_reachability`   | Bit test on reachability mask.                             |
 | `11b8:0fe6`   | `test_special_link_transfer_reachability` | Same, for peer link records.                           |
@@ -685,8 +685,7 @@ apps/worker/src/sim/
 │   └── mask-tests.ts                // 11b8:0f33, 0fe6, 0e41
 ├── route-scoring/
 │   ├── select-candidate.ts          // 11b8:1484  selectBestRouteCandidate
-│   ├── score-local.ts               // 11b8:18fb
-│   ├── score-express.ts             // 11b8:19a8
+│   ├── score-local.ts               // 11b8:18fb, 19a8
 │   ├── score-carrier.ts             // 11b8:168e
 │   ├── score-special-link.ts        // 11b8:0be2
 │   └── route-mode.ts                // 11b8:1422

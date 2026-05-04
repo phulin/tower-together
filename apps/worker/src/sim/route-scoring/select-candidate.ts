@@ -9,7 +9,7 @@
 // the segment cost).
 
 import {
-	isFloorSpanWalkableForExpressRoute,
+	isFloorSpanWalkableForHousekeepingRoute,
 	isFloorSpanWalkableForLocalRoute,
 } from "../reachability/span-checks";
 import { MAX_SPECIAL_LINK_RECORDS, type WorldState } from "../world";
@@ -46,12 +46,12 @@ export function selectBestRouteCandidate(
 	let bestIndex = -1;
 
 	if (!preferLocalMode) {
-		// Housekeeping/express path. Single 64-segment scan gated by express
+		// Housekeeping path. Single 64-segment scan gated by continuous-stairs
 		// walkability; on success it returns immediately, otherwise falls
 		// straight through to the carrier scan.
 		if (
 			delta === 1 ||
-			isFloorSpanWalkableForExpressRoute(world, fromFloor, toFloor)
+			isFloorSpanWalkableForHousekeepingRoute(world, fromFloor, toFloor)
 		) {
 			for (
 				let segmentIndex = 0;
