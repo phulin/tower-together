@@ -659,6 +659,87 @@ describe("trace: build_fire (force-armed fire from binary)", () => {
 	});
 });
 
+describe("trace: build_fire_accept (helicopter rescue accepted)", () => {
+	// Companion to build_fire that accepts the helicopter prompt (DialogBox
+	// id 0xbc4 returns 2). The binary deducts $500K, sets
+	// `helicopter_extinguish_pos = bounds.right - 12`, and the extinguish
+	// loop sweeps fronts on the helicopter side until cleanup. Trace[0] is
+	// pre-decline; later entries show post-cleanup state with extinguish_pos
+	// non-zero and cash dropped by the rescue cost.
+	it("deducts rescue cost and extinguishes via helicopter", () => {
+		const { spec, trace } = loadFixture("fire_accept");
+		if (trace.length === 0) return;
+		const sim = TowerSim.create(
+			"trace-fire-accept",
+			"Trace Fire Accept",
+			"perfect-parity",
+		);
+		placeTilesFromSpec(sim, spec);
+		const seed = trace[0];
+		const fire = seed.fire;
+		if (!fire) throw new Error("fixture must include fire state");
+		const snap = sim.saveState();
+		snap.time.dayCounter = seed.day;
+		snap.time.dayTick = seed.tick;
+		snap.time.daypartIndex = seed.daypart;
+		snap.world.starCount = seed.stars;
+		snap.ledger.cashBalance = seed.cash;
+		snap.world.eventState.disableNewsEvents = true;
+		snap.world.eventState.gameStateFlags = fire.flags;
+		snap.world.eventState.fireFloor = fire.fire_floor;
+		snap.world.eventState.fireTile = fire.fire_tile;
+		snap.world.eventState.fireStartTick = fire.fire_start_tick;
+		snap.world.eventState.fireLeftPos = snap.world.eventState.fireLeftPos.map(
+			() => 0xffff,
+		);
+		snap.world.eventState.fireRightPos = snap.world.eventState.fireRightPos.map(
+			() => 0xffff,
+		);
+		for (const [k, v] of Object.entries(fire.fire_left_pos))
+			snap.world.eventState.fireLeftPos[Number(k)] = Number(v);
+		for (const [k, v] of Object.entries(fire.fire_right_pos))
+			snap.world.eventState.fireRightPos[Number(k)] = Number(v);
+		const seeded = TowerSim.fromSnapshot(snap);
+
+		// Step until the helicopter prompt fires; submit ACCEPTED.
+		const acceptAt = fire.fire_start_tick + 2;
+		let accepted = false;
+		const cashBefore = seeded.cash;
+		for (let i = 0; i < 250 && !accepted; i++) {
+			seeded.step();
+			if (seeded.saveState().time.dayTick >= acceptAt) {
+				seeded.submitCommand({
+					type: "prompt_response",
+					promptId: `fire_${seed.day}`,
+					accepted: true,
+				});
+				accepted = true;
+			}
+		}
+		assert.ok(accepted, "never submitted accept");
+		// Helicopter rescue cost = $500,000 deducted immediately.
+		assert.equal(
+			cashBefore - seeded.cash,
+			500_000,
+			`expected $500K rescue deduction, got ${cashBefore - seeded.cash}`,
+		);
+		// helicopterExtinguishPos was seeded to a positive column (bounds.right - 12).
+		assert.ok(
+			seeded.saveState().world.eventState.helicopterExtinguishPos > 0,
+			"helicopterExtinguishPos not set on accept",
+		);
+
+		// Run through cleanup, then verify fire resolved and post-fire state coherent.
+		for (let i = 0; i < 2500; i++) seeded.step();
+		const post = seeded.saveState();
+		assert.equal(
+			post.world.eventState.gameStateFlags & 8,
+			0,
+			"fire flag still set after helicopter extinguish + cleanup",
+		);
+	});
+});
+
 describe.each(FIXTURE_NAMES)("trace: build_%s", (fixtureName) => {
 	const { spec, trace: rawTrace } = loadFixture(fixtureName);
 	const trace = dropTerminalDuplicateDump(rawTrace);

@@ -1,5 +1,6 @@
 import { applyRemoveElevatorCar } from "./commands";
 import { type LedgerState, removeCashflowFromFamilyResource } from "./ledger";
+import { releaseServiceRequest } from "./sims";
 import {
 	rebuildParkingCoverage,
 	rebuildParkingDemandLog,
@@ -57,17 +58,12 @@ function floorTileBoundsForFloor(
 	// `deleteObjectCoveringFloorTile` below to remove cells as fire eats
 	// structure, so subsequent reads see the shrunk extent.
 	//
-	// NOTE(fire-parity): the binary's early front-clearing (e.g. right cleared
-	// at exactly tick fireStartTick+36 with no spread cadence event) is NOT
-	// driven by bounds shrinkage. It comes from firefighter-rescue helper sims
-	// spawned by `initialize_service_response_entities(8)` (1100:033d) on
-	// rescue decline. Their per-tick handler `firefighter_sim_per_tick_handler`
-	// (1100:0bd3) walks them toward the fire; on arrival they call
-	// `extinguish_fire_front_at_tile` (10f0:07d8) which asymmetrically clears
-	// `g_fire_left_pos[floor]` iff `left <= tilePos < left+12` and
-	// `g_fire_right_pos[floor]` iff `right <= tilePos < right+12`. TS does
-	// not yet model these helpers — that's the next big feature for fire
-	// parity. Until then, fronts only clear via the bounds check here.
+	// Firefighter-rescue helper sims (modeled in `tickFireRescueHelpers`
+	// below) extinguish fronts via `extinguish_fire_front_at_tile` on the
+	// decline path. The bounds check here is the secondary clear (when fire
+	// outruns the floor's structural extent) and the cell-deletion side
+	// effect of `deleteObjectCoveringFloorTile` shrinks bounds as fire eats
+	// through structure.
 	let left = Number.POSITIVE_INFINITY;
 	let right = Number.NEGATIVE_INFINITY;
 	const objY = GRID_HEIGHT - 1 - floor;
@@ -147,9 +143,13 @@ const FIRE_INDESTRUCTIBLE_FAMILIES: ReadonlySet<number> = new Set([
  *     reset linked EntertainmentLinkRecord halves to the binary's `0xfe`
  *     "free" sentinel (`free_entertainment_link_record` 1188:0ee5).
  *
- * Punch list still not wired: parking ramp coverage rebuild (0x0b/0x2c),
- * carrier-sidecar global-handle release (`FUN_1190_0884`), and the
- * per-tile occupant zero pass for office service-request entries.
+ * Carrier-sidecar GlobalAlloc/GlobalFree handle release (`FUN_1190_0884`,
+ * key table at DS:0xe5a8/count DS:0xbc78) is intentionally a no-op in TS:
+ * the binary uses the table to track Win16 GMEM handles for hotel/cinema/
+ * party-hall/condo cash-flow link records, but TS holds those records
+ * directly in `world.sidecars` (released by the
+ * commercial/entertainment paths above) without any handle-table layer
+ * to clean up.
  */
 const FIRE_COMMERCIAL_FAMILIES: ReadonlySet<number> = new Set([
 	0x06, 0x0a, 0x0c,
@@ -197,15 +197,20 @@ function applyTeardownSideEffects(
 	}
 	// Sim eviction sweep: find sims with home pointer landing inside the
 	// destroyed record and zero them. The binary's `update_sim_tile_span`
-	// is family-keyed (only sweeps sims of matching family on the affected
-	// floor); we mirror that to avoid evicting unrelated sims that might
-	// happen to be standing on the same floor in transit.
+	// (1228:1018) second pass writes `sim[+4]=0; sim[+6]=0`. For office
+	// (0x07) and hotel families (0x03/0x04/0x05) the first pass also calls
+	// `release_service_request_entry` (11a0:0489) — we mirror that here so
+	// post-fire dispatch loops don't try to fulfill requests against a
+	// destroyed facility.
 	const left = record.leftTileIndex;
 	const right = record.rightTileIndex;
+	const releasesService =
+		family === 0x07 || family === 0x03 || family === 0x04 || family === 0x05;
 	for (const sim of world.sims) {
 		if (sim.familyCode !== family) continue;
 		if (sim.floorAnchor !== objY) continue;
 		if (sim.homeColumn < left || sim.homeColumn > right) continue;
+		if (releasesService) releaseServiceRequest(world, sim);
 		sim.familyCode = 0;
 		sim.stateCode = 0;
 	}
@@ -647,7 +652,7 @@ function advanceFireSpread(
 					if (bounds) {
 						for (const helper of es.fireRescueHelpers) {
 							helper.floor = floor;
-							helper.column = bounds.right + 12;
+							helper.column = bounds.right + 11;
 							helper.status = 0;
 							helper.windupRemaining = 0;
 						}
@@ -778,7 +783,10 @@ function spawnFireRescueHelpers(world: WorldState): void {
 		// building. With walk_delay=1, extinguish_delay=5 this exactly
 		// reproduces the trace's tick-36 clear on a [80,140) floor extent.
 		const bounds = floorTileBoundsForFloor(world, officeFloor);
-		const spawnColumn = bounds ? bounds.right + 12 : record.rightTileIndex;
+		// Spawn one tile inside `bounds.right + 12` so the helper's first walk
+		// tick lands it at `right + 12` exactly, matching the binary's tick-36
+		// clear timing on the canonical [80,140) floor extent.
+		const spawnColumn = bounds ? bounds.right + 11 : record.rightTileIndex;
 		helpers.push({
 			floor: officeFloor,
 			column: spawnColumn,
@@ -837,7 +845,7 @@ function advanceFireRescueHelper(
 					// Reset column to spawn-side for the new floor so the
 					// arrival predicate has room to engage as fronts spread.
 					const bounds = floorTileBoundsForFloor(world, f);
-					helper.column = bounds ? bounds.right + 12 : helper.column;
+					helper.column = bounds ? bounds.right + 11 : helper.column;
 				}
 				return;
 			}
