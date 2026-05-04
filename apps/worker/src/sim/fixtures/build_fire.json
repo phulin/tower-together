@@ -29,24 +29,20 @@
 		{ "type": "elevator", "bottom": 0, "top": 13, "left": 130, "cars": 2 }
 	],
 	"config": {
-		"dump_interval": 50,
-		"max_ticks": 3500,
-		"start_day": 83,
-		"start_day_tick": 0,
-		"ds_overrides": {
-			"star_count": 3,
-			"cash_balance": 5000000,
-			"daypart_index": 0,
-			"eval_entity_idx": 65535,
-			"security_count": 1
+		"dumpInterval": 50,
+		"maxTicks": 3500,
+		"startDay": 83,
+		"startDayTick": 0,
+		"overrides": {
+			"starCount": 3,
+			"cashBalance": 5000000,
+			"daypartIndex": 0,
+			"evalEntityIdx": -1,
+			"securityCount": 1
 		},
-		"ds_override_widths": {
-			"cash_balance": 32,
-			"daypart_index": 8
+		"prompts": {
+			"fireRescue": "decline"
 		},
-		"dialog_responses": {
-			"0xbc4": 1
-		},
-		"force_fire": true
+		"forceFire": true
 	}
 }
