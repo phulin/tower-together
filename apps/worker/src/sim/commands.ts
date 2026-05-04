@@ -22,6 +22,9 @@ import {
 	FAMILY_HOTEL_SINGLE,
 	FAMILY_HOTEL_SUITE,
 	FAMILY_HOTEL_TWIN,
+	FAMILY_METRO_BOTTOM,
+	FAMILY_METRO_MIDDLE,
+	FAMILY_METRO_TOP,
 	FAMILY_OFFICE,
 	FAMILY_PARTY_HALL,
 	FAMILY_PARTY_HALL_LOWER,
@@ -117,6 +120,13 @@ export type SimCommand =
 const INFRASTRUCTURE_TILES = new Set(["floor", "stairs"]);
 const CATHEDRAL_ANCHOR_LOGICAL_FLOOR = 103;
 const CATHEDRAL_SLICE_COUNT = 5;
+const METRO_STACK_TILE_TYPE = "metro";
+const METRO_STACK_HEIGHT = 3;
+const METRO_FAMILIES = [
+	FAMILY_METRO_TOP,
+	FAMILY_METRO_MIDDLE,
+	FAMILY_METRO_BOTTOM,
+] as const;
 
 // Families whose rentLevel initialises to 1; all others initialise to 4 (no payout).
 const VARIANT_INIT_ONE_FAMILIES = new Set([3, 4, 5, 7, 9, FAMILY_RETAIL]);
@@ -278,6 +288,122 @@ function placeCathedralStack(
 	runGlobalRebuilds(world, ledger);
 
 	return { accepted: true, patch, economyChanged: cost > 0 };
+}
+
+function placeMetroStationStack(
+	x: number,
+	y: number,
+	world: WorldState,
+	ledger: LedgerState,
+	freeBuild: boolean,
+	time: { daypartIndex: number },
+): CommandResult {
+	const tileWidth = TILE_WIDTHS.metro ?? 30;
+	const cost = TILE_COSTS.metro ?? 0;
+	if (world.gateFlags.metroStationFloorIndex >= 0) {
+		return { accepted: false, reason: "Metro station already placed" };
+	}
+	if (y < UNDERGROUND_Y) {
+		return {
+			accepted: false,
+			reason: "Metro station may only be placed underground",
+		};
+	}
+	if (
+		y + METRO_STACK_HEIGHT - 1 >= world.height ||
+		x + tileWidth - 1 >= world.width
+	) {
+		return { accepted: false, reason: "Out of bounds" };
+	}
+
+	const stackCells = new Set<string>();
+	for (let rowOffset = 0; rowOffset < METRO_STACK_HEIGHT; rowOffset++) {
+		const rowY = y + rowOffset;
+		for (let dx = 0; dx < tileWidth; dx++) {
+			stackCells.add(`${x + dx},${rowY}`);
+		}
+	}
+
+	const floorToRemove: string[] = [];
+	for (const key of stackCells) {
+		if (world.cellToAnchor[key]) {
+			return { accepted: false, reason: "Cell already occupied" };
+		}
+		const existing = world.cells[key];
+		if (!existing) continue;
+		if (existing === "floor") {
+			floorToRemove.push(key);
+		} else {
+			return { accepted: false, reason: "Cell already occupied" };
+		}
+	}
+
+	for (let rowOffset = 0; rowOffset < METRO_STACK_HEIGHT; rowOffset++) {
+		const rowY = y + rowOffset;
+		for (let dx = 0; dx < tileWidth; dx++) {
+			const supportY = rowY - 1;
+			const supportKey = `${x + dx},${supportY}`;
+			if (
+				supportY < 0 ||
+				(!world.cells[supportKey] && !stackCells.has(supportKey))
+			) {
+				return { accepted: false, reason: "No support" };
+			}
+		}
+	}
+
+	const initialStatus = time.daypartIndex < 4 ? 0 : 1;
+	const shouldCharge = !freeBuild;
+	if (shouldCharge && cost > ledger.cashBalance) {
+		return { accepted: false, reason: "Insufficient funds" };
+	}
+
+	for (const key of floorToRemove) delete world.cells[key];
+
+	const visualAnchorKey = `${x},${y}`;
+	const patch: CellPatch[] = [];
+	for (let rowOffset = 0; rowOffset < METRO_STACK_HEIGHT; rowOffset++) {
+		const rowY = y + rowOffset;
+		const objectKey = `${x},${rowY}`;
+		for (let dx = 0; dx < tileWidth; dx++) {
+			const key = `${x + dx},${rowY}`;
+			world.cells[key] = METRO_STACK_TILE_TYPE;
+			if (key !== visualAnchorKey) world.cellToAnchor[key] = visualAnchorKey;
+			patch.push({
+				x: x + dx,
+				y: rowY,
+				tileType: METRO_STACK_TILE_TYPE,
+				isAnchor: key === visualAnchorKey,
+			});
+		}
+		world.placedObjects[objectKey] = {
+			leftTileIndex: x,
+			rightTileIndex: x + tileWidth - 1,
+			objectTypeCode: METRO_FAMILIES[rowOffset],
+			unitStatus: initialStatus,
+			linkedRecordIndex: -1,
+			auxValueOrTimer: 0,
+			evalLevel: 0xff,
+			evalScore: -1,
+			dirtyFlag: 1,
+			occupiedFlag: 1,
+			activationTickCount: 0,
+			rentLevel: 4,
+			housekeepingClaimedFlag: 0,
+			vipFlag: false,
+		};
+	}
+
+	if (shouldCharge) ledger.cashBalance -= cost;
+	world.gateFlags.metroPlaced = 1;
+	world.gateFlags.metroStationFloorIndex = yToFloor(y);
+
+	for (let rowOffset = 0; rowOffset < METRO_STACK_HEIGHT; rowOffset++) {
+		fillRowGaps(y + rowOffset, world, patch);
+	}
+	runGlobalRebuilds(world, ledger);
+
+	return { accepted: true, patch, economyChanged: shouldCharge && cost > 0 };
 }
 
 /** Allocate a sidecar for tiles that need one. Returns index or −1. */
@@ -594,12 +720,18 @@ export function runGlobalRebuilds(
 ): void {
 	world.gateFlags.officePlaced = 0;
 	world.gateFlags.metroPlaced = 0;
+	world.gateFlags.metroStationFloorIndex = -1;
 	world.gateFlags.securityPlaced = 0;
 	world.gateFlags.vipSuiteFloor = 0xffff;
 	world.gateFlags.recyclingCenterCount = 0;
-	for (const object of Object.values(world.placedObjects)) {
+	for (const [key, object] of Object.entries(world.placedObjects)) {
 		if (object.objectTypeCode === FAMILY_OFFICE)
 			world.gateFlags.officePlaced = 1;
+		if (object.objectTypeCode === FAMILY_METRO_TOP) {
+			world.gateFlags.metroPlaced = 1;
+			const [, y] = key.split(",").map(Number);
+			world.gateFlags.metroStationFloorIndex = yToFloor(y);
+		}
 		if (object.objectTypeCode === FAMILY_SECURITY)
 			world.gateFlags.securityPlaced = 1;
 		if (object.objectTypeCode === FAMILY_RECYCLING_CENTER_UPPER)
@@ -1014,6 +1146,26 @@ export function handlePlaceTile(
 		};
 	}
 
+	if (normalizedTileType === METRO_STACK_TILE_TYPE) {
+		return placeMetroStationStack(x, y, world, ledger, freeBuild, time);
+	}
+
+	const metroFloor = world.gateFlags.metroStationFloorIndex;
+	const targetFloor = yToFloor(y);
+	if (
+		metroFloor >= 0 &&
+		(normalizedTileType === "cinema" ||
+			normalizedTileType === "partyHall" ||
+			normalizedTileType === "recyclingCenter" ||
+			normalizedTileType === "recyclingCenterUpper") &&
+		targetFloor < metroFloor
+	) {
+		return {
+			accepted: false,
+			reason: "This facility cannot be placed below the metro station",
+		};
+	}
+
 	if (normalizedTileType === "cinema" || normalizedTileType === "partyHall") {
 		return placeEntertainmentVenue(
 			x,
@@ -1054,6 +1206,15 @@ export function handlePlaceTile(
 	) {
 		const patch: CellPatch[] = [];
 		const overlayWidth = TILE_WIDTHS[normalizedTileType] ?? 1;
+		if (
+			world.gateFlags.metroStationFloorIndex >= 0 &&
+			yToFloor(y) < world.gateFlags.metroStationFloorIndex - 1
+		) {
+			return {
+				accepted: false,
+				reason: "Elevator cannot extend below the metro station",
+			};
+		}
 		if (x + overlayWidth - 1 >= world.width) {
 			return { accepted: false, reason: "Out of bounds" };
 		}
@@ -1462,11 +1623,14 @@ export function handleRemoveTile(
 	const tileWidth = TILE_WIDTHS[tileType] ?? 1;
 	const isTwoFloor = tileType === "cinema" || tileType === "partyHall";
 	const isCathedral = tileType === "cathedral";
+	const isMetro = tileType === METRO_STACK_TILE_TYPE;
 	const occupiedRows = isCathedral
 		? Array.from({ length: CATHEDRAL_SLICE_COUNT }, (_, i) => ay + i)
-		: isTwoFloor
-			? [ay, ay + 1]
-			: [ay];
+		: isMetro
+			? Array.from({ length: METRO_STACK_HEIGHT }, (_, i) => ay + i)
+			: isTwoFloor
+				? [ay, ay + 1]
+				: [ay];
 	// "Above" for turnToFloor considers the row above the topmost occupied row.
 	const topRow = occupiedRows[0];
 	// The lowest occupied row decides neighbour-in-row (left/right) logic and
@@ -1501,7 +1665,7 @@ export function handleRemoveTile(
 	// share one sidecar; collect all records referencing the same sidecar
 	// within the placement footprint before deleting.
 	const subRecordKeys =
-		isTwoFloor || isCathedral
+		isTwoFloor || isCathedral || isMetro
 			? Object.keys(world.placedObjects).filter((key) => {
 					const [kx, ky] = key.split(",").map(Number);
 					return (
@@ -1531,6 +1695,10 @@ export function handleRemoveTile(
 		delete world.placedObjects[key];
 	}
 	if (isCathedral) world.gateFlags.evalSimIndex = 0xffff;
+	if (isMetro) {
+		world.gateFlags.metroPlaced = 0;
+		world.gateFlags.metroStationFloorIndex = -1;
+	}
 
 	cleanupSimsForRemovedTile(world, ax, ay);
 

@@ -328,6 +328,8 @@ export interface GateFlags {
 	unknownC198: number;
 	/** Set when a metro object is placed. */
 	metroPlaced: number;
+	/** Top/anchor floor index of the metro stack; -1 when absent. */
+	metroStationFloorIndex: number;
 	/** Set when an office object is placed. */
 	officePlaced: number;
 	/** Set when a security-office (family 0x0e) object is placed. 2→3 gate. */
@@ -359,6 +361,7 @@ export function createGateFlags(): GateFlags {
 	return {
 		unknownC198: 0xffffffff,
 		metroPlaced: 0,
+		metroStationFloorIndex: -1,
 		officePlaced: 0,
 		securityPlaced: 0,
 		officeServiceOk: 0,

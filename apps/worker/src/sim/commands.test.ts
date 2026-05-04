@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { tickVipSpecialVisitor } from "./events";
 import { TowerSim } from "./index";
+import {
+	FAMILY_METRO_BOTTOM,
+	FAMILY_METRO_MIDDLE,
+	FAMILY_METRO_TOP,
+	TILE_COSTS,
+} from "./resources";
+import { createTimeState } from "./time";
 
 const GROUND_Y = 109;
 
@@ -144,6 +152,118 @@ describe("underground placement restrictions", () => {
 			true,
 		);
 		expect(placeAt(sim, 140, UNDERGROUND_Y, "elevator").accepted).toBe(true);
+	});
+});
+
+describe("metro station placement", () => {
+	function placeMetro(sim: TowerSim, x = 100, topY = GROUND_Y + 1) {
+		return sim.submitCommand({
+			type: "place_tile",
+			x,
+			y: topY,
+			tileType: "metro",
+		});
+	}
+
+	it("places a singleton 30-tile, three-floor stack with the top floor as anchor", () => {
+		const sim = makeSimWithLobbyStrip(90, 150);
+		const result = placeMetro(sim);
+		expect(result.accepted).toBe(true);
+		expect(result.patch).toHaveLength(90);
+
+		const snap = sim.saveState();
+		expect(snap.world.gateFlags.metroPlaced).toBe(1);
+		expect(snap.world.gateFlags.metroStationFloorIndex).toBe(9);
+		expect(snap.world.placedObjects["100,110"]?.objectTypeCode).toBe(
+			FAMILY_METRO_TOP,
+		);
+		expect(snap.world.placedObjects["100,111"]?.objectTypeCode).toBe(
+			FAMILY_METRO_MIDDLE,
+		);
+		expect(snap.world.placedObjects["100,112"]?.objectTypeCode).toBe(
+			FAMILY_METRO_BOTTOM,
+		);
+		expect(snap.world.cellToAnchor["129,112"]).toBe("100,110");
+	});
+
+	it("rejects a second metro and resets the anchor floor when removed", () => {
+		const sim = makeSimWithLobbyStrip(90, 180);
+		expect(placeMetro(sim, 100).accepted).toBe(true);
+		const second = placeMetro(sim, 140);
+		expect(second.accepted).toBe(false);
+		expect(second.reason).toMatch(/already placed/i);
+
+		const removed = sim.submitCommand({
+			type: "remove_tile",
+			x: 110,
+			y: GROUND_Y + 2,
+		});
+		expect(removed.accepted).toBe(true);
+		const snap = sim.saveState();
+		expect(snap.world.gateFlags.metroPlaced).toBe(0);
+		expect(snap.world.gateFlags.metroStationFloorIndex).toBe(-1);
+		expect(snap.world.placedObjects["100,110"]).toBeUndefined();
+		expect(snap.world.placedObjects["100,111"]).toBeUndefined();
+		expect(snap.world.placedObjects["100,112"]).toBeUndefined();
+	});
+
+	it("charges regardless of daypart and seeds the binary status word", () => {
+		const paid = makeSimWithLobbyStrip(90, 150);
+		const paidSnap = paid.saveState();
+		paidSnap.time.daypartIndex = 4;
+		const paidSim = TowerSim.fromSnapshot(paidSnap);
+		const paidBefore = paidSim.cash;
+		expect(placeMetro(paidSim).accepted).toBe(true);
+		expect(paidSim.cash).toBe(paidBefore - TILE_COSTS.metro);
+		expect(paidSim.saveState().world.placedObjects["100,110"]?.unitStatus).toBe(
+			1,
+		);
+
+		const early = makeSimWithLobbyStrip(90, 150);
+		const earlySnap = early.saveState();
+		earlySnap.time.dayTick = 1200;
+		earlySnap.time.daypartIndex = 3;
+		const earlySim = TowerSim.fromSnapshot(earlySnap);
+		const earlyBefore = earlySim.cash;
+		expect(placeMetro(earlySim).accepted).toBe(true);
+		expect(earlySim.cash).toBe(earlyBefore - TILE_COSTS.metro);
+		expect(
+			earlySim.saveState().world.placedObjects["100,110"]?.unitStatus,
+		).toBe(0);
+	});
+
+	it("blocks carrier extension below the metro middle floor", () => {
+		const sim = makeSimWithLobbyStrip(90, 150);
+		expect(placeMetro(sim, 100).accepted).toBe(true);
+		expect(placeElevatorSegment(sim, 140, -1).accepted).toBe(true);
+		expect(placeElevatorSegment(sim, 140, -2).accepted).toBe(true);
+		const blocked = placeElevatorSegment(sim, 140, -3);
+		expect(blocked.accepted).toBe(false);
+		expect(blocked.reason).toMatch(/below the metro/i);
+	});
+
+	it("toggles the metro display variant and emits the arrival event", () => {
+		const base = makeSimWithLobbyStrip(90, 150);
+		const baseSnap = base.saveState();
+		baseSnap.time.daypartIndex = 3;
+		const sim = TowerSim.fromSnapshot(baseSnap);
+		expect(placeMetro(sim).accepted).toBe(true);
+		const snap = sim.saveState();
+		snap.world.rngState = 54;
+		snap.world.rngCallCount = 0;
+		const time = createTimeState();
+		time.dayTick = 0xf1;
+		time.daypartIndex = 3;
+
+		tickVipSpecialVisitor(snap.world, time);
+
+		expect(snap.world.placedObjects["100,110"]?.unitStatus).toBe(2);
+		expect(snap.world.placedObjects["100,111"]?.unitStatus).toBe(2);
+		expect(snap.world.placedObjects["100,112"]?.unitStatus).toBe(2);
+		expect(snap.world.pendingNotifications).toContainEqual({
+			kind: "event",
+			message: "metro_train_arrival",
+		});
 	});
 });
 

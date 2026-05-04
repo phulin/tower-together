@@ -46,10 +46,11 @@ Construction-action dispatcher (1200:0d58) for the metro tool:
 1. **Singleton check.** If `g_metro_station_floor_index >= 0`, push error
    code `0x11` and abort. The dispatcher enforces this *before* the
    placement helper runs.
-2. Calls `place_metro_station_stack(type=0x1f, floor=cursorFloor, xL, xR,
-   ?, 0, freeFlag = !pre_day_4())` where `pre_day_4()` returns 1 when
-   `g_daypart_index < 4`. So before the first opening (daypart 0..3) the
-   build is **free**; from daypart 4 onward the player is charged.
+2. Calls `place_metro_station_stack(type=0x1f, variant=0,
+   status = !pre_day_4(), floor=cursorFloor, xL, xR)`, where
+   `pre_day_4()` returns 1 when `g_daypart_index < 4`. This daypart-derived
+   value is the placed-object `+0xc` status word: `0` before daypart 4 and
+   `1` from daypart 4 onward. It is **not** the construction skip-cost flag.
 3. On success the dispatcher writes `g_metro_station_floor_index = anchor floor`.
 
 `place_metro_station_stack` (1200:2159) then:
@@ -68,10 +69,10 @@ Construction-action dispatcher (1200:0d58) for the metro tool:
    - anchor − 1   → type `0x20`
    - anchor − 2   → type `0x21`
 
-When the dispatcher's `freeFlag` is 1 (daypart < 4), `place_object_on_floor`
-skips both `check_construction_funds_available` and
-`charge_single_floor_construction_cost`. After daypart 4 the metro costs
-`3 × 30 × YEN[0]` plus `YEN[0x1f] + YEN[0x20] + YEN[0x21]` (= 0).
+The helper passes literal `0` as the final `place_object_on_floor`
+`skipCost` argument for all three rows. Therefore metro construction always
+runs the funds/charge path; it is not free during early dayparts. Its binary
+cost is `3 × 30 × YEN[0]` plus `YEN[0x1f] + YEN[0x20] + YEN[0x21]` (= 0).
 
 The −8..−1 floor range is **not** enforced inside
 `place_metro_station_stack` or the floor-class handler (1200:315c only
@@ -99,6 +100,7 @@ byte on every record is the redraw-dirty flag.
 The scheduler-tick hook (`trigger_vip_special_visitor`, 11f0:0273) runs
 when:
 
+- `day_tick > 0xf0`,
 - `daypart_index < 4`,
 - `g_metro_station_floor_index >= 0`,
 - `(g_game_state_flags & 9) == 0` (no fire bit `0x1`, no bomb bit `0x8`),

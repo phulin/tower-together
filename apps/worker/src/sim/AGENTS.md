@@ -29,7 +29,7 @@ Cathedral guest sims (families 0x24–0x28) — activation, dispatch, return rou
 Per-tick star-advancement check (`tryAdvanceStarCount`) plus `addToPopulationBucket` helper — tier-from-ledger uses `world.currentPopulation` (binary g_primary_family_ledger_total). Fired at the top of `carrierTick`, mirroring binary FUN_1098_03ab.
 
 ### `resources.ts`
-Compile-time constants: tile widths/costs/types, family mappings, binary-aligned build-menu star requirements, income/expense tables, route delay constants.
+Compile-time constants: tile widths/costs/types, family mappings including metro stack rows, binary-aligned build-menu star requirements, income/expense tables, route delay constants.
 
 ### `ledger.ts`
 Three-ledger economy: cash balance, population/income/expense ledgers, expense sweep, 3-day rollover.
@@ -38,7 +38,7 @@ Three-ledger economy: cash balance, population/income/expense ledgers, expense s
 Re-export shim: `SimState` bundle, `runCheckpoints()`, and `runSimulationDayScheduler()` now live in `tick/day-scheduler.ts`.
 
 ### `commands.ts`
-`handlePlaceTile()` / `handleRemoveTile()` — validation (including star-tier build unlocks), mutation, sidecar management, global rebuilds. Also: elevator config commands — `handleSetElevatorDwellDelay`, `handleSetElevatorWaitingCarResponse`, `handleSetElevatorHomeFloor`, `handleToggleElevatorFloorStop` — and `handleSetCinemaMoviePool` (cycles cinema selector within classic/new pool, charges $150k/$300k, resets `linkAgeCounter`).
+`handlePlaceTile()` / `handleRemoveTile()` — validation (including star-tier build unlocks and the singleton three-row metro stack), mutation, sidecar management, global rebuilds. Also: elevator config commands — `handleSetElevatorDwellDelay`, `handleSetElevatorWaitingCarResponse`, `handleSetElevatorHomeFloor`, `handleToggleElevatorFloorStop` — and `handleSetCinemaMoviePool` (cycles cinema selector within classic/new pool, charges $150k/$300k, resets `linkAgeCounter`).
 
 ### `ring-buffer.ts`
 Legacy generic `RingBuffer<T>`. Kept for backwards compat with old snapshot payloads; carrier floor queues now use `queue/route-record.RouteRequestRing` (fixed size 40, wraps silently on 41st enqueue).
@@ -47,7 +47,7 @@ Legacy generic `RingBuffer<T>`. Kept for backwards compat with old snapshot payl
 Carrier module hub — constructors (`makeCarrier`/`makeCarrierCar`), world-level lifecycle (`rebuildCarrierList`, `initCarrierState`, `flushCarriersEndOfDay`), the `tickAllCarriers` back-compat wrapper, and re-exports of the per-car state machine (`carriers/*.ts`) and queue ops (`queue/*.ts`). `enqueueCarrierRoute` / `evictCarrierRoute` are aliases over the queue's `enqueueRequestIntoRouteQueue` / `cancelRuntimeRouteRequest`. Phase 7: `tickAllCarriers` no longer takes `onArrival`/`onBoarding` callbacks — arrival and boarding dispatch run inline inside the queue module.
 
 ### `events.ts`
-Bomb, fire, random-news, and VIP special visitor event systems.
+Bomb, fire, random-news, and metro-driven VIP special visitor event systems.
 
 ### `sim.test.ts`
 Broad unit coverage for simulation commands, family behaviors, routing, carriers, and event/economy edge cases.
@@ -56,7 +56,7 @@ Broad unit coverage for simulation commands, family behaviors, routing, carriers
 Regression coverage for carrier lifecycle quirks that are easier to pin with small unit tests than full trace fixtures.
 
 ### `commands.test.ts`
-Unit tests for `handlePlaceTile` placement rules (currently: elevator shaft spacing).
+Unit tests for `handlePlaceTile` placement rules, including elevator shaft spacing and metro stack behavior.
 
 ### `trace.test.ts`
 Fixture-driven parity suite that builds towers from JSON specs and checks scalar fields, sim populations, sim states, RNG deltas, carriers, and cash against reference JSONL traces.
@@ -98,3 +98,6 @@ Per-sim stress accessors (binary segment 11e0): `advanceSimTripCounters`, `rebas
 
 ### `daily/`
 Once-per-day sweeps fired from specific day-tick checkpoints. Hosts `dispatchActiveRequestsByFamily` (1190:0977), wired into the 0x9c4 checkpoint.
+
+### `fixtures/`
+JSON build specs and generated JSONL binary reference traces used by `trace.test.ts`.

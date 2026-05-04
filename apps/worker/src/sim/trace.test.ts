@@ -125,6 +125,7 @@ const FIXTURE_TILE_MAP: Record<string, string> = {
 	security: "security",
 	housekeeping: "housekeeping",
 	medical: "medical",
+	metro: "metro",
 	cathedral: "cathedral",
 	lobby: "lobby",
 };
@@ -394,6 +395,7 @@ const FIXTURE_NAMES = [
 	"mixed_elevator",
 	"mixed_elevator_delayed",
 	"mixed_multicar",
+	"metro",
 	"offices",
 	"sky_office",
 ];
@@ -751,7 +753,6 @@ describe.each(FIXTURE_NAMES)("trace: build_%s", (fixtureName) => {
 	// Fields in the fixture that this suite does NOT currently check, because the
 	// sim has no direct mapping for them yet:
 	//   - calendar_phase       (global 12-day phase counter; not modeled in TimeState)
-	//   - metro_floor          (metro station floor; only metroPlaced bit is tracked)
 	//   - sim_allocated/initialized/uninitialized (sim pool allocator bookkeeping)
 	it("matches full reference trace", () => {
 		if (simEntries.length === 0) return;
@@ -796,6 +797,11 @@ describe.each(FIXTURE_NAMES)("trace: build_%s", (fixtureName) => {
 				sim.currentPopulation,
 				entry.population,
 				`population mismatch at ${ctx}`,
+			);
+			assert.equal(
+				gf.metroStationFloorIndex,
+				entry.metro_floor,
+				`metro_floor mismatch at ${ctx}`,
 			);
 			assert.equal(
 				gf.officeServiceOk !== 0,

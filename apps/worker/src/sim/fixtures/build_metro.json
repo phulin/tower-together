@@ -1,0 +1,28 @@
+{
+	"config": {
+		"maxTicks": 520,
+		"overrides": {
+			"starCount": 3,
+			"routeViable": 1
+		}
+	},
+	"floor_extent": {
+		"0": { "left": 70, "right": 230 },
+		"1": { "left": 70, "right": 230 },
+		"2": { "left": 70, "right": 230 },
+		"3": { "left": 70, "right": 230 },
+		"-1": { "left": 70, "right": 230 },
+		"-2": { "left": 70, "right": 230 },
+		"-3": { "left": 70, "right": 230 }
+	},
+	"facilities": [
+		{ "type": "metro", "floor": -1, "left": 90 },
+		{ "type": "office", "floor": 1, "left": 90 },
+		{ "type": "office", "floor": 1, "left": 99 },
+		{ "type": "condo", "floor": 2, "left": 90 },
+		{ "type": "single", "floor": 2, "left": 106 },
+		{ "type": "fast-food", "floor": 3, "left": 90 },
+		{ "type": "security", "floor": -1, "left": 130 },
+		{ "type": "elevator", "bottom": -1, "top": 3, "left": 150 }
+	]
+}

@@ -1,5 +1,10 @@
 import { applyRemoveElevatorCar } from "./commands";
 import { type LedgerState, removeCashflowFromFamilyResource } from "./ledger";
+import {
+	FAMILY_METRO_BOTTOM,
+	FAMILY_METRO_MIDDLE,
+	FAMILY_METRO_TOP,
+} from "./resources";
 import { releaseServiceRequest } from "./sims";
 import {
 	rebuildParkingCoverage,
@@ -911,21 +916,34 @@ export function tickVipSpecialVisitor(
 	if (time.daypartIndex >= 4) return;
 	if ((es.gameStateFlags & 9) !== 0) return;
 	// Eligibility is keyed off the metro placement/floor state.
-	if (
-		world.gateFlags.vipSuiteFloor < 0 ||
-		world.gateFlags.vipSuiteFloor === 0xffff
-	) {
-		return;
-	}
+	if (world.gateFlags.metroStationFloorIndex < 0) return;
 
 	// 1% chance per tick
 	if (sampleRng(world) % 100 !== 0) return;
 
-	if (world.gateFlags.metroPlaced === 0) return;
-
-	// TODO: Metro is a 3-floor stack in the binary (codes 0x1f/0x20/0x21); the
-	// metro_floor DS variable drives VIP eligibility. TS doesn't yet model the
-	// metro stack, so this sweep is inert — metroPlaced never gets set.
+	let anyArrival = false;
+	for (const object of Object.values(world.placedObjects)) {
+		if (
+			object.objectTypeCode !== FAMILY_METRO_TOP &&
+			object.objectTypeCode !== FAMILY_METRO_MIDDLE &&
+			object.objectTypeCode !== FAMILY_METRO_BOTTOM
+		) {
+			continue;
+		}
+		if (object.unitStatus === 0) {
+			object.unitStatus = 2;
+			anyArrival = true;
+		} else {
+			object.unitStatus = 0;
+		}
+		object.dirtyFlag = 1;
+	}
+	if (anyArrival) {
+		world.pendingNotifications.push({
+			kind: "event",
+			message: "metro_train_arrival",
+		});
+	}
 }
 
 // Random-news event: audio-only in the binary (play_classified_news_sound @

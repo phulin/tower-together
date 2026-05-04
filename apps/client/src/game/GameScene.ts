@@ -319,7 +319,7 @@ const ROOM_TEXTURES: Partial<Record<string, RoomTextureConfig>> = {
 	},
 	parkingRamp: { files: ["parkingRamp.svg"] },
 	security: { files: ["security.svg"] },
-	metro: { files: ["metro.svg"] },
+	metro: { files: ["metro.svg"], heightTiles: 3 },
 	housekeeping: { files: ["housekeeping.svg"] },
 	medical: { files: ["medical.svg"] },
 };

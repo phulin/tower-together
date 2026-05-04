@@ -7,7 +7,11 @@ import {
 	rebuildTransferGroupCache,
 } from "./reachability/rebuild-tables";
 import { rebuildSpecialLinkRouteRecords } from "./reachability/special-link-records";
-import { LEGACY_TILE_ALIASES, LEGACY_VIP_TILE_TO_STANDARD } from "./resources";
+import {
+	FAMILY_METRO_TOP,
+	LEGACY_TILE_ALIASES,
+	LEGACY_VIP_TILE_TO_STANDARD,
+} from "./resources";
 import { rebuildRuntimeSims } from "./sims";
 import { createNewGameTimeState, type TimeState } from "./time";
 import {
@@ -303,6 +307,7 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 		string,
 		unknown
 	>;
+	gateFlags.metroStationFloorIndex ??= -1;
 	if (!("evalSimIndex" in gateFlags) && "evalEntityIndex" in gateFlags) {
 		gateFlags.evalSimIndex = gateFlags.evalEntityIndex;
 	}
@@ -402,10 +407,21 @@ export function normalizeSnapshot(raw: SimSnapshot): SimSnapshot {
 	for (const [anchorKey, record] of Object.entries(
 		snapshot.world.placedObjects,
 	)) {
-		if (record.objectTypeCode === 31) record.objectTypeCode = 3;
-		if (record.objectTypeCode === 32) record.objectTypeCode = 4;
-		if (record.objectTypeCode === 33) record.objectTypeCode = 5;
-		if (vipAnchors.has(anchorKey)) record.vipFlag = true;
+		if (vipAnchors.has(anchorKey)) {
+			if (record.objectTypeCode === 31) record.objectTypeCode = 3;
+			if (record.objectTypeCode === 32) record.objectTypeCode = 4;
+			if (record.objectTypeCode === 33) record.objectTypeCode = 5;
+			record.vipFlag = true;
+		}
+	}
+	snapshot.world.gateFlags.metroPlaced = 0;
+	snapshot.world.gateFlags.metroStationFloorIndex = -1;
+	for (const [key, record] of Object.entries(snapshot.world.placedObjects)) {
+		if (record.objectTypeCode !== FAMILY_METRO_TOP) continue;
+		const [, y] = key.split(",").map(Number);
+		snapshot.world.gateFlags.metroPlaced = 1;
+		snapshot.world.gateFlags.metroStationFloorIndex = GRID_HEIGHT - 1 - y;
+		break;
 	}
 
 	// Migrate carrier floorQueues from old flat format to RouteRequestRing instances

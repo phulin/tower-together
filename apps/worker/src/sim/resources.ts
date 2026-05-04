@@ -35,7 +35,7 @@ export const TILE_WIDTHS: Record<string, number> = {
 	parking: 4, // family 0x18
 	parkingRamp: 15, // family 0x2c
 	security: 16, // family 0x0e
-	metro: 4, // family 0x1f (3-floor stack in binary; TS stub)
+	metro: 30, // families 0x1f/0x20/0x21, three-floor stack
 	housekeeping: 15, // family 0x0f
 	medical: 26, // family 0x0d
 };
@@ -66,7 +66,7 @@ export const TILE_COSTS: Record<string, number> = {
 	parking: 5_000,
 	parkingRamp: 50_000,
 	security: 100_000,
-	metro: 1_000_000,
+	metro: 45_000,
 	housekeeping: 50_000,
 	medical: 500_000,
 };
@@ -179,6 +179,9 @@ export const FAMILY_RECYCLING_CENTER_UPPER = 20;
 export const FAMILY_RECYCLING_CENTER_LOWER = 21;
 export const FAMILY_PARKING = 24;
 export const FAMILY_PARKING_RAMP = 44; // 0x2c
+export const FAMILY_METRO_TOP = 0x1f;
+export const FAMILY_METRO_MIDDLE = 0x20;
+export const FAMILY_METRO_BOTTOM = 0x21;
 export const FAMILY_PARTY_HALL = 29;
 export const FAMILY_PARTY_HALL_LOWER = 30;
 export const FAMILY_CINEMA_STAIRS_UPPER = 34;
@@ -215,6 +218,8 @@ export const FAMILY_CODE_TO_TILE: Record<number, string> = {
 	[FAMILY_PARTY_HALL]: "partyHall",
 	[FAMILY_HOUSEKEEPING]: "housekeeping",
 	[FAMILY_MEDICAL]: "medical",
+	[FAMILY_METRO_TOP]: "metro",
+	[FAMILY_METRO_MIDDLE]: "metro",
 	[FAMILY_CATHEDRAL_ANCHOR]: "cathedral",
 };
 
