@@ -1183,8 +1183,12 @@ export function handlePlaceTile(
 	// ── Stairs / Escalator: bridge overlay on existing base tiles ─────────────
 	if (normalizedTileType === "stairs" || normalizedTileType === "escalator") {
 		const overlayWidth = TILE_WIDTHS[normalizedTileType] ?? 1;
+		const overlayCost = TILE_COSTS[normalizedTileType] ?? 0;
 		if (x + overlayWidth - 1 >= GRID_WIDTH) {
 			return { accepted: false, reason: "Out of bounds" };
+		}
+		if (!freeBuild && overlayCost > ledger.cashBalance) {
+			return { accepted: false, reason: "Insufficient funds" };
 		}
 		const baseRequiredLabel =
 			normalizedTileType === "stairs" ? "Stairs" : "Escalators";
@@ -1228,6 +1232,7 @@ export function handlePlaceTile(
 		for (let dx = 1; dx < overlayWidth; dx++) {
 			world.overlayToAnchor[`${x + dx},${y}`] = `${x},${y}`;
 		}
+		if (!freeBuild) ledger.cashBalance -= overlayCost;
 		runGlobalRebuilds(world, ledger);
 		return {
 			accepted: true,
