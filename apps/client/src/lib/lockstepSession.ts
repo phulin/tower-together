@@ -446,6 +446,13 @@ export class TowerLockstepSession {
 		return this.sim?.liveCarriers ?? EMPTY_CARRIERS;
 	}
 
+	peekFireFronts(): {
+		fireLeftPos: readonly number[];
+		fireRightPos: readonly number[];
+	} | null {
+		return this.sim?.fireFronts ?? null;
+	}
+
 	materializeSim(sim: SimRecord): SimStateData | null {
 		if (!this.sim) return null;
 		if (!this.simStateCache) {

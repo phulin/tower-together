@@ -90,6 +90,16 @@ export type SnapshotSource = {
 	readLiveCarriers: () => readonly CarrierRecord[];
 	readPendingBySimId: () => PendingBySimId;
 	materializeSim: (sim: SimRecord) => SimStateData | null;
+	/**
+	 * Per-floor active fire fronts. Each entry maps the binary's internal
+	 * floor index (0..119, where 10 = ground) to the leftmost / rightmost
+	 * tile column currently on fire. Entries with sentinel 0xffff are
+	 * inactive. Used to draw the translucent red on-fire overlay.
+	 */
+	readFireFronts: () => {
+		fireLeftPos: readonly number[];
+		fireRightPos: readonly number[];
+	} | null;
 };
 
 function hashSimVariant(id: string, modulus: number): number {
@@ -324,6 +334,7 @@ export class GameScene extends Scene {
 
 	private cellGraphics!: GameObjects.Graphics;
 	private simGraphics!: GameObjects.Graphics;
+	private fireGraphics!: GameObjects.Graphics;
 	private simQueueCache: Map<string, SimQueueCacheEntry> = new Map();
 	private cockroachSprites: GameObjects.Sprite[] = [];
 	private cockroaches: CockroachState[] = [];
@@ -1074,11 +1085,13 @@ export class GameScene extends Scene {
 
 		this.cellGraphics = this.add.graphics();
 		this.simGraphics = this.add.graphics();
+		this.fireGraphics = this.add.graphics();
 		this.hoverGraphics = this.add.graphics();
 
-		// Depth ordering: sky (0) -> clouds/ground (1) -> cached rows (2) -> static overlays (2.9) -> sims/cars (3) -> hover (4)
+		// Depth ordering: sky (0) -> clouds/ground (1) -> cached rows (2) -> static overlays (2.9) -> sims/cars (3) -> fire (3.5) -> hover (4)
 		this.cellGraphics.setDepth(STATIC_OVERLAY_DEPTH);
 		this.simGraphics.setDepth(DYNAMIC_ENTITY_DEPTH);
+		this.fireGraphics.setDepth(DYNAMIC_ENTITY_DEPTH + 0.5);
 		this.hoverGraphics.setDepth(HOVER_DEPTH);
 
 		this.arrowKeys =
@@ -1134,6 +1147,7 @@ export class GameScene extends Scene {
 		}
 		this.drawSimsIfNeeded();
 		this.drawCars();
+		this.drawFireOverlay();
 		this.updateCockroaches(delta);
 		this.cullStaticRowChunks();
 		this.updateSounds();
@@ -2474,6 +2488,46 @@ export class GameScene extends Scene {
 
 	private destroyQueueCacheEntry(entry: SimQueueCacheEntry): void {
 		entry.renderTexture.destroy();
+	}
+
+	/**
+	 * Translucent red overlay over on-fire cells. Reads the per-floor active
+	 * fire fronts (`g_fire_left_pos` / `g_fire_right_pos`, indexed by binary
+	 * internal floor 0..119) and paints a rectangle from `fireLeftPos[F]` to
+	 * `fireRightPos[F] + 12` on each floor whose front isn't the 0xffff
+	 * sentinel. Cleared each frame; overlay vanishes when fire resolves and
+	 * the worker drains the front arrays.
+	 */
+	private drawFireOverlay(): void {
+		const g = this.fireGraphics;
+		g.clear();
+		const fronts = this.snapshotSource?.readFireFronts();
+		if (!fronts) return;
+		const cam = this.cameras.main;
+		const view = cam.worldView;
+		// Internal floor F → grid y = (GRID_HEIGHT - 1 - F). y_pixel = y * TILE_HEIGHT.
+		g.fillStyle(0xff3010, 0.45);
+		for (let f = 0; f < fronts.fireLeftPos.length; f++) {
+			const left = fronts.fireLeftPos[f];
+			const right = fronts.fireRightPos[f];
+			const leftActive = left !== 0xffff;
+			const rightActive = right !== 0xffff;
+			if (!leftActive && !rightActive) continue;
+			// Burning span runs from the left front's tile to (right front + 12)
+			// — the right front's deletion offset, matching the binary's
+			// `delete_object_covering_floor_tile(floor, right + 12)`.
+			const spanLeft = leftActive ? left : right;
+			const spanRight = rightActive ? right + 12 : left + 1;
+			if (spanRight <= spanLeft) continue;
+			const yGrid = GRID_HEIGHT - 1 - f;
+			const py = yGrid * TILE_HEIGHT;
+			const px = spanLeft * TILE_WIDTH;
+			const pw = (spanRight - spanLeft) * TILE_WIDTH;
+			// Cull off-screen rows.
+			if (py + TILE_HEIGHT < view.y || py > view.bottom) continue;
+			if (px + pw < view.x || px > view.right) continue;
+			g.fillRect(px, py, pw, TILE_HEIGHT);
+		}
 	}
 
 	private drawCars(): void {

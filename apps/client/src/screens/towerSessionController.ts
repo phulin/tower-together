@@ -46,6 +46,10 @@ export interface TowerSessionScene {
 		readLiveCarriers: () => readonly CarrierRecord[];
 		readPendingBySimId: () => PendingBySimId;
 		materializeSim: (sim: SimRecord) => SimStateData | null;
+		readFireFronts: () => {
+			fireLeftPos: readonly number[];
+			fireRightPos: readonly number[];
+		} | null;
 	}) => void;
 	applyInitState: (
 		cells: Array<{
@@ -210,6 +214,7 @@ export class TowerSessionController {
 					readLiveCarriers: () => this.lockstep.peekCarriers(),
 					readPendingBySimId: () => this.lockstep.peekPendingBySimId(),
 					materializeSim: (sim) => this.lockstep.materializeSim(sim),
+					readFireFronts: () => this.lockstep.peekFireFronts(),
 				});
 				scene?.applyInitState(state.cells, state.simTime);
 				scene?.setPresentationClock(state.simTime, timing.receivedAtMs);

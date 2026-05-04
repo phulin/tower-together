@@ -546,6 +546,21 @@ export class TowerSim {
 		return this.world.carriers;
 	}
 
+	/**
+	 * Per-floor active fire fronts (binary `g_fire_left_pos` / `g_fire_right_pos`,
+	 * 120-entry uint16 arrays). Entries with sentinel 0xffff are inactive.
+	 * Used by the client renderer to draw the on-fire overlay.
+	 */
+	get fireFronts(): {
+		fireLeftPos: readonly number[];
+		fireRightPos: readonly number[];
+	} {
+		return {
+			fireLeftPos: this.world.eventState.fireLeftPos,
+			fireRightPos: this.world.eventState.fireRightPos,
+		};
+	}
+
 	carriersToArray(): CarrierCarStateRecord[] {
 		return this.world.carriers.flatMap((carrier) =>
 			carrier.cars.map((car, carIndex) => ({
