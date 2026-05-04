@@ -134,16 +134,26 @@ const FIRE_INDESTRUCTIBLE_FAMILIES: ReadonlySet<number> = new Set([
  *     1180:0966) — the only family with a direct cash refund on teardown.
  *   - Sim eviction sweep: sims whose home pointer matches the destroyed
  *     anchor get zeroed (binary `update_sim_tile_span` 1228:1018 second
- *     pass writes `sim[+4]=0; sim[+6]=0`). We approximate by clearing
- *     `familyCode=0` and `stateCode=0` on matching sims, which the rest
- *     of the sim subsystem treats as an empty slot.
+ *     pass writes `sim[+4]=0; sim[+6]=0`).
+ *   - Commercial-venue sidecar release (0x06/0x0a/0x0c): tag the linked
+ *     CommercialVenueRecord as VENUE_DORMANT (0xff) — equivalent to the
+ *     binary's `*(commercial_venue_table + sidecarIdx*0x12 + 1) = 0xFF`
+ *     freelist push.
+ *   - Entertainment-link record release (0x12/0x13/0x1d/0x1e/0x22/0x23):
+ *     reset linked EntertainmentLinkRecord halves to the binary's `0xfe`
+ *     "free" sentinel (`free_entertainment_link_record` 1188:0ee5).
  *
- * Punch list NOT yet wired (broader refactor): commercial-venue sidecar
- * freelist push (0x06/0x0a/0x0c), entertainment-link rebuild
- * (0x12/0x13/0x1d/0x1e/0x22/0x23), parking ramp coverage rebuild (0x0b/0x2c),
- * carrier-sidecar global-handle release (`FUN_1190_0884`), and the per-tile
- * occupant zero pass for office service-request entries.
+ * Punch list still not wired: parking ramp coverage rebuild (0x0b/0x2c),
+ * carrier-sidecar global-handle release (`FUN_1190_0884`), and the
+ * per-tile occupant zero pass for office service-request entries.
  */
+const FIRE_COMMERCIAL_FAMILIES: ReadonlySet<number> = new Set([
+	0x06, 0x0a, 0x0c,
+]);
+const FIRE_ENTERTAINMENT_FAMILIES: ReadonlySet<number> = new Set([
+	0x12, 0x13, 0x1d, 0x1e, 0x22, 0x23,
+]);
+
 function applyTeardownSideEffects(
 	world: WorldState,
 	ledger: LedgerState,
@@ -155,6 +165,31 @@ function applyTeardownSideEffects(
 	// Cash refund: condo only. `cond < 0x18` matches binary 10f0:026e.
 	if (family === 0x09 && cond < 0x18) {
 		removeCashflowFromFamilyResource(ledger, "condo", record.evalLevel ?? 0, 9);
+	}
+	// Commercial-venue freelist push: mark the sidecar dormant. The
+	// rebuild_linked_facility_records pass on the next 0x0f0 checkpoint
+	// will skip this sidecar and the venue won't get reseeded — equivalent
+	// to the binary's owner-byte 0xff freelist tag.
+	if (FIRE_COMMERCIAL_FAMILIES.has(family) && record.linkedRecordIndex >= 0) {
+		const sidecar = world.sidecars[record.linkedRecordIndex];
+		if (sidecar?.kind === "commercial_venue") {
+			sidecar.availabilityState = 0xff; // VENUE_DORMANT
+		}
+	}
+	// Entertainment-link freelist push: zero the linked record's halves.
+	// Binary writes 0xfe to upper/lowerHalfFloor; we mirror that and reset
+	// the active runtime count so the link is treated as unowned.
+	if (
+		FIRE_ENTERTAINMENT_FAMILIES.has(family) &&
+		record.linkedRecordIndex >= 0
+	) {
+		const sidecar = world.sidecars[record.linkedRecordIndex];
+		if (sidecar?.kind === "entertainment_link") {
+			sidecar.upperHalfFloor = 0xfe;
+			sidecar.lowerHalfFloor = 0xfe;
+			sidecar.linkPhaseState = 0;
+			sidecar.activeRuntimeCount = 0;
+		}
 	}
 	// Sim eviction sweep: find sims with home pointer landing inside the
 	// destroyed record and zero them. The binary's `update_sim_tile_span`
